@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { api, type CoachingIntakeSubmission } from "../../lib/api";
+import { api, type CoachingIntakeSubmission, type CoachingIntakeSubmissionDetail } from "../../lib/api";
 
 type IntakeStepId = "resume" | "selfAssessment" | "jobLinks" | "preferences";
 type StageId = "intakeParsed" | "sowGenerated" | "validated";
@@ -9,6 +9,7 @@ type CoachingAuthState = "signedOut" | "authenticated";
 type SubscriptionStatus = "unknown" | "inactive" | "active";
 type PlanTier = "starter" | "pro" | "elite";
 type MemberLaunchState = "memberHome" | "launchRequested" | "handoffPending" | "landed";
+type ExportFormat = "markdown" | "json";
 
 type IntakeDraft = {
   workspaceId: string;
@@ -173,6 +174,11 @@ function stageBadgeClass(done: boolean): string {
   return done ? "badge success" : "badge warning";
 }
 
+function normalizeJobLinks(value?: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item || "").trim()).filter(Boolean);
+}
+
 export default function CoachingProjectWorkbench() {
   const [authState, setAuthState] = useState<CoachingAuthState>("signedOut");
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus>("unknown");
@@ -193,6 +199,14 @@ export default function CoachingProjectWorkbench() {
   const [submissions, setSubmissions] = useState<CoachingIntakeSubmission[]>([]);
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
+  const [selectedSubmissionId, setSelectedSubmissionId] = useState<string | null>(null);
+  const [selectedSubmission, setSelectedSubmission] = useState<CoachingIntakeSubmissionDetail | null>(null);
+  const [submissionDetailLoading, setSubmissionDetailLoading] = useState(false);
+  const [submissionDetailError, setSubmissionDetailError] = useState<string | null>(null);
+  const [exportStatus, setExportStatus] = useState<{ format: ExportFormat | null; state: "idle" | "exporting" | "success" | "error"; message?: string }>({
+    format: null,
+    state: "idle",
+  });
 
   const completion = useMemo(() => ({
     resume: Boolean(draft.resumeFileName.trim()),
@@ -202,7 +216,11 @@ export default function CoachingProjectWorkbench() {
   }), [draft]);
 
   const completedCount = Object.values(completion).filter(Boolean).length;
-  const canAccessWorkbench = authState === "authenticated" && subscriptionStatus === "active";
+  const hasActiveSubscription = authState === "authenticated" && subscriptionStatus === "active";
+  const canAccessWorkbench = hasActiveSubscription;
+  const canAccessReviewQueue = hasActiveSubscription && planTier !== "starter";
+  const canAccessMentoringRecommendation = hasActiveSubscription;
+  const canBookMentoring = hasActiveSubscription && planTier === "elite";
   const currentPlan = PLAN_DETAILS[planTier];
 
   async function loadSubmissions() {
@@ -271,44 +289,94 @@ export default function CoachingProjectWorkbench() {
     setStageState((prev) => ({ ...prev, validated: true }));
   }
 
-  function exportStudentPackage(format: "markdown" | "json") {
+  async function openSubmission(submissionId: string) {
+    setSelectedSubmissionId(submissionId);
+    setSubmissionDetailError(null);
+    setSubmissionDetailLoading(true);
+
+    try {
+      const out = await api.coachingIntakeSubmissionDetail(submissionId);
+      if (!out.ok || !out.submission) {
+        setSelectedSubmission(null);
+        setSubmissionDetailError(out.message || "Unable to load submission details.");
+        return;
+      }
+      setSelectedSubmission(out.submission);
+    } catch (e: any) {
+      setSelectedSubmission(null);
+      setSubmissionDetailError(e?.message || "Unable to load submission details.");
+    } finally {
+      setSubmissionDetailLoading(false);
+    }
+  }
+
+  function loadSubmissionIntoDraft() {
+    if (!selectedSubmission) return;
+    const parsedJobLinks = normalizeJobLinks(selectedSubmission.job_links_json);
+    const preferences = selectedSubmission.preferences_json || {};
+
+    setDraft((prev) => ({
+      ...prev,
+      candidateName: selectedSubmission.applicant_name || prev.candidateName,
+      candidateEmail: selectedSubmission.applicant_email || prev.candidateEmail,
+      targetRole: String(preferences.target_role || prev.targetRole),
+      resumeFileName: selectedSubmission.resume_text || prev.resumeFileName,
+      selfAssessment: selectedSubmission.self_assessment_text || prev.selfAssessment,
+      jobLinksText: parsedJobLinks.length ? parsedJobLinks.join("\n") : prev.jobLinksText,
+      preferredStack: String(preferences.preferred_stack || prev.preferredStack),
+      timelineWeeks: String(preferences.timeline_weeks || prev.timelineWeeks),
+    }));
+
+    setStageState((prev) => ({ ...prev, intakeParsed: true }));
+    setActiveStep("resume");
+  }
+
+  function exportStudentPackage(format: ExportFormat) {
     if (!scaffold) return;
 
     const timestamp = new Date().toISOString().slice(0, 10);
     const safeName = (draft.candidateName || "candidate").toLowerCase().replace(/\s+/g, "-");
 
-    if (format === "json") {
-      downloadText(JSON.stringify(scaffold, null, 2), `${safeName}-coaching-package-${timestamp}.json`, "application/json");
-      return;
+    try {
+      setExportStatus({ format, state: "exporting", message: `Preparing ${format.toUpperCase()} package...` });
+
+      if (format === "json") {
+        downloadText(JSON.stringify(scaffold, null, 2), `${safeName}-coaching-package-${timestamp}.json`, "application/json");
+        setExportStatus({ format, state: "success", message: `JSON package exported (${timestamp}).` });
+        return;
+      }
+
+      const markdown = [
+        `# ${scaffold.title}`,
+        "",
+        `## Candidate Snapshot`,
+        scaffold.candidateSnapshot,
+        "",
+        `## Business Outcome`,
+        scaffold.businessOutcome,
+        "",
+        "## Milestones",
+        ...scaffold.milestones.flatMap((m) => [
+          `### ${m.title}`,
+          `- Outcome: ${m.outcome}`,
+          ...m.deliverables.map((d) => `- Deliverable: ${d}`),
+        ]),
+        "",
+        "## Recommended Resources",
+        ...scaffold.recommendedResources.map((r) => `- [${r.title}](${r.url}) — ${r.reason}`),
+        "",
+        "## Mentoring Offer",
+        `- Offer: ${scaffold.mentoringCta.offer}`,
+        `- Pricing: ${scaffold.mentoringCta.pricing}`,
+        `- Timeline: ${scaffold.mentoringCta.timeline}`,
+        `- CTA: ${scaffold.mentoringCta.ctaText}`,
+      ].join("\n");
+
+      downloadText(markdown, `${safeName}-coaching-package-${timestamp}.md`, "text/markdown");
+      setExportStatus({ format, state: "success", message: `Markdown package exported (${timestamp}).` });
+    } catch (e: any) {
+      setExportStatus({ format, state: "error", message: e?.message || "Export failed. Try again." });
     }
-
-    const markdown = [
-      `# ${scaffold.title}`,
-      "",
-      `## Candidate Snapshot`,
-      scaffold.candidateSnapshot,
-      "",
-      `## Business Outcome`,
-      scaffold.businessOutcome,
-      "",
-      "## Milestones",
-      ...scaffold.milestones.flatMap((m) => [
-        `### ${m.title}`,
-        `- Outcome: ${m.outcome}`,
-        ...m.deliverables.map((d) => `- Deliverable: ${d}`),
-      ]),
-      "",
-      "## Recommended Resources",
-      ...scaffold.recommendedResources.map((r) => `- [${r.title}](${r.url}) — ${r.reason}`),
-      "",
-      "## Mentoring Offer",
-      `- Offer: ${scaffold.mentoringCta.offer}`,
-      `- Pricing: ${scaffold.mentoringCta.pricing}`,
-      `- Timeline: ${scaffold.mentoringCta.timeline}`,
-      `- CTA: ${scaffold.mentoringCta.ctaText}`,
-    ].join("\n");
-
-    downloadText(markdown, `${safeName}-coaching-package-${timestamp}.md`, "text/markdown");
   }
 
   function gateMessage(): string {
@@ -400,6 +468,10 @@ export default function CoachingProjectWorkbench() {
         <ul style={{ margin: "0 0 8px 18px", padding: 0, fontSize: 12 }}>
           {currentPlan.includes.map((item) => <li key={item}>{item}</li>)}
         </ul>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+          <span className={canAccessReviewQueue ? "badge success" : "badge warning"}>Coach review queue: {canAccessReviewQueue ? "unlocked" : "Pro+ required"}</span>
+          <span className={canBookMentoring ? "badge success" : "badge info"}>Live mentoring booking: {canBookMentoring ? "included" : "Elite required"}</span>
+        </div>
         {planTier !== "elite" && (
           <div className="card" style={{ padding: 8, border: "1px solid var(--color-border-strong)" }}>
             <div style={{ fontSize: 12, marginBottom: 6 }}>
@@ -429,54 +501,103 @@ export default function CoachingProjectWorkbench() {
         <>
           <h4>Coach Review Queue</h4>
           <div className="card" style={{ marginBottom: 10 }}>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-              <input
-                value={draft.workspaceId}
-                onChange={(e) => setDraft((prev) => ({ ...prev, workspaceId: e.target.value }))}
-                placeholder="workspace id"
-                style={{ maxWidth: 220 }}
-              />
-              <button onClick={loadSubmissions}>Refresh submissions</button>
-              {reviewLoading && <span className="badge info">Loading…</span>}
-              {reviewError && <span className="badge error">{reviewError}</span>}
-            </div>
+            {!canAccessReviewQueue ? (
+              <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
+                Coach review queue details are available on <strong>Pro</strong> and <strong>Elite</strong> plans.
+              </div>
+            ) : (
+              <>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8, flexWrap: "wrap" }}>
+                  <input
+                    value={draft.workspaceId}
+                    onChange={(e) => setDraft((prev) => ({ ...prev, workspaceId: e.target.value }))}
+                    placeholder="workspace id"
+                    style={{ maxWidth: 220 }}
+                  />
+                  <button onClick={loadSubmissions}>Refresh submissions</button>
+                  {reviewLoading && <span className="badge info">Loading…</span>}
+                  {reviewError && <span className="badge error">{reviewError}</span>}
+                </div>
 
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
-                <thead>
-                  <tr>
-                    <th align="left">Applicant</th>
-                    <th align="left">Email</th>
-                    <th align="left">Status</th>
-                    <th align="left">Submitted By</th>
-                    <th align="left">Created</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {submissions.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} style={{ color: "var(--color-text-muted)", padding: "8px 0" }}>
-                        No submissions yet for this workspace.
-                      </td>
-                    </tr>
-                  ) : (
-                    submissions.map((s) => (
-                      <tr key={s.submission_id}>
-                        <td>{s.applicant_name || "—"}</td>
-                        <td>{s.applicant_email || "—"}</td>
-                        <td>
-                          <span className={`badge ${String(s.status || "submitted").toLowerCase().includes("review") ? "warning" : "info"}`}>
-                            {s.status || "submitted"}
-                          </span>
-                        </td>
-                        <td>{s.submitted_by || "—"}</td>
-                        <td>{s.created_at ? String(s.created_at) : "—"}</td>
+                <div style={{ overflowX: "auto", marginBottom: 8 }}>
+                  <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr>
+                        <th align="left">Applicant</th>
+                        <th align="left">Email</th>
+                        <th align="left">Status</th>
+                        <th align="left">Submitted By</th>
+                        <th align="left">Created</th>
+                        <th align="left">Action</th>
                       </tr>
-                    ))
+                    </thead>
+                    <tbody>
+                      {submissions.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} style={{ color: "var(--color-text-muted)", padding: "8px 0" }}>
+                            No submissions yet for this workspace.
+                          </td>
+                        </tr>
+                      ) : (
+                        submissions.map((s) => (
+                          <tr key={s.submission_id} style={selectedSubmissionId === s.submission_id ? { background: "rgba(120,120,255,0.08)" } : undefined}>
+                            <td>{s.applicant_name || "—"}</td>
+                            <td>{s.applicant_email || "—"}</td>
+                            <td>
+                              <span className={`badge ${String(s.status || "submitted").toLowerCase().includes("review") ? "warning" : "info"}`}>
+                                {s.status || "submitted"}
+                              </span>
+                            </td>
+                            <td>{s.submitted_by || "—"}</td>
+                            <td>{s.created_at ? String(s.created_at) : "—"}</td>
+                            <td>
+                              <button onClick={() => openSubmission(s.submission_id)}>Open submission</button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="card" style={{ padding: 8 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                    <strong>Submission Detail</strong>
+                    {selectedSubmission && <button onClick={loadSubmissionIntoDraft}>Load into intake form</button>}
+                  </div>
+                  {submissionDetailLoading && <span className="badge info">Loading detail…</span>}
+                  {submissionDetailError && <span className="badge error">{submissionDetailError}</span>}
+                  {!submissionDetailLoading && !submissionDetailError && !selectedSubmission && (
+                    <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
+                      Open a row above to review a specific intake submission.
+                    </div>
                   )}
-                </tbody>
-              </table>
-            </div>
+                  {!submissionDetailLoading && selectedSubmission && (
+                    <div style={{ fontSize: 12, display: "grid", gap: 6 }}>
+                      <div><strong>Applicant:</strong> {selectedSubmission.applicant_name || "—"} ({selectedSubmission.applicant_email || "no email"})</div>
+                      <div><strong>Status:</strong> {selectedSubmission.status || "submitted"}</div>
+                      <div><strong>Resume:</strong> {selectedSubmission.resume_text || "—"}</div>
+                      <div><strong>Self-Assessment:</strong> {selectedSubmission.self_assessment_text || "—"}</div>
+                      <div>
+                        <strong>Job Links:</strong>
+                        <ul style={{ margin: "4px 0 0 18px", padding: 0 }}>
+                          {normalizeJobLinks(selectedSubmission.job_links_json).map((link) => (
+                            <li key={link}><a href={link} target="_blank" rel="noreferrer">{link}</a></li>
+                          ))}
+                          {normalizeJobLinks(selectedSubmission.job_links_json).length === 0 && <li>—</li>}
+                        </ul>
+                      </div>
+                      <div>
+                        <strong>Preferences:</strong>{" "}
+                        {selectedSubmission.preferences_json
+                          ? `${String(selectedSubmission.preferences_json.target_role || "n/a")} | ${String(selectedSubmission.preferences_json.preferred_stack || "n/a")} | ${String(selectedSubmission.preferences_json.timeline_weeks || "n/a")} weeks`
+                          : "—"}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
           </div>
 
           <h4>Coaching Project Intake</h4>
@@ -566,10 +687,19 @@ export default function CoachingProjectWorkbench() {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                   <strong>{scaffold.title}</strong>
                   <div style={{ display: "flex", gap: 6 }}>
-                    <button onClick={() => exportStudentPackage("markdown")}>Export Markdown</button>
-                    <button onClick={() => exportStudentPackage("json")}>Export JSON</button>
+                    <button onClick={() => exportStudentPackage("markdown")} disabled={exportStatus.state === "exporting"}>Export Markdown</button>
+                    <button onClick={() => exportStudentPackage("json")} disabled={exportStatus.state === "exporting"}>Export JSON</button>
                   </div>
                 </div>
+
+                {exportStatus.state !== "idle" && (
+                  <div style={{ marginBottom: 8 }}>
+                    <span className={`badge ${exportStatus.state === "success" ? "success" : exportStatus.state === "error" ? "error" : "info"}`}>
+                      {exportStatus.state === "exporting" ? "Exporting" : exportStatus.state === "success" ? "Export complete" : "Export failed"}
+                    </span>
+                    <span style={{ marginLeft: 6, fontSize: 12, color: "var(--color-text-muted)" }}>{exportStatus.message}</span>
+                  </div>
+                )}
 
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 8 }}>
                   <button onClick={() => setViewerTab("overview")}>Overview</button>
@@ -627,12 +757,22 @@ export default function CoachingProjectWorkbench() {
                       </ul>
                     </div>
 
-                    <div className="card" style={{ padding: 8, border: "1px solid var(--color-border-strong)" }}>
-                      <strong>{scaffold.mentoringCta.offer}</strong>
-                      <div style={{ fontSize: 12, marginTop: 4 }}><strong>Pricing:</strong> {scaffold.mentoringCta.pricing}</div>
-                      <div style={{ fontSize: 12 }}><strong>Timeline:</strong> {scaffold.mentoringCta.timeline}</div>
-                      <button className="btn-primary" style={{ marginTop: 8 }}>{scaffold.mentoringCta.ctaText}</button>
-                    </div>
+                    {canAccessMentoringRecommendation && (
+                      <div className="card" style={{ padding: 8, border: "1px solid var(--color-border-strong)" }}>
+                        <strong>Mentoring Recommendation</strong>
+                        <div style={{ fontSize: 12, marginTop: 4 }}>
+                          Recommended path: <strong>{scaffold.mentoringCta.offer}</strong>
+                        </div>
+                        <div style={{ fontSize: 12 }}><strong>Pricing:</strong> {scaffold.mentoringCta.pricing}</div>
+                        <div style={{ fontSize: 12 }}><strong>Timeline:</strong> {scaffold.mentoringCta.timeline}</div>
+                        {!canBookMentoring && (
+                          <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 6 }}>
+                            Upgrade to Elite to unlock live booking and 1:1 mentoring sessions.
+                          </div>
+                        )}
+                        <button className="btn-primary" style={{ marginTop: 8 }} disabled={!canBookMentoring}>{canBookMentoring ? scaffold.mentoringCta.ctaText : "Elite required"}</button>
+                      </div>
+                    )}
                   </div>
                 )}
               </>

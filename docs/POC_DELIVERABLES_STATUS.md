@@ -522,3 +522,60 @@ Deliverable: “enterprise-quality demo and stronger impact fidelity.”
 1. Add verified webhook signature validation and event idempotency checks.
 2. Wire account linking from app user/session to subscription record (`username`↔`email`) for deterministic gating.
 3. Enable subscription-required guard on selected coaching generation routes once frontend member flow is connected.
+
+## Checkpoint Update (2026-03-01 - Coaching Frontend Pass 4: Review Detail + Gating + Export UX)
+
+### Done
+- Integrated **coach review queue action flow** in `CoachingProjectWorkbench`:
+  - Added row-level **Open submission** action.
+  - Added submission detail panel backed by `GET /coaching/intake/submissions/{submission_id}` via new web client method.
+  - Added **Load into intake form** action to hydrate draft fields from selected submission.
+- Extended **subscription/plan gating UX** inside workbench:
+  - Starter users now see explicit gating for coach review queue access (Pro+ required).
+  - Mentoring booking CTA now reflects tier entitlement (Elite required vs enabled).
+  - Plan card now surfaces feature unlock badges for review queue + mentoring booking.
+- Polished **output viewer resources + mentoring recommendation** section:
+  - Clear split between recommended resources and mentoring recommendation block.
+  - Added cleaner CTA state messaging when mentoring is locked by tier.
+- Added **final package export UX status states**:
+  - Markdown/JSON export buttons now show exporting/success/error feedback badges/messages.
+  - Export actions remain in-place and now provide immediate user-facing status.
+- Extended frontend API contracts in `apps/web/src/lib/api.ts`:
+  - Added `CoachingIntakeSubmissionDetail` + `CoachingIntakeSubmissionDetailResult` types.
+  - Added `coachingIntakeSubmissionDetail(submissionId)` client method.
+
+### Validation
+- `npm run typecheck` (apps/web) ✅
+
+### Risks
+- Export status feedback is component-local (no toast system/global notification bus yet).
+- Mentoring booking button remains scaffolded (no booking URL workflow wired yet).
+
+### Next
+1. Wire review detail panel to generation-run status visualization from `latest_generation_run` (stage badges from server truth).
+2. Add pagination/filtering on review queue once larger submission volume is expected.
+3. Optionally centralize export feedback into shared toast/notification UX.
+
+## Checkpoint 2026-03-01 (Security next-step pass)
+
+### Delivered
+- Verified and tightened PII-safe logging coverage for newly added subscription/auth flows:
+  - Added structured PII-safe logging on `GET /coaching/subscription/status` lookups.
+  - Added structured PII-safe logging on `POST /coaching/subscription/sync` ingestion.
+- Added server-side subscription enforcement for generation routes:
+  - New `_require_active_subscription(...)` guard in `apps/api/main.py`.
+  - Applied guard in `POST /coaching/sow/generate` (and transitively `generate-draft`).
+- Added regression tests covering:
+  - masked email/token behavior for subscription sync/status logging,
+  - inactive-subscription denial for generation and generate-draft endpoints.
+- Added pilot-ready hardening runbook:
+  - `docs/coaching-project/PILOT_RELEASE_HARDENING_CHECKLIST.md`
+
+### Verification
+- API tests: `python -m pytest tests/test_coaching_security_access.py tests/test_coaching_subscription.py tests/test_rbac_endpoints.py -q` (from `apps/api`)
+- Web compile/build: `npm run build` (from `apps/web`)
+
+### Remaining before pilot go-live
+1. Enforce provider webhook signature verification + replay/idempotency controls.
+2. Add route-level rate limiting for auth/subscription endpoints.
+3. Complete deterministic account linking (`session.username` ↔ subscription email identity).

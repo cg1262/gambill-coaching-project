@@ -164,6 +164,26 @@ export interface CoachingIntakeSubmissionListResult {
   total: number;
 }
 
+export interface CoachingIntakeSubmissionDetail extends CoachingIntakeSubmission {
+  resume_text?: string;
+  self_assessment_text?: string;
+  job_links_json?: string[];
+  preferences_json?: {
+    target_role?: string;
+    preferred_stack?: string;
+    timeline_weeks?: string | number;
+    [key: string]: any;
+  };
+}
+
+export interface CoachingIntakeSubmissionDetailResult {
+  ok: boolean;
+  message?: string;
+  submission_id?: string;
+  submission?: CoachingIntakeSubmissionDetail;
+  latest_generation_run?: Record<string, any> | null;
+}
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
 let AUTH_TOKEN = "";
 
@@ -386,6 +406,10 @@ export const api = {
   listCoachingIntakeSubmissions: (workspaceId: string, limit = 50) =>
     getJson<CoachingIntakeSubmissionListResult>(
       `/coaching/intake/submissions?workspace_id=${encodeURIComponent(workspaceId)}&limit=${limit}`
+    ),
+  coachingIntakeSubmissionDetail: (submissionId: string) =>
+    getJson<CoachingIntakeSubmissionDetailResult>(
+      `/coaching/intake/submissions/${encodeURIComponent(submissionId)}`
     ),
   coachingIntake: (payload: {
     workspace_id: string;
