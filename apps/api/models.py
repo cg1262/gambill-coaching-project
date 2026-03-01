@@ -99,3 +99,26 @@ class Dependency(BaseModel):
 class ImpactResult(BaseModel):
     dependencies: list[Dependency]
     checked_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class SowMilestone(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    name: str
+    duration_weeks: int = Field(ge=1, validation_alias=AliasChoices("duration_weeks", "durationWeeks"))
+    deliverables: list[str] = Field(default_factory=list)
+    milestone_tags: list[str] = Field(default_factory=list, validation_alias=AliasChoices("milestone_tags", "milestoneTags"))
+
+
+class CoachingSowDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    schema_version: str = "0.2"
+    project_title: str
+    candidate_profile: dict = Field(default_factory=dict)
+    business_outcome: dict
+    solution_architecture: dict
+    milestones: list[SowMilestone]
+    roi_dashboard_requirements: dict = Field(validation_alias=AliasChoices("roi_dashboard_requirements", "roiDashboardRequirements"))
+    resource_plan: dict = Field(validation_alias=AliasChoices("resource_plan", "resourcePlan"))
+    mentoring_cta: dict = Field(validation_alias=AliasChoices("mentoring_cta", "mentoringCta"))

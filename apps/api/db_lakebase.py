@@ -1542,6 +1542,54 @@ def get_coaching_intake_submission(submission_id: str) -> dict[str, Any] | None:
     return row
 
 
+def list_coaching_intake_submissions(workspace_id: str, limit: int = 50) -> list[dict[str, Any]]:
+    if not is_configured():
+        return []
+
+    limit = max(1, min(500, int(limit)))
+
+    if _using_duckdb():
+        with lakebase_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM coaching_intake_submissions
+                WHERE workspace_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                [workspace_id, limit],
+            ).fetchall()
+            cols = [d[0] for d in conn.description]
+            data = [dict(zip(cols, row)) for row in rows]
+    else:
+        import psycopg
+        with lakebase_connection() as conn:
+            with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM coaching_intake_submissions
+                    WHERE workspace_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    (workspace_id, limit),
+                )
+                data = [dict(r) for r in (cur.fetchall() or [])]
+
+    for row in data:
+        for key in ["job_links_json", "preferences_json"]:
+            payload = row.get(key)
+            if isinstance(payload, str):
+                try:
+                    row[key] = json.loads(payload)
+                except Exception:
+                    row[key] = [] if key == "job_links_json" else {}
+
+    return data
+
+
 def save_coaching_generation_run(
     run_id: str,
     submission_id: str,
@@ -1579,6 +1627,56 @@ def save_coaching_generation_run(
                 (run_id, submission_id, workspace_id, run_status, json.dumps(parsed_jobs or []), json.dumps(sow or {}), json.dumps(validation or {}), error_message, created_by),
             )
             conn.commit()
+
+
+def get_latest_coaching_generation_run(submission_id: str) -> dict[str, Any] | None:
+    if not is_configured():
+        return None
+
+    if _using_duckdb():
+        with lakebase_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM coaching_generation_runs
+                WHERE submission_id = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                [submission_id],
+            ).fetchall()
+            if not rows:
+                return None
+            cols = [d[0] for d in conn.description]
+            row = dict(zip(cols, rows[0]))
+    else:
+        import psycopg
+        with lakebase_connection() as conn:
+            with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM coaching_generation_runs
+                    WHERE submission_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    """,
+                    (submission_id,),
+                )
+                dbrow = cur.fetchone()
+                row = dict(dbrow) if dbrow else None
+                if not row:
+                    return None
+
+    for key in ["parsed_jobs_json", "sow_json", "validation_json"]:
+        payload = row.get(key)
+        if isinstance(payload, str):
+            try:
+                row[key] = json.loads(payload)
+            except Exception:
+                row[key] = [] if key == "parsed_jobs_json" else {}
+
+    return row
 
 
 def upsert_coaching_job_parse_cache(cache_key: str, source_url: str, parsed_text: str, parsed_json: dict[str, Any]) -> None:
