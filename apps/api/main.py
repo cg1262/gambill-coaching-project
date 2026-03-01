@@ -1,4 +1,4 @@
-from fastapi import Depends, FastAPI, Header
+from fastapi import Depends, FastAPI, Header, HTTPException
 from uuid import uuid4
 from pathlib import Path
 import json
@@ -9,6 +9,7 @@ from urllib.error import URLError, HTTPError
 import base64
 from datetime import datetime, timezone
 import logging
+from typing import Any
 
 from models import CanvasAST, ValidationResult, ImpactResult, CoachingSowDraft
 from services import (
@@ -50,6 +51,7 @@ from db_lakebase import (
     list_coaching_intake_submissions,
     save_coaching_generation_run,
     get_latest_coaching_generation_run,
+    list_coaching_generation_runs,
     upsert_coaching_job_parse_cache,
     get_coaching_job_parse_cache,
     upsert_coaching_account_subscription,
@@ -59,7 +61,7 @@ from db_lakebase import (
 from uc_client import healthcheck as uc_health, fetch_information_schema, fetch_schemas
 from git_ops import git_status, save_and_push_ast, set_git_config
 from db_lakebase import get_user_auth
-from auth import get_current_session, get_current_user, issue_token, whoami, assert_role, revoke_token, revoke_user_sessions, session_stats
+from auth import Session, get_current_session, get_current_user, issue_token, whoami, assert_role, revoke_token, revoke_user_sessions, session_stats
 from security import (
     DEFAULT_MAX_RESUME_BYTES,
     FileValidationError,
@@ -319,12 +321,87 @@ def _is_active_subscription(status: str) -> bool:
     return _normalize_subscription_status(status) == "active"
 
 
+def _require_active_subscription(
+    *,
+    workspace_id: str,
+    session,
+    member_email: str | None = None,
+) -> None:
+    account = get_coaching_account_subscription(
+        workspace_id=workspace_id,
+        username=session.username,
+        email=member_email,
+    )
+    status = _normalize_subscription_status(str((account or {}).get("subscription_status") or ""))
+    can_access = bool(account) and _is_active_subscription(status)
+    if can_access:
+        return
+
+    logger.warning(
+        "coaching_subscription_access_denied",
+        extra={
+            "actor": session.username,
+            "role": session.role,
+            "payload": pii_safe_subscription_log_payload(
+                workspace_id=workspace_id,
+                member_email=member_email or "",
+                subscription_status=status,
+                plan_tier=str((account or {}).get("plan_tier") or "unknown"),
+                launch_token=None,
+                can_access=False,
+            ),
+        },
+    )
+    raise HTTPException(status_code=403, detail="Active coaching subscription required")
+
+
 class CoachingSubscriptionStatusRequest(BaseModel):
     workspace_id: str
     member_email: str
     subscription_status: str = "active"
     plan_tier: str = "core"
     launch_token: str | None = None
+
+
+class CoachingSowExportRequest(BaseModel):
+    workspace_id: str
+    submission_id: str
+    sow: CoachingSowDraft
+    format: str = "markdown"  # markdown | json
+
+
+def _require_active_coaching_subscription(workspace_id: str, session: Session, email: str | None = None) -> dict:
+    account = get_coaching_account_subscription(
+        workspace_id=workspace_id,
+        username=session.username,
+        email=email,
+    )
+    if not account:
+        raise HTTPException(status_code=403, detail="Active coaching subscription required")
+
+    status = _normalize_subscription_status(str(account.get("subscription_status") or ""))
+    if not _is_active_subscription(status):
+        raise HTTPException(status_code=403, detail=f"Subscription status '{status}' is not active")
+    return account
+
+
+def _render_sow_markdown(sow: dict[str, Any]) -> str:
+    milestones = sow.get("milestones") or []
+    milestone_lines = "\n".join([f"- **{m.get('name', 'Milestone')}** ({m.get('duration_weeks', '?')}w): {', '.join(m.get('deliverables') or [])}" for m in milestones])
+    return "\n".join(
+        [
+            f"# {sow.get('project_title', 'Coaching SOW')}",
+            "",
+            "## Business Outcome",
+            str((sow.get("business_outcome") or {}).get("problem_statement") or ""),
+            "",
+            "## Milestones",
+            milestone_lines or "- None",
+            "",
+            "## Architecture",
+            json.dumps((sow.get("solution_architecture") or {}).get("medallion_plan") or {}, indent=2),
+        ]
+    )
 
 app.add_middleware(
     CORSMiddleware,
@@ -1259,6 +1336,21 @@ def coaching_subscription_status(workspace_id: str, email: str | None = None, se
         email=email,
     )
     if not account:
+        logger.info(
+            "coaching_subscription_status_lookup",
+            extra={
+                "actor": session.username,
+                "role": session.role,
+                "payload": pii_safe_subscription_log_payload(
+                    workspace_id=workspace_id,
+                    member_email=email or "",
+                    subscription_status="not_found",
+                    plan_tier="unknown",
+                    launch_token=None,
+                    can_access=False,
+                ),
+            },
+        )
         return {
             "ok": True,
             "workspace_id": workspace_id,
@@ -1269,6 +1361,21 @@ def coaching_subscription_status(workspace_id: str, email: str | None = None, se
         }
 
     status = _normalize_subscription_status(str(account.get("subscription_status") or ""))
+    logger.info(
+        "coaching_subscription_status_lookup",
+        extra={
+            "actor": session.username,
+            "role": session.role,
+            "payload": pii_safe_subscription_log_payload(
+                workspace_id=workspace_id,
+                member_email=email or str(account.get("email") or ""),
+                subscription_status=status,
+                plan_tier=str(account.get("plan_tier") or "unknown"),
+                launch_token=None,
+                can_access=_is_active_subscription(status),
+            ),
+        },
+    )
     return {
         "ok": True,
         "workspace_id": workspace_id,
@@ -1284,6 +1391,23 @@ def coaching_subscription_sync(req: CoachingSubscriptionSyncRequest, session=Dep
     assert_role(session, {"admin", "editor"})
     event_id = str(uuid4())
     normalized_status = _normalize_subscription_status(req.subscription_status)
+    logger.info(
+        "coaching_subscription_sync_received",
+        extra={
+            "actor": session.username,
+            "role": session.role,
+            "provider": req.provider,
+            "event_type": req.event_type,
+            "payload": pii_safe_subscription_log_payload(
+                workspace_id=req.workspace_id,
+                member_email=req.email,
+                subscription_status=normalized_status,
+                plan_tier=req.plan_tier,
+                launch_token=None,
+                can_access=_is_active_subscription(normalized_status),
+            ),
+        },
+    )
     save_coaching_subscription_event(
         event_id=event_id,
         workspace_id=req.workspace_id,
@@ -1398,6 +1522,12 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
     if not intake:
         return {"ok": False, "message": "submission not found", "submission_id": req.submission_id}
 
+    _require_active_coaching_subscription(
+        workspace_id=req.workspace_id,
+        session=session,
+        email=str(intake.get("applicant_email") or "").strip().lower() or None,
+    )
+
     parsed_jobs = req.parsed_jobs or []
     sow = build_sow_skeleton(
         intake={
@@ -1406,6 +1536,34 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
         },
         parsed_jobs=parsed_jobs,
     )
+
+    first_findings = validate_sow_payload(sow)
+    auto_revised = False
+    if first_findings:
+        sow = auto_revise_sow_once(sow, first_findings)
+        auto_revised = True
+
+    strict_sow = CoachingSowDraft.model_validate(sow).model_dump(mode="json", by_alias=True)
+    final_findings = validate_sow_payload(strict_sow)
+
+    run_id = str(uuid4())
+    save_coaching_generation_run(
+        run_id=run_id,
+        submission_id=req.submission_id,
+        workspace_id=req.workspace_id,
+        run_status="completed" if len(final_findings) == 0 else "needs_review",
+        parsed_jobs=parsed_jobs,
+        sow=strict_sow,
+        validation={
+            "first_pass_findings": first_findings,
+            "final_findings": final_findings,
+            "auto_revised": auto_revised,
+            "guardrails": {"strict_schema": True, "auto_revise_once": True},
+        },
+        error_message=None,
+        created_by=session.username,
+    )
+
     logger.info(
         "coaching_sow_generate_completed",
         extra={
@@ -1425,9 +1583,13 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
     )
     return {
         "ok": True,
+        "run_id": run_id,
         "submission_id": req.submission_id,
         "workspace_id": req.workspace_id,
-        "sow": sow,
+        "sow": strict_sow,
+        "valid": len(final_findings) == 0,
+        "auto_revised": auto_revised,
+        "findings": final_findings,
         "schema": {
             "schema_version": "0.2",
             "model": "CoachingSowDraft",
@@ -1440,9 +1602,9 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
                 "resource_plan",
                 "mentoring_cta",
             ],
+            "strict_enforced": True,
         },
     }
-
 
 @app.post("/coaching/sow/generate-draft")
 def coaching_generate_sow_draft(req: CoachingGenerateSowRequest, session=Depends(get_current_session)) -> dict:
@@ -1533,6 +1695,69 @@ def coaching_demo_seed_package_get(workspace_id: str, session=Depends(get_curren
     return {"ok": True, "workspace_id": workspace_id, "project_package": package}
 
 
+@app.post("/coaching/sow/export")
+def coaching_sow_export(req: CoachingSowExportRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    intake = get_coaching_intake_submission(req.submission_id)
+    if not intake:
+        return {"ok": False, "message": "submission not found", "submission_id": req.submission_id}
+
+    _require_active_coaching_subscription(
+        workspace_id=req.workspace_id,
+        session=session,
+        email=str(intake.get("applicant_email") or "").strip().lower() or None,
+    )
+
+    sow_payload = req.sow.model_dump(mode="json", by_alias=True)
+    fmt = str(req.format or "markdown").strip().lower()
+    if fmt == "json":
+        return {
+            "ok": True,
+            "workspace_id": req.workspace_id,
+            "submission_id": req.submission_id,
+            "format": "json",
+            "content": json.dumps(sow_payload, indent=2),
+        }
+    return {
+        "ok": True,
+        "workspace_id": req.workspace_id,
+        "submission_id": req.submission_id,
+        "format": "markdown",
+        "content": _render_sow_markdown(sow_payload),
+    }
+
+
+@app.get("/coaching/review/open-submissions")
+def coaching_review_open_submissions(workspace_id: str, limit: int = 50, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor", "viewer"})
+    submissions = list_coaching_intake_submissions(workspace_id=workspace_id, limit=limit)
+    enriched: list[dict[str, Any]] = []
+    for sub in submissions:
+        submission_id = str(sub.get("submission_id") or "")
+        latest = get_latest_coaching_generation_run(submission_id) if submission_id else None
+        run_status = str((latest or {}).get("run_status") or "not_started")
+        if run_status != "completed":
+            enriched.append({"submission": sub, "latest_generation_run": latest, "review_state": run_status})
+
+    return {"ok": True, "workspace_id": workspace_id, "open_submissions": enriched, "total": len(enriched)}
+
+
+@app.get("/coaching/review/submissions/{submission_id}/runs")
+def coaching_review_submission_runs(submission_id: str, limit: int = 20, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor", "viewer"})
+    submission = get_coaching_intake_submission(submission_id)
+    if not submission:
+        return {"ok": False, "message": "submission not found", "submission_id": submission_id}
+    runs = list_coaching_generation_runs(submission_id=submission_id, limit=limit)
+    return {
+        "ok": True,
+        "submission_id": submission_id,
+        "workspace_id": submission.get("workspace_id"),
+        "runs": runs,
+        "total": len(runs),
+    }
+
+
 @app.post("/coaching/sow/validate-loop")
 def coaching_validate_loop(req: CoachingValidateLoopRequest, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor"})
@@ -1613,3 +1838,4 @@ def admin_upsert_user(req: UserUpsertRequest, session=Depends(get_current_sessio
     upsert_user(username=req.username, password=req.password, role=req.role, active=req.active)
     revoked = revoke_user_sessions(req.username) if not req.active else 0
     return {"ok": True, "revoked_sessions": revoked}
+

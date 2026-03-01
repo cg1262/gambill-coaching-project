@@ -1,0 +1,128 @@
+from datetime import datetime, timezone
+
+from fastapi.testclient import TestClient
+
+import main
+from auth import Session, get_current_session
+from main import app
+
+
+def _override_session(role: str = "editor", username: str = "coach1"):
+    def _inner():
+        return Session(username=username, role=role, expires_at=datetime.now(timezone.utc))
+
+    return _inner
+
+
+def _base_intake(submission_id: str = "sub-1"):
+    return {
+        "submission_id": submission_id,
+        "workspace_id": "ws-1",
+        "applicant_name": "Candidate",
+        "applicant_email": "candidate@example.com",
+        "preferences_json": {},
+        "job_links_json": [],
+        "resume_text": "resume",
+        "self_assessment_text": "assessment",
+    }
+
+
+def test_generate_sow_requires_active_subscription(monkeypatch):
+    app.dependency_overrides[get_current_session] = _override_session("editor")
+    monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: _base_intake(submission_id))
+    monkeypatch.setattr(main, "get_coaching_account_subscription", lambda workspace_id, username=None, email=None: None)
+
+    client = TestClient(app)
+    res = client.post(
+        "/coaching/sow/generate",
+        json={"workspace_id": "ws-1", "submission_id": "sub-1", "parsed_jobs": []},
+    )
+    assert res.status_code == 403
+    app.dependency_overrides = {}
+
+
+def test_generate_sow_applies_guardrails_and_persists_run(monkeypatch):
+    app.dependency_overrides[get_current_session] = _override_session("editor")
+    monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: _base_intake(submission_id))
+    monkeypatch.setattr(
+        main,
+        "get_coaching_account_subscription",
+        lambda workspace_id, username=None, email=None: {"subscription_status": "active", "email": email},
+    )
+
+    def _bad_skeleton(intake, parsed_jobs):
+        return {
+            "schema_version": "0.2",
+            "project_title": "x",
+            "candidate_profile": {},
+            "business_outcome": {},
+            "solution_architecture": {"medallion_plan": {"bronze": "", "silver": "", "gold": ""}},
+            "milestones": [],
+            "roi_dashboard_requirements": {},
+            "resource_plan": {"required": [], "recommended": [], "optional": []},
+            "mentoring_cta": {},
+        }
+
+    monkeypatch.setattr(main, "build_sow_skeleton", _bad_skeleton)
+
+    captured = {}
+
+    def _save_run(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(main, "save_coaching_generation_run", _save_run)
+
+    client = TestClient(app)
+    res = client.post(
+        "/coaching/sow/generate",
+        json={"workspace_id": "ws-1", "submission_id": "sub-1", "parsed_jobs": []},
+    )
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert body["auto_revised"] is True
+    assert body["schema"]["strict_enforced"] is True
+    assert captured["validation"]["guardrails"]["strict_schema"] is True
+    assert isinstance(body["sow"]["milestones"], list)
+    assert body["sow"]["resource_plan"]["required"]
+    app.dependency_overrides = {}
+
+
+def test_export_requires_active_subscription(monkeypatch):
+    app.dependency_overrides[get_current_session] = _override_session("editor")
+    monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: _base_intake(submission_id))
+    monkeypatch.setattr(main, "get_coaching_account_subscription", lambda workspace_id, username=None, email=None: {"subscription_status": "inactive"})
+
+    client = TestClient(app)
+    res = client.post(
+        "/coaching/sow/export",
+        json={
+            "workspace_id": "ws-1",
+            "submission_id": "sub-1",
+            "format": "json",
+            "sow": {
+                "schema_version": "0.2",
+                "project_title": "Demo",
+                "candidate_profile": {},
+                "business_outcome": {"problem_statement": "x"},
+                "solution_architecture": {"medallion_plan": {"bronze": "a", "silver": "b", "gold": "c"}},
+                "milestones": [
+                    {"name": "M1", "duration_weeks": 1, "deliverables": ["d1"], "milestone_tags": ["discovery"]},
+                    {"name": "M2", "duration_weeks": 1, "deliverables": ["d2"], "milestone_tags": ["bronze"]},
+                    {"name": "M3", "duration_weeks": 1, "deliverables": ["d3"], "milestone_tags": ["gold"]},
+                ],
+                "roi_dashboard_requirements": {"required_dimensions": ["time"], "required_measures": ["cost_savings"]},
+                "resource_plan": {
+                    "required": [{"title": "x", "url": "https://example.com"}],
+                    "recommended": [],
+                    "optional": [],
+                    "affiliate_disclosure": "Some links may be affiliate links.",
+                    "trust_language": "Recommendations are optional and unbiased.",
+                },
+                "mentoring_cta": {"recommended_tier": "Bi-weekly 1:1", "reason": "x", "trust_language": "optional"},
+            },
+        },
+    )
+    assert res.status_code == 403
+    app.dependency_overrides = {}

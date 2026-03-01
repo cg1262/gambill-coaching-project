@@ -234,7 +234,8 @@ def auto_revise_sow_once(sow: dict[str, Any], findings: list[dict[str, str]]) ->
     out["roi_dashboard_requirements"].setdefault("required_measures", ["cost_savings"])
 
     out.setdefault("resource_plan", {})
-    out["resource_plan"].setdefault("required", [{"title": "Project README Template", "url": "https://example.com/readme-template"}])
+    if not (out["resource_plan"].get("required") or []):
+        out["resource_plan"]["required"] = [{"title": "Project README Template", "url": "https://example.com/readme-template"}]
     out["resource_plan"].setdefault("recommended", [])
     out["resource_plan"].setdefault("optional", [])
     out["resource_plan"].setdefault(

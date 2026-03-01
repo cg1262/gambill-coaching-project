@@ -1720,6 +1720,54 @@ def get_latest_coaching_generation_run(submission_id: str) -> dict[str, Any] | N
     return row
 
 
+def list_coaching_generation_runs(submission_id: str, limit: int = 20) -> list[dict[str, Any]]:
+    if not is_configured():
+        return []
+
+    max_limit = max(1, min(int(limit or 20), 200))
+
+    if _using_duckdb():
+        with lakebase_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM coaching_generation_runs
+                WHERE submission_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                [submission_id, max_limit],
+            ).fetchall()
+            cols = [d[0] for d in conn.description]
+            data = [dict(zip(cols, row)) for row in rows]
+    else:
+        import psycopg
+        with lakebase_connection() as conn:
+            with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM coaching_generation_runs
+                    WHERE submission_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                    """,
+                    (submission_id, max_limit),
+                )
+                data = [dict(r) for r in (cur.fetchall() or [])]
+
+    for row in data:
+        for key in ["parsed_jobs_json", "sow_json", "validation_json"]:
+            payload = row.get(key)
+            if isinstance(payload, str):
+                try:
+                    row[key] = json.loads(payload)
+                except Exception:
+                    row[key] = [] if key == "parsed_jobs_json" else {}
+
+    return data
+
+
 def upsert_coaching_job_parse_cache(cache_key: str, source_url: str, parsed_text: str, parsed_json: dict[str, Any]) -> None:
     if not is_configured():
         return

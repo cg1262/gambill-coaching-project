@@ -523,6 +523,44 @@ Deliverable: “enterprise-quality demo and stronger impact fidelity.”
 2. Wire account linking from app user/session to subscription record (`username`↔`email`) for deterministic gating.
 3. Enable subscription-required guard on selected coaching generation routes once frontend member flow is connected.
 
+## Checkpoint Update (2026-03-01 - Coaching Backend Next-Step Integration)
+
+### Done
+- Normalized coaching backend flow by making `/coaching/sow/generate` do full guarded generation:
+  - requires active coaching subscription
+  - applies one-pass auto-revision guardrail when initial findings exist
+  - enforces strict SOW schema (`CoachingSowDraft`) before returning payload
+  - persists generation run metadata with guardrail flags for review/audit
+- Tightened auto-revision behavior in `coaching.py` so empty `resource_plan.required` is backfilled (not only missing keys).
+- Added subscription-gated export endpoint:
+  - `POST /coaching/sow/export` (`markdown` or `json` payload rendering)
+- Added coach review retrieval endpoints for frontend open-submission actions:
+  - `GET /coaching/review/open-submissions`
+  - `GET /coaching/review/submissions/{submission_id}/runs`
+- Added backend persistence helper for coach review run history:
+  - `list_coaching_generation_runs(...)`
+- Added tests for new behavior:
+  - `apps/api/tests/test_coaching_generation_guardrails.py`
+  - `apps/api/tests/test_coaching_review_endpoints.py`
+
+### Validation
+- `python -m compileall apps/api`
+- `python -m pytest -q` (from `apps/api`)
+  - Result: `56 passed, 4 skipped`
+
+### Risks
+- Subscription check currently trusts internal account status table; provider signature verification + replay defense still pending.
+- `open-submissions` uses latest run status only; future multi-stage review semantics may require explicit state model.
+
+### Needs
+- Frontend wiring to new review/export endpoints and subscription-gated response handling.
+- Product decision on error UX for inactive subscriptions (upgrade prompt vs support flow).
+
+### Next
+1. Add provider-signed webhook verification and idempotent event processing.
+2. Add pagination/filter parameters on review endpoints for larger coach queues.
+3. Add export artifact persistence option tied to generation run IDs.
+
 ## Checkpoint Update (2026-03-01 - Coaching Frontend Pass 4: Review Detail + Gating + Export UX)
 
 ### Done
