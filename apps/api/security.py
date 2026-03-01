@@ -151,3 +151,31 @@ def pii_safe_coaching_log_payload(
         payload["parsed_jobs_count"] = len(parsed_jobs)
         payload["parsed_jobs_sources"] = sorted({str(j.get("source") or "unknown") for j in parsed_jobs})
     return payload
+
+
+def pii_safe_auth_log_payload(*, username: str, success: bool, role: str | None, used_fallback: bool) -> dict[str, Any]:
+    return {
+        "username_summary": pii_safe_text_summary(username or "", include_hash=False),
+        "success": bool(success),
+        "role": role,
+        "used_fallback": bool(used_fallback),
+    }
+
+
+def pii_safe_subscription_log_payload(
+    *,
+    workspace_id: str,
+    member_email: str,
+    subscription_status: str,
+    plan_tier: str,
+    launch_token: str | None,
+    can_access: bool,
+) -> dict[str, Any]:
+    return {
+        "workspace_id": workspace_id,
+        "member_email_summary": pii_safe_text_summary(member_email or "", include_hash=False),
+        "subscription_status": str(subscription_status or "").strip().lower(),
+        "plan_tier": plan_tier,
+        "launch_token_summary": pii_safe_text_summary(launch_token or ""),
+        "can_access": bool(can_access),
+    }

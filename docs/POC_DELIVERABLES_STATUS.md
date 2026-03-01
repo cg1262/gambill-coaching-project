@@ -380,6 +380,41 @@ Deliverable: “enterprise-quality demo and stronger impact fidelity.”
 - Extend resource matching with weighted tags + optional semantic rerank.
 - Add one-click endpoint to persist generated seed package as a demo project artifact.
 
+## Latest Update (2026-03-01 - Coaching Security Pass 3: Member Access Threats + Token Misuse)
+
+### Done
+- Added hosted app/member access threat model document:
+  - `docs/coaching-project/HOSTED_APP_MEMBER_FLOW_THREAT_MODEL.md`
+- Added subscription access-check scaffold endpoint with explicit role guard:
+  - `POST /coaching/subscription/status`
+- Added PII-safe structured logging helpers for auth/subscription paths in `apps/api/security.py`:
+  - `pii_safe_auth_log_payload(...)`
+  - `pii_safe_subscription_log_payload(...)`
+- Applied PII-safe logging in `apps/api/main.py` for:
+  - `POST /auth/login`
+  - `POST /auth/refresh`
+  - `POST /coaching/subscription/status`
+- Added security-focused regression tests for unauthorized access/token misuse and safe logging:
+  - `apps/api/tests/test_coaching_security_access.py`
+
+### Validation
+- `python -m pytest -q apps/api/tests/test_coaching_security_access.py apps/api/tests/test_security_baseline.py`
+- `python -m compileall apps/api`
+
+### Risks
+- Subscription status endpoint is currently scaffold-only and not yet backed by provider-signed webhook truth.
+- Session lifecycle remains in-memory; does not yet provide production-grade revocation/audit durability.
+
+### Needs
+- Signed webhook ingestion + server-owned subscription state table for authoritative access checks.
+- Short-TTL signed launch token (`jti` replay protection) for Squarespace handoff flow.
+- Global log sanitizer middleware to enforce masking invariants beyond endpoint discipline.
+
+### Next
+1. Wire subscription status checks to webhook-driven persisted account state.
+2. Implement signed launch token verification and replay defense.
+3. Add auth/subscription endpoint rate limiting and lockout thresholds.
+
 ## Latest Update (2026-03-01 - Coaching Security Pass 2)
 
 ### Checkpoint

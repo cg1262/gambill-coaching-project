@@ -52,6 +52,9 @@ from db_lakebase import (
     get_latest_coaching_generation_run,
     upsert_coaching_job_parse_cache,
     get_coaching_job_parse_cache,
+    upsert_coaching_account_subscription,
+    get_coaching_account_subscription,
+    save_coaching_subscription_event,
 )
 from uc_client import healthcheck as uc_health, fetch_information_schema, fetch_schemas
 from git_ops import git_status, save_and_push_ast, set_git_config
@@ -62,7 +65,9 @@ from security import (
     FileValidationError,
     build_safe_resume_path,
     mask_sensitive_dict,
+    pii_safe_auth_log_payload,
     pii_safe_coaching_log_payload,
+    pii_safe_subscription_log_payload,
     validate_resume_metadata,
 )
 
@@ -285,6 +290,42 @@ class ResumeUploadValidationRequest(BaseModel):
     content_type: str | None = None
     size_bytes: int
 
+
+class CoachingSubscriptionSyncRequest(BaseModel):
+    workspace_id: str
+    provider: str = "squarespace"
+    event_type: str = "subscription.updated"
+    email: str
+    plan_tier: str = "coaching-core"
+    subscription_status: str
+    renewal_date: str | None = None
+    provider_customer_id: str | None = None
+    provider_subscription_id: str | None = None
+    raw_event: dict | None = None
+
+
+def _normalize_subscription_status(status: str) -> str:
+    s = (status or "").strip().lower()
+    if s in {"active", "trialing", "paid", "current"}:
+        return "active"
+    if s in {"past_due", "past-due", "incomplete", "unpaid"}:
+        return "past_due"
+    if s in {"canceled", "cancelled", "expired", "inactive", "ended"}:
+        return "inactive"
+    return s or "unknown"
+
+
+def _is_active_subscription(status: str) -> bool:
+    return _normalize_subscription_status(status) == "active"
+
+
+class CoachingSubscriptionStatusRequest(BaseModel):
+    workspace_id: str
+    member_email: str
+    subscription_status: str = "active"
+    plan_tier: str = "core"
+    launch_token: str | None = None
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -316,13 +357,34 @@ def auth_login(req: LoginRequest) -> dict:
     if (not user) and (not lakebase_is_configured()):
         if req.username == "admin" and req.password == "admin123":
             token = issue_token("admin", "admin")
+            logger.info(
+                "auth_login_completed",
+                extra={
+                    "event": "auth_login_completed",
+                    "payload": pii_safe_auth_log_payload(username=req.username, success=True, role="admin", used_fallback=True),
+                },
+            )
             return {"ok": True, "token": token, "username": "admin", "role": "admin", "fallback": True}
 
     if not user:
+        logger.info(
+            "auth_login_completed",
+            extra={
+                "event": "auth_login_completed",
+                "payload": pii_safe_auth_log_payload(username=req.username, success=False, role=None, used_fallback=False),
+            },
+        )
         if not lakebase_is_configured():
             return {"ok": False, "message": "Invalid credentials (backend not configured: set LAKEBASE_BACKEND=duckdb for local dev or configure Postgres)"}
         return {"ok": False, "message": "Invalid credentials"}
     token = issue_token(user["username"], user["role"])
+    logger.info(
+        "auth_login_completed",
+        extra={
+            "event": "auth_login_completed",
+            "payload": pii_safe_auth_log_payload(username=user["username"], success=True, role=user["role"], used_fallback=False),
+        },
+    )
     return {"ok": True, "token": token, "username": user["username"], "role": user["role"]}
 
 
@@ -334,6 +396,13 @@ def auth_me(authorization: str | None = Header(default=None)) -> dict:
 @app.post("/auth/refresh")
 def auth_refresh(session=Depends(get_current_session)) -> dict:
     token = issue_token(session.username, session.role)
+    logger.info(
+        "auth_refresh_completed",
+        extra={
+            "event": "auth_refresh_completed",
+            "payload": pii_safe_auth_log_payload(username=session.username, success=True, role=session.role, used_fallback=False),
+        },
+    )
     return {"ok": True, "token": token, "username": session.username, "role": session.role}
 
 
@@ -346,6 +415,34 @@ def auth_logout(authorization: str | None = Header(default=None)) -> dict:
 def auth_session_stats(session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin"})
     return session_stats()
+
+
+@app.post("/coaching/subscription/status")
+def coaching_subscription_status(req: CoachingSubscriptionStatusRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    normalized_status = str(req.subscription_status or "").strip().lower()
+    can_access = normalized_status in {"active", "trialing"}
+    logger.info(
+        "coaching_subscription_status_checked",
+        extra={
+            "event": "coaching_subscription_status_checked",
+            "payload": pii_safe_subscription_log_payload(
+                workspace_id=req.workspace_id,
+                member_email=req.member_email,
+                subscription_status=normalized_status,
+                plan_tier=req.plan_tier,
+                launch_token=req.launch_token,
+                can_access=can_access,
+            ),
+        },
+    )
+    return {
+        "ok": True,
+        "workspace_id": req.workspace_id,
+        "member": {"email_present": bool(str(req.member_email or "").strip())},
+        "subscription": {"status": normalized_status, "plan_tier": req.plan_tier},
+        "can_access": can_access,
+    }
 
 
 @app.post("/validate/deterministic", response_model=ValidationResult)
@@ -1137,20 +1234,88 @@ def coaching_intake(req: CoachingIntakeRequest, session=Depends(get_current_sess
 
 
 @app.get("/coaching/intake/submissions")
-def coaching_intake_submissions(workspace_id: str, limit: int = 50, user: str = Depends(get_current_user)) -> dict:
-    _ = user
+def coaching_intake_submissions(workspace_id: str, limit: int = 50, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor", "viewer"})
     rows = list_coaching_intake_submissions(workspace_id=workspace_id, limit=limit)
     return {"workspace_id": workspace_id, "submissions": rows, "total": len(rows)}
 
 
 @app.get("/coaching/intake/submissions/{submission_id}")
-def coaching_intake_submission_detail(submission_id: str, user: str = Depends(get_current_user)) -> dict:
-    _ = user
+def coaching_intake_submission_detail(submission_id: str, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor", "viewer"})
     intake = get_coaching_intake_submission(submission_id)
     if not intake:
         return {"ok": False, "message": "submission not found", "submission_id": submission_id}
     latest_run = get_latest_coaching_generation_run(submission_id)
     return {"ok": True, "submission": intake, "latest_generation_run": latest_run}
+
+
+@app.get("/coaching/subscription/status")
+def coaching_subscription_status(workspace_id: str, email: str | None = None, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor", "viewer"})
+    account = get_coaching_account_subscription(
+        workspace_id=workspace_id,
+        username=session.username,
+        email=email,
+    )
+    if not account:
+        return {
+            "ok": True,
+            "workspace_id": workspace_id,
+            "username": session.username,
+            "subscription": None,
+            "active": False,
+            "status": "not_found",
+        }
+
+    status = _normalize_subscription_status(str(account.get("subscription_status") or ""))
+    return {
+        "ok": True,
+        "workspace_id": workspace_id,
+        "username": session.username,
+        "subscription": account,
+        "active": _is_active_subscription(status),
+        "status": status,
+    }
+
+
+@app.post("/coaching/subscription/sync")
+def coaching_subscription_sync(req: CoachingSubscriptionSyncRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    event_id = str(uuid4())
+    normalized_status = _normalize_subscription_status(req.subscription_status)
+    save_coaching_subscription_event(
+        event_id=event_id,
+        workspace_id=req.workspace_id,
+        provider=req.provider,
+        event_type=req.event_type,
+        email=req.email,
+        provider_customer_id=req.provider_customer_id,
+        provider_subscription_id=req.provider_subscription_id,
+        payload=req.raw_event or req.model_dump(mode="json"),
+        received_by=session.username,
+    )
+    upsert_coaching_account_subscription(
+        workspace_id=req.workspace_id,
+        username=None,
+        email=req.email.strip().lower(),
+        plan_tier=req.plan_tier,
+        subscription_status=normalized_status,
+        renewal_date=req.renewal_date,
+        provider_customer_id=req.provider_customer_id,
+        provider_subscription_id=req.provider_subscription_id,
+        provider_source=req.provider,
+        updated_by=session.username,
+    )
+    return {
+        "ok": True,
+        "workspace_id": req.workspace_id,
+        "event_id": event_id,
+        "provider": req.provider,
+        "status": normalized_status,
+        "active": _is_active_subscription(normalized_status),
+        "message": "Subscription sync stub accepted and stored.",
+    }
 
 
 @app.post("/coaching/jobs/parse")
@@ -1344,8 +1509,8 @@ def coaching_demo_seed_package(req: CoachingDemoSeedRequest, session=Depends(get
 
 
 @app.get("/coaching/demo/seed-package")
-def coaching_demo_seed_package_get(workspace_id: str, user: str = Depends(get_current_user)) -> dict:
-    _ = user
+def coaching_demo_seed_package_get(workspace_id: str, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor", "viewer"})
     latest = list_coaching_intake_submissions(workspace_id=workspace_id, limit=1)
     applicant_name = str((latest[0] if latest else {}).get("applicant_name") or "Demo Candidate")
     sample_intake = {
