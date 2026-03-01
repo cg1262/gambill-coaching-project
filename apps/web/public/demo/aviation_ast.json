@@ -1,0 +1,11 @@
+{
+  "version": "1.0",
+  "workspaceId": "demo-aviation",
+  "tables": [
+    {"id":"flight","schema":"av","table":"flight_leg","columns":[{"name":"flight_leg_id","dataType":"string","nullable":false,"isPrimaryKey":true},{"name":"tail_number","dataType":"string","nullable":false}],"source":"mock","position":{"x":70,"y":90}},
+    {"id":"aircraft","schema":"av","table":"aircraft","columns":[{"name":"tail_number","dataType":"string","nullable":false,"isPrimaryKey":true},{"name":"model_code","dataType":"string","nullable":false}],"source":"mock","position":{"x":350,"y":250}}
+  ],
+  "relationships": [
+    {"id":"flight-aircraft","fromTableId":"flight","toTableId":"aircraft","fromColumn":"tail_number","toColumn":"tail_number","relationshipType":"many_to_one"}
+  ]
+}

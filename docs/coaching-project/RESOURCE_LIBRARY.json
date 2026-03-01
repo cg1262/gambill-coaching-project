@@ -1,0 +1,129 @@
+{
+  "resources": [
+    {
+      "id": "book-ddia",
+      "title": "Designing Data-Intensive Applications",
+      "author": "Martin Kleppmann",
+      "type": "book",
+      "topics": ["architecture", "distributed-systems", "data-platform"],
+      "level": "intermediate",
+      "affiliate_link": "https://amzn.to/45QIzci"
+    },
+    {
+      "id": "book-fde",
+      "title": "Fundamentals of Data Engineering",
+      "author": "Joe Reis, Matt Housley",
+      "type": "book",
+      "topics": ["data-engineering", "pipelines", "career"],
+      "level": "beginner",
+      "affiliate_link": "https://amzn.to/4lMN3Xh"
+    },
+    {
+      "id": "book-governance",
+      "title": "Data Governance",
+      "author": "John Ladley",
+      "type": "book",
+      "topics": ["governance", "data-management"],
+      "level": "intermediate",
+      "affiliate_link": "https://amzn.to/4myGcBZ"
+    },
+    {
+      "id": "book-storytelling",
+      "title": "Storytelling With Data",
+      "author": "Cole Nussbaumer Knaflic",
+      "type": "book",
+      "topics": ["bi", "visualization", "communication"],
+      "level": "beginner",
+      "affiliate_link": "https://amzn.to/4lH98pZ"
+    },
+    {
+      "id": "book-kimball",
+      "title": "The Data Warehouse Toolkit",
+      "author": "Ralph Kimball, Margy Ross",
+      "type": "book",
+      "topics": ["dimensional-modeling", "star-schema", "warehouse"],
+      "level": "intermediate",
+      "affiliate_link": "https://amzn.to/45Sd0yH"
+    },
+    {
+      "id": "book-sql-perf",
+      "title": "SQL Performance Explained",
+      "author": "Markus Winand",
+      "type": "book",
+      "topics": ["sql", "performance", "query-optimization"],
+      "level": "intermediate",
+      "affiliate_link": "https://amzn.to/4lOy1QK"
+    },
+    {
+      "id": "book-pragmatic",
+      "title": "The Pragmatic Programmer",
+      "author": "Andrew Hunt, David Thomas",
+      "type": "book",
+      "topics": ["engineering", "quality", "craft"],
+      "level": "beginner",
+      "affiliate_link": "https://amzn.to/47eXsaz"
+    },
+    {
+      "id": "course-sql-bootcamp",
+      "title": "The Complete SQL Bootcamp",
+      "type": "course",
+      "provider": "Udemy",
+      "topics": ["sql", "foundations"],
+      "level": "beginner",
+      "affiliate_link": "https://trk.udemy.com/QjkKO3"
+    },
+    {
+      "id": "course-databricks-pyspark",
+      "title": "Databricks and PySpark for Big Data: From Zero to Expert",
+      "type": "course",
+      "provider": "Udemy",
+      "topics": ["databricks", "pyspark", "big-data"],
+      "level": "beginner",
+      "affiliate_link": "https://trk.udemy.com/RGeRR7"
+    },
+    {
+      "id": "course-databricks-cert",
+      "title": "Databricks Certified Data Engineer Associate",
+      "type": "course",
+      "provider": "Udemy",
+      "topics": ["databricks", "certification", "data-engineering"],
+      "level": "intermediate",
+      "affiliate_link": "https://trk.udemy.com/o4rnzY"
+    },
+    {
+      "id": "course-de-bootcamp-2025",
+      "title": "The Complete Data Engineering Bootcamp with PySpark (2025)",
+      "type": "course",
+      "provider": "Udemy",
+      "topics": ["data-engineering", "pyspark", "pipeline"],
+      "level": "beginner",
+      "affiliate_link": "https://trk.udemy.com/3J47dA"
+    },
+    {
+      "id": "course-aws-spark-kafka",
+      "title": "Data Engineering Vol. 2 AWS: Data Processing – Spark & Kafka",
+      "type": "course",
+      "provider": "Udemy",
+      "topics": ["aws", "spark", "kafka", "streaming"],
+      "level": "intermediate",
+      "affiliate_link": "https://trk.udemy.com/194bRD"
+    },
+    {
+      "id": "course-ai-engineer-2025",
+      "title": "The AI Engineer Course 2025: Complete AI Engineer Bootcamp",
+      "type": "course",
+      "provider": "Udemy",
+      "topics": ["ai", "llm", "mlops"],
+      "level": "intermediate",
+      "affiliate_link": "https://trk.udemy.com/AP4KnK"
+    }
+  ],
+  "mentoring": {
+    "url": "https://www.gambilldataengineering.com/mentoring-program",
+    "tiers": [
+      {"name": "Bi-weekly 1:1", "price": 500},
+      {"name": "Weekly 1:1", "price": 800},
+      {"name": "Weekly 1:1 + Senior Guidance", "price": 1000}
+    ]
+  }
+}

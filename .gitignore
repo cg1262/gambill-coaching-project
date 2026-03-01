@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+.next/
+*.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local secrets (do not commit)
+secrets/
+**/client_secret.json

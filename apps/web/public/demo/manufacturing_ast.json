@@ -1,0 +1,11 @@
+{
+  "version": "1.0",
+  "workspaceId": "demo-mfg",
+  "tables": [
+    {"id":"work_order","schema":"mfg","table":"work_order","columns":[{"name":"work_order_id","dataType":"string","nullable":false,"isPrimaryKey":true},{"name":"machine_id","dataType":"string","nullable":false}],"source":"mock","position":{"x":80,"y":100}},
+    {"id":"machine","schema":"mfg","table":"machine","columns":[{"name":"machine_id","dataType":"string","nullable":false,"isPrimaryKey":true},{"name":"line_code","dataType":"string","nullable":false}],"source":"mock","position":{"x":360,"y":220}}
+  ],
+  "relationships": [
+    {"id":"wo-machine","fromTableId":"work_order","toTableId":"machine","fromColumn":"machine_id","toColumn":"machine_id","relationshipType":"many_to_one"}
+  ]
+}

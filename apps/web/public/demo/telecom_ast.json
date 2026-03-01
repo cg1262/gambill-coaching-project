@@ -1,0 +1,12 @@
+{
+  "version": "1.0",
+  "workspaceId": "demo-telecom",
+  "tables": [
+    {"id":"cdr","schema":"telco","table":"call_detail_record","columns":[{"name":"cdr_id","dataType":"string","nullable":false,"isPrimaryKey":true},{"name":"subscriber_id","dataType":"string","nullable":false},{"name":"cell_tower_id","dataType":"string","nullable":false}],"source":"mock","position":{"x":80,"y":100}},
+    {"id":"subscriber","schema":"telco","table":"subscriber","columns":[{"name":"subscriber_id","dataType":"string","nullable":false,"isPrimaryKey":true},{"name":"plan_code","dataType":"string","nullable":false}],"source":"mock","position":{"x":380,"y":220}}
+  ],
+  "relationships": [
+    {"id":"cdr-subscriber","fromTableId":"cdr","toTableId":"subscriber","fromColumn":"subscriber_id","toColumn":"subscriber_id","relationshipType":"many_to_one"}
+  ],
+  "modifiedTableIds":["cdr"]
+}

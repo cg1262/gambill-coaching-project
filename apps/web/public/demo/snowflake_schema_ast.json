@@ -1,0 +1,31 @@
+{
+  "tables": [
+    {
+      "id": "sales_fact",
+      "schema": "mart",
+      "table": "sales_fact",
+      "position": { "x": 420, "y": 220 },
+      "columns": [
+        { "name": "sales_id", "dataType": "string", "nullable": false, "isPrimaryKey": true },
+        { "name": "date_id", "dataType": "string", "nullable": false },
+        { "name": "customer_id", "dataType": "string", "nullable": false },
+        { "name": "product_id", "dataType": "string", "nullable": false },
+        { "name": "amount", "dataType": "decimal", "nullable": false }
+      ]
+    },
+    { "id": "dim_date", "schema": "mart", "table": "dim_date", "position": { "x": 420, "y": 40 }, "columns": [{ "name": "date_id", "dataType": "string", "nullable": false, "isPrimaryKey": true }, { "name": "month_id", "dataType": "string", "nullable": false }] },
+    { "id": "dim_month", "schema": "mart", "table": "dim_month", "position": { "x": 420, "y": -120 }, "columns": [{ "name": "month_id", "dataType": "string", "nullable": false, "isPrimaryKey": true }] },
+    { "id": "dim_customer", "schema": "mart", "table": "dim_customer", "position": { "x": 120, "y": 220 }, "columns": [{ "name": "customer_id", "dataType": "string", "nullable": false, "isPrimaryKey": true }, { "name": "region_id", "dataType": "string", "nullable": false }] },
+    { "id": "dim_region", "schema": "mart", "table": "dim_region", "position": { "x": 120, "y": 380 }, "columns": [{ "name": "region_id", "dataType": "string", "nullable": false, "isPrimaryKey": true }] },
+    { "id": "dim_product", "schema": "mart", "table": "dim_product", "position": { "x": 720, "y": 220 }, "columns": [{ "name": "product_id", "dataType": "string", "nullable": false, "isPrimaryKey": true }, { "name": "category_id", "dataType": "string", "nullable": false }] },
+    { "id": "dim_category", "schema": "mart", "table": "dim_category", "position": { "x": 720, "y": 380 }, "columns": [{ "name": "category_id", "dataType": "string", "nullable": false, "isPrimaryKey": true }] }
+  ],
+  "relationships": [
+    { "id": "sf-date", "fromTableId": "sales_fact", "toTableId": "dim_date", "relationshipType": "many_to_one" },
+    { "id": "date-month", "fromTableId": "dim_date", "toTableId": "dim_month", "relationshipType": "many_to_one" },
+    { "id": "sf-customer", "fromTableId": "sales_fact", "toTableId": "dim_customer", "relationshipType": "many_to_one" },
+    { "id": "customer-region", "fromTableId": "dim_customer", "toTableId": "dim_region", "relationshipType": "many_to_one" },
+    { "id": "sf-product", "fromTableId": "sales_fact", "toTableId": "dim_product", "relationshipType": "many_to_one" },
+    { "id": "product-category", "fromTableId": "dim_product", "toTableId": "dim_category", "relationshipType": "many_to_one" }
+  ]
+}

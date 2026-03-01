@@ -1,0 +1,41 @@
+{
+  "tables": [
+    {
+      "id": "sales_fact",
+      "schema": "mart",
+      "table": "sales_fact",
+      "position": { "x": 360, "y": 220 },
+      "columns": [
+        { "name": "sales_id", "dataType": "string", "nullable": false, "isPrimaryKey": true },
+        { "name": "date_id", "dataType": "string", "nullable": false },
+        { "name": "store_id", "dataType": "string", "nullable": false },
+        { "name": "product_id", "dataType": "string", "nullable": false },
+        { "name": "amount", "dataType": "decimal", "nullable": false }
+      ]
+    },
+    {
+      "id": "inventory_fact",
+      "schema": "mart",
+      "table": "inventory_fact",
+      "position": { "x": 620, "y": 220 },
+      "columns": [
+        { "name": "inventory_id", "dataType": "string", "nullable": false, "isPrimaryKey": true },
+        { "name": "date_id", "dataType": "string", "nullable": false },
+        { "name": "store_id", "dataType": "string", "nullable": false },
+        { "name": "product_id", "dataType": "string", "nullable": false },
+        { "name": "on_hand_qty", "dataType": "int", "nullable": false }
+      ]
+    },
+    { "id": "dim_date", "schema": "mart", "table": "dim_date", "position": { "x": 500, "y": 40 }, "columns": [{ "name": "date_id", "dataType": "string", "nullable": false, "isPrimaryKey": true }] },
+    { "id": "dim_store", "schema": "mart", "table": "dim_store", "position": { "x": 220, "y": 390 }, "columns": [{ "name": "store_id", "dataType": "string", "nullable": false, "isPrimaryKey": true }] },
+    { "id": "dim_product", "schema": "mart", "table": "dim_product", "position": { "x": 780, "y": 390 }, "columns": [{ "name": "product_id", "dataType": "string", "nullable": false, "isPrimaryKey": true }] }
+  ],
+  "relationships": [
+    { "id": "sales-date", "fromTableId": "sales_fact", "toTableId": "dim_date", "relationshipType": "many_to_one" },
+    { "id": "sales-store", "fromTableId": "sales_fact", "toTableId": "dim_store", "relationshipType": "many_to_one" },
+    { "id": "sales-product", "fromTableId": "sales_fact", "toTableId": "dim_product", "relationshipType": "many_to_one" },
+    { "id": "inv-date", "fromTableId": "inventory_fact", "toTableId": "dim_date", "relationshipType": "many_to_one" },
+    { "id": "inv-store", "fromTableId": "inventory_fact", "toTableId": "dim_store", "relationshipType": "many_to_one" },
+    { "id": "inv-product", "fromTableId": "inventory_fact", "toTableId": "dim_product", "relationshipType": "many_to_one" }
+  ]
+}

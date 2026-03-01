@@ -1,0 +1,52 @@
+{
+  "tables": [
+    {
+      "id": "sales_fact",
+      "schema": "mart",
+      "table": "sales_fact",
+      "position": { "x": 420, "y": 220 },
+      "columns": [
+        { "name": "sales_id", "dataType": "string", "nullable": false, "isPrimaryKey": true },
+        { "name": "date_id", "dataType": "string", "nullable": false },
+        { "name": "customer_id", "dataType": "string", "nullable": false },
+        { "name": "product_id", "dataType": "string", "nullable": false },
+        { "name": "amount", "dataType": "decimal", "nullable": false }
+      ]
+    },
+    {
+      "id": "dim_date",
+      "schema": "mart",
+      "table": "dim_date",
+      "position": { "x": 420, "y": 40 },
+      "columns": [
+        { "name": "date_id", "dataType": "string", "nullable": false, "isPrimaryKey": true },
+        { "name": "date", "dataType": "date", "nullable": false }
+      ]
+    },
+    {
+      "id": "dim_customer",
+      "schema": "mart",
+      "table": "dim_customer",
+      "position": { "x": 140, "y": 220 },
+      "columns": [
+        { "name": "customer_id", "dataType": "string", "nullable": false, "isPrimaryKey": true },
+        { "name": "customer_name", "dataType": "string", "nullable": false }
+      ]
+    },
+    {
+      "id": "dim_product",
+      "schema": "mart",
+      "table": "dim_product",
+      "position": { "x": 700, "y": 220 },
+      "columns": [
+        { "name": "product_id", "dataType": "string", "nullable": false, "isPrimaryKey": true },
+        { "name": "product_name", "dataType": "string", "nullable": false }
+      ]
+    }
+  ],
+  "relationships": [
+    { "id": "sf-date", "fromTableId": "sales_fact", "toTableId": "dim_date", "relationshipType": "many_to_one" },
+    { "id": "sf-customer", "fromTableId": "sales_fact", "toTableId": "dim_customer", "relationshipType": "many_to_one" },
+    { "id": "sf-product", "fromTableId": "sales_fact", "toTableId": "dim_product", "relationshipType": "many_to_one" }
+  ]
+}

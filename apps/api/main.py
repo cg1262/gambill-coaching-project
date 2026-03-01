@@ -1,0 +1,1230 @@
+from fastapi import Depends, FastAPI, Header
+from uuid import uuid4
+from pathlib import Path
+import json
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from urllib import request as urlrequest
+from urllib.error import URLError, HTTPError
+import base64
+from datetime import datetime, timezone
+
+from models import CanvasAST, ValidationResult, ImpactResult
+from services import (
+    run_deterministic_validation,
+    run_probabilistic_validation,
+    run_deterministic_impact,
+    run_probabilistic_impact,
+)
+from coaching import (
+    fetch_job_text,
+    extract_job_signals,
+    build_sow_skeleton,
+    validate_sow_payload,
+    auto_revise_sow_once,
+)
+from db_lakebase import (
+    healthcheck as lakebase_health,
+    bootstrap_status as lakebase_bootstrap_status,
+    get_connection_settings,
+    upsert_connection_settings,
+    save_dependency_mapping,
+    save_policy_document,
+    save_policy_chunks,
+    search_policy_chunks,
+    list_policy_documents,
+    upsert_workspace_policy_config,
+    get_workspace_policy_config,
+    upsert_finding_status,
+    get_finding_statuses,
+    get_finding_status_audit,
+    get_run_history,
+    list_users,
+    upsert_user,
+    is_configured as lakebase_is_configured,
+    save_coaching_intake_submission,
+    get_coaching_intake_submission,
+    save_coaching_generation_run,
+    upsert_coaching_job_parse_cache,
+    get_coaching_job_parse_cache,
+)
+from uc_client import healthcheck as uc_health, fetch_information_schema, fetch_schemas
+from git_ops import git_status, save_and_push_ast, set_git_config
+from db_lakebase import get_user_auth
+from auth import get_current_session, get_current_user, issue_token, whoami, assert_role, revoke_token, revoke_user_sessions, session_stats
+from security import (
+    DEFAULT_MAX_RESUME_BYTES,
+    FileValidationError,
+    build_safe_resume_path,
+    mask_sensitive_dict,
+    validate_resume_metadata,
+)
+
+app = FastAPI(title="AI Data Modeling IDE API", version="0.2.0")
+
+
+def _chunk_text(content: str, max_len: int = 800) -> list[str]:
+    lines = [ln.strip() for ln in content.splitlines() if ln.strip()]
+    chunks: list[str] = []
+    current = ""
+    for line in lines:
+        nxt = f"{current}\n{line}".strip()
+        if len(nxt) <= max_len:
+            current = nxt
+        else:
+            if current:
+                chunks.append(current)
+            current = line
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _redact_settings(connection_type: str, settings: dict) -> dict:
+    secret_key_map = {
+        "databricks_uc": {"token", "connection_string"},
+        "information_schema": {"password"},
+        "power_bi": {"client_secret"},
+    }
+    return mask_sensitive_dict(dict(settings or {}), secret_keys=secret_key_map.get(connection_type, set()))
+
+
+def _to_canvas_data_type(databricks_type: str) -> str:
+    t = (databricks_type or "").lower()
+    if any(x in t for x in ["int", "tinyint", "smallint"]):
+        return "int"
+    if "bigint" in t or "long" in t:
+        return "bigint"
+    if any(x in t for x in ["decimal", "numeric", "double", "float"]):
+        return "decimal"
+    if "bool" in t:
+        return "boolean"
+    if t in {"date"}:
+        return "date"
+    if any(x in t for x in ["timestamp", "time"]):
+        return "timestamp"
+    if "array" in t:
+        return "array"
+    if "struct" in t or "map" in t:
+        return "struct"
+    if "json" in t:
+        return "json"
+    return "string"
+
+
+class GitPushAstRequest(BaseModel):
+    ast: CanvasAST
+    commit_message: str | None = None
+    push: bool = True
+
+
+class GitConfigRequest(BaseModel):
+    workspace_id: str
+    repo_path: str
+    branch: str
+    remote: str = "origin"
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class ConnectionSettingsRequest(BaseModel):
+    workspace_id: str
+    connection_type: str  # databricks_uc | information_schema | git | power_bi
+    settings: dict
+
+
+class DependencyMappingRequest(BaseModel):
+    workspace_id: str
+    source_object: str
+    target_object: str
+    dependency_type: str = "pipeline"
+    confidence: float = 85.0
+    source_system: str = "manual"
+    notes: str | None = None
+
+
+class PolicyUploadRequest(BaseModel):
+    workspace_id: str
+    doc_name: str
+    doc_type: str  # standards | regulatory | custom
+    content_text: str
+
+
+class UserUpsertRequest(BaseModel):
+    username: str
+    role: str
+    active: bool = True
+    password: str | None = None
+
+
+class PolicyConfigRequest(BaseModel):
+    workspace_id: str
+    standards_template_name: str
+    standards_template_version: str = "1.0"
+    regulatory_template_name: str
+    regulatory_template_version: str = "1.0"
+
+
+class FindingStatusRequest(BaseModel):
+    workspace_id: str
+    finding_key: str
+    status: str  # open | accepted-risk | remediated | false-positive
+    note: str | None = None
+
+
+class FindingBulkStatusRequest(BaseModel):
+    workspace_id: str
+    finding_keys: list[str]
+    status: str
+    note: str | None = None
+
+
+class PrWebhookRequest(BaseModel):
+    webhook_url: str
+    markdown: str
+
+
+class ProviderPrCommentRequest(BaseModel):
+    provider: str  # github | gitlab
+    api_url: str
+    token: str
+    repo: str | None = None
+    pr_number: int | None = None
+    project_id: str | None = None
+    merge_request_iid: int | None = None
+    markdown: str
+
+
+class GithubArtifactsRequest(BaseModel):
+    api_url: str = "https://api.github.com"
+    token: str
+    repo: str
+    branch: str = "main"
+    base_path: str = "governance-reports"
+    ast: dict
+    findings: list[dict]
+
+
+class DatabricksConnectionValidateRequest(BaseModel):
+    workspace_id: str
+    settings: dict
+    run_live_test: bool = False
+
+
+class DatabricksSchemaSyncRequest(BaseModel):
+    workspace_id: str
+    limit_tables: int = 300
+    limit_columns: int = 4000
+    settings: dict | None = None
+
+
+class DatabricksSchemasRequest(BaseModel):
+    workspace_id: str
+    settings: dict | None = None
+
+
+class CoachingIntakeRequest(BaseModel):
+    workspace_id: str
+    applicant_name: str
+    applicant_email: str | None = None
+    resume_text: str = ""
+    self_assessment_text: str = ""
+    job_links: list[str] = []
+    preferences: dict = {}
+
+
+class CoachingJobParseRequest(BaseModel):
+    workspace_id: str
+    submission_id: str
+    force_refresh: bool = False
+
+
+class CoachingGenerateSowRequest(BaseModel):
+    workspace_id: str
+    submission_id: str
+    parsed_jobs: list[dict] | None = None
+
+
+class CoachingValidateLoopRequest(BaseModel):
+    workspace_id: str
+    submission_id: str
+    sow: dict
+    auto_revise_once: bool = True
+
+
+class ResumeUploadValidationRequest(BaseModel):
+    workspace_id: str
+    filename: str
+    content_type: str | None = None
+    size_bytes: int
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/health")
+def health() -> dict:
+    lb_ok, lb_msg = lakebase_health()
+    uc_ok, uc_msg = uc_health()
+
+    return {
+        "status": "ok",
+        "connectors": {
+            "lakebase": {"ok": lb_ok, "message": lb_msg},
+            "unity_catalog": {"ok": uc_ok, "message": uc_msg},
+        },
+    }
+
+
+@app.post("/auth/login")
+def auth_login(req: LoginRequest) -> dict:
+    user = get_user_auth(req.username, req.password)
+
+    # Local-safe fallback when backend is pointed to unconfigured Postgres.
+    if (not user) and (not lakebase_is_configured()):
+        if req.username == "admin" and req.password == "admin123":
+            token = issue_token("admin", "admin")
+            return {"ok": True, "token": token, "username": "admin", "role": "admin", "fallback": True}
+
+    if not user:
+        if not lakebase_is_configured():
+            return {"ok": False, "message": "Invalid credentials (backend not configured: set LAKEBASE_BACKEND=duckdb for local dev or configure Postgres)"}
+        return {"ok": False, "message": "Invalid credentials"}
+    token = issue_token(user["username"], user["role"])
+    return {"ok": True, "token": token, "username": user["username"], "role": user["role"]}
+
+
+@app.get("/auth/me")
+def auth_me(authorization: str | None = Header(default=None)) -> dict:
+    return whoami(authorization)
+
+
+@app.post("/auth/refresh")
+def auth_refresh(session=Depends(get_current_session)) -> dict:
+    token = issue_token(session.username, session.role)
+    return {"ok": True, "token": token, "username": session.username, "role": session.role}
+
+
+@app.post("/auth/logout")
+def auth_logout(authorization: str | None = Header(default=None)) -> dict:
+    return revoke_token(authorization)
+
+
+@app.get("/auth/session-stats")
+def auth_session_stats(session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin"})
+    return session_stats()
+
+
+@app.post("/validate/deterministic", response_model=ValidationResult)
+def validate_deterministic(ast: CanvasAST, user: str = Depends(get_current_user)) -> ValidationResult:
+    return run_deterministic_validation(ast, actor_user=user)
+
+
+@app.post("/validate/probabilistic", response_model=ValidationResult)
+def validate_probabilistic(ast: CanvasAST, user: str = Depends(get_current_user)) -> ValidationResult:
+    return run_probabilistic_validation(ast, actor_user=user)
+
+
+@app.post("/impact/deterministic", response_model=ImpactResult)
+def impact_deterministic(ast: CanvasAST, user: str = Depends(get_current_user)) -> ImpactResult:
+    return run_deterministic_impact(ast, actor_user=user)
+
+
+@app.post("/impact/probabilistic", response_model=ImpactResult)
+def impact_probabilistic(ast: CanvasAST, user: str = Depends(get_current_user)) -> ImpactResult:
+    return run_probabilistic_impact(ast, actor_user=user)
+
+
+@app.get("/admin/bootstrap-status")
+def admin_bootstrap_status() -> dict:
+    return {
+        "status": "ok",
+        "lakebase": lakebase_bootstrap_status(),
+    }
+
+
+@app.get("/git/status")
+def get_git_status(workspace_id: str, user: str = Depends(get_current_user)) -> dict:
+    _ = user
+    return git_status(workspace_id)
+
+
+@app.post("/git/config")
+def post_git_config(req: GitConfigRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    return set_git_config(
+        workspace_id=req.workspace_id,
+        repo_path=req.repo_path,
+        branch=req.branch,
+        remote=req.remote,
+        actor_user=session.username,
+    )
+
+
+@app.post("/git/push-ast")
+def post_git_push_ast(req: GitPushAstRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    return save_and_push_ast(
+        ast_payload=req.ast.model_dump(mode="json", by_alias=True),
+        workspace_id=req.ast.workspace_id,
+        commit_message=req.commit_message,
+        push=req.push,
+    )
+
+
+@app.get("/connections/templates")
+def get_connection_templates(user: str = Depends(get_current_user)) -> dict:
+    _ = user
+    return {
+        "templates": {
+            "databricks_uc": {
+                "profile_name": "customer-default",
+                "host": "",
+                "token": "",
+                "warehouse_id": "",
+                "http_path": "",
+                "connection_string": "",
+                "catalog": "",
+                "schema": "",
+                "lineage_mode": "unity_catalog",
+            },
+            "information_schema": {
+                "engine": "postgres",
+                "host": "",
+                "port": 5432,
+                "database": "",
+                "username": "",
+                "password": "",
+                "schema": "public",
+            },
+            "git": {
+                "repo_path": "",
+                "branch": "main",
+                "remote": "origin",
+                "ast_subdir": "ast",
+            },
+            "power_bi": {
+                "tenant_id": "",
+                "client_id": "",
+                "client_secret": "",
+                "workspace_id": "",
+                "dataset_ids": [],
+                "report_ids": [],
+                "mapping_mode": "dataset_lineage",
+            },
+        }
+    }
+
+
+@app.get("/connections/settings")
+def get_connections_settings(workspace_id: str, connection_type: str | None = None, user: str = Depends(get_current_user)) -> dict:
+    _ = user
+    rows = get_connection_settings(workspace_id, connection_type)
+    for r in rows:
+        payload = r.get("settings_json")
+        parsed = json.loads(payload) if isinstance(payload, str) else (payload or {})
+        r["settings_json"] = _redact_settings(str(r.get("connection_type") or ""), parsed)
+    return {"workspace_id": workspace_id, "connections": rows}
+
+
+@app.post("/coaching/intake/resume/validate")
+def coaching_resume_validate(req: ResumeUploadValidationRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    try:
+        result = validate_resume_metadata(
+            filename=req.filename,
+            content_type=req.content_type,
+            size_bytes=req.size_bytes,
+            max_size_bytes=DEFAULT_MAX_RESUME_BYTES,
+        )
+        safe_path = build_safe_resume_path(
+            base_dir=Path(__file__).resolve().parents[2] / "storage" / "coaching" / "resumes",
+            workspace_id=req.workspace_id,
+            filename=req.filename,
+        )
+        return {
+            "ok": True,
+            "workspace_id": req.workspace_id,
+            "validation": result,
+            "safe_storage_path": str(safe_path),
+        }
+    except FileValidationError as e:
+        return {"ok": False, "workspace_id": req.workspace_id, "message": str(e)}
+
+
+@app.post("/connections/settings")
+def post_connections_settings(req: ConnectionSettingsRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    upsert_connection_settings(
+        workspace_id=req.workspace_id,
+        connection_type=req.connection_type,
+        settings_payload=req.settings,
+        updated_by=session.username,
+    )
+    return {"ok": True, "workspace_id": req.workspace_id, "connection_type": req.connection_type}
+
+
+@app.post("/connections/validate/databricks-uc")
+def validate_databricks_uc(req: DatabricksConnectionValidateRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    s = req.settings or {}
+    has_conn_str = bool(str(s.get("connection_string") or "").strip())
+    has_fields = bool(str(s.get("host") or "").strip()) and bool(str(s.get("token") or "").strip())
+    if not (has_conn_str or has_fields):
+        return {"ok": False, "message": "Provide either connection_string OR host+token.", "workspace_id": req.workspace_id}
+
+    host = str(s.get("host") or "").strip()
+    token = str(s.get("token") or "").strip()
+    conn_str_preview = str(s.get("connection_string") or "").strip()
+    if conn_str_preview and "token=" in conn_str_preview.lower():
+        conn_str_preview = conn_str_preview.split("token=")[0] + "token=***"
+
+    live_test = {"attempted": False, "ok": None, "message": "not requested"}
+    if req.run_live_test and host and token:
+        live_test["attempted"] = True
+        url = host.rstrip("/") + "/api/2.0/clusters/list"
+        http_req = urlrequest.Request(url, headers={"Authorization": f"Bearer {token}"})
+        try:
+            with urlrequest.urlopen(http_req, timeout=6) as resp:
+                code = getattr(resp, "status", 200)
+                live_test["ok"] = 200 <= int(code) < 300
+                live_test["message"] = f"HTTP {code}"
+        except HTTPError as e:
+            live_test["ok"] = False
+            live_test["message"] = f"HTTPError {e.code}"
+        except URLError as e:
+            live_test["ok"] = False
+            live_test["message"] = f"URLError {e.reason}"
+        except Exception as e:
+            live_test["ok"] = False
+            live_test["message"] = f"Error: {e}"
+
+    return {
+        "ok": True,
+        "workspace_id": req.workspace_id,
+        "message": "Databricks UC connection settings look structurally valid.",
+        "mode": "connection_string" if has_conn_str else "host_token",
+        "host": host,
+        "connection_string_preview": conn_str_preview,
+        "live_test": live_test,
+    }
+
+
+@app.post("/connections/databricks/schemas")
+def list_databricks_schemas(req: DatabricksSchemasRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+
+    conn_payload = req.settings or {}
+    if not conn_payload:
+        rows = get_connection_settings(req.workspace_id, "databricks_uc")
+        if not rows:
+            return {"ok": False, "message": f"No Databricks connection found for workspace '{req.workspace_id}'", "workspace_id": req.workspace_id}
+        conn_payload = rows[0].get("settings_json") or {}
+        if isinstance(conn_payload, str):
+            conn_payload = json.loads(conn_payload)
+
+    try:
+        schemas = fetch_schemas(conn_payload)
+        return {"ok": True, "workspace_id": req.workspace_id, "schemas": schemas}
+    except Exception as e:
+        return {"ok": False, "workspace_id": req.workspace_id, "message": str(e), "schemas": []}
+
+
+@app.post("/connections/sync/databricks-schema")
+def sync_databricks_schema(req: DatabricksSchemaSyncRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+
+    conn_payload = req.settings or {}
+    if not conn_payload:
+        rows = get_connection_settings(req.workspace_id, "databricks_uc")
+        if not rows:
+            return {"ok": False, "message": f"No Databricks connection found for workspace '{req.workspace_id}'", "workspace_id": req.workspace_id}
+        conn_payload = rows[0].get("settings_json") or {}
+        if isinstance(conn_payload, str):
+            conn_payload = json.loads(conn_payload)
+
+    try:
+        meta = fetch_information_schema(
+            conn_payload,
+            limit_tables=req.limit_tables,
+            limit_columns=req.limit_columns,
+        )
+    except Exception as e:
+        return {"ok": False, "message": str(e), "workspace_id": req.workspace_id}
+
+    tables = meta.get("tables", [])
+    columns = meta.get("columns", [])
+
+    columns_by_table: dict[str, list[dict]] = {}
+    for c in columns:
+        key = f"{c.get('table_catalog')}.{c.get('table_schema')}.{c.get('table_name')}"
+        columns_by_table.setdefault(key, []).append(c)
+
+    ast_tables: list[dict] = []
+    x = 80
+    y = 80
+    for i, t in enumerate(tables):
+        key = f"{t.get('table_catalog')}.{t.get('table_schema')}.{t.get('table_name')}"
+        col_defs = []
+        for c in columns_by_table.get(key, []):
+            col_defs.append(
+                {
+                    "name": str(c.get("column_name") or ""),
+                    "data_type": _to_canvas_data_type(str(c.get("data_type") or "string")),
+                    "nullable": str(c.get("is_nullable") or "YES").upper() == "YES",
+                    "is_primary_key": False,
+                }
+            )
+
+        if not col_defs:
+            col_defs = [{"name": "id", "data_type": "string", "nullable": False, "is_primary_key": True}]
+
+        ast_tables.append(
+            {
+                "id": f"{t.get('table_schema')}.{t.get('table_name')}",
+                "catalog": str(t.get("table_catalog") or ""),
+                "schema": str(t.get("table_schema") or "default"),
+                "table": str(t.get("table_name") or "unknown"),
+                "description": None,
+                "columns": col_defs,
+                "position": {"x": x + (i % 4) * 320, "y": y + (i // 4) * 220},
+                "source": "unity_catalog",
+            }
+        )
+
+    ast_payload = {
+        "version": "1.0",
+        "workspace_id": req.workspace_id,
+        "tables": ast_tables,
+        "relationships": [],
+        "modified_table_ids": [t["id"] for t in ast_tables[:1]],
+    }
+
+    return {
+        "ok": True,
+        "workspace_id": req.workspace_id,
+        "table_count": len(ast_tables),
+        "column_count": len(columns),
+        "ast": ast_payload,
+    }
+
+
+@app.post("/impact/mappings")
+def post_dependency_mapping(req: DependencyMappingRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    save_dependency_mapping(
+        workspace_id=req.workspace_id,
+        source_object=req.source_object,
+        target_object=req.target_object,
+        dependency_type=req.dependency_type,
+        confidence=req.confidence,
+        source_system=req.source_system,
+        notes=req.notes,
+        updated_by=session.username,
+    )
+    return {"ok": True}
+
+
+@app.get("/standards/templates")
+def standards_templates(user: str = Depends(get_current_user)) -> dict:
+    _ = user
+    root = Path(__file__).resolve().parents[2] / "docs" / "templates"
+    payload: dict[str, dict] = {}
+    for name in ["standards_template_basic.json", "regulatory_template_basic.json"]:
+        p = root / name
+        if p.exists():
+            payload[p.stem] = json.loads(p.read_text(encoding="utf-8"))
+    return {"templates": payload}
+
+
+@app.post("/standards/documents")
+def post_standards_document(req: PolicyUploadRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    doc_id = str(uuid4())
+    save_policy_document(
+        document_id=doc_id,
+        workspace_id=req.workspace_id,
+        doc_name=req.doc_name,
+        doc_type=req.doc_type,
+        content_text=req.content_text,
+        uploaded_by=session.username,
+    )
+
+    chunks = _chunk_text(req.content_text)
+    save_policy_chunks(
+        document_id=doc_id,
+        workspace_id=req.workspace_id,
+        chunks=[
+            {
+                "chunk_id": str(uuid4()),
+                "chunk_index": i,
+                "chunk_text": text,
+                "source_ref": f"{req.doc_name}#chunk-{i}",
+            }
+            for i, text in enumerate(chunks)
+        ],
+    )
+
+    return {"ok": True, "document_id": doc_id, "chunk_count": len(chunks)}
+
+
+@app.get("/standards/documents")
+def get_standards_documents(workspace_id: str, user: str = Depends(get_current_user)) -> dict:
+    _ = user
+    return {"workspace_id": workspace_id, "documents": list_policy_documents(workspace_id)}
+
+
+@app.post("/standards/policy-config")
+def post_policy_config(req: PolicyConfigRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    upsert_workspace_policy_config(
+        workspace_id=req.workspace_id,
+        standards_template_name=req.standards_template_name,
+        standards_template_version=req.standards_template_version,
+        regulatory_template_name=req.regulatory_template_name,
+        regulatory_template_version=req.regulatory_template_version,
+        updated_by=session.username,
+    )
+    return {"ok": True, "workspace_id": req.workspace_id}
+
+
+@app.get("/standards/policy-config")
+def get_policy_config(workspace_id: str, user: str = Depends(get_current_user)) -> dict:
+    _ = user
+    return {"workspace_id": workspace_id, "config": get_workspace_policy_config(workspace_id)}
+
+
+@app.post("/standards/finding-status")
+def post_finding_status(req: FindingStatusRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    upsert_finding_status(
+        workspace_id=req.workspace_id,
+        finding_key=req.finding_key,
+        status=req.status,
+        note=req.note,
+        updated_by=session.username,
+    )
+    return {"ok": True}
+
+
+@app.post("/standards/finding-status/bulk")
+def post_finding_status_bulk(req: FindingBulkStatusRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    for key in req.finding_keys:
+        upsert_finding_status(
+            workspace_id=req.workspace_id,
+            finding_key=key,
+            status=req.status,
+            note=req.note,
+            updated_by=session.username,
+        )
+    return {"ok": True, "updated": len(req.finding_keys)}
+
+
+@app.get("/standards/finding-status")
+def get_finding_status(workspace_id: str, user: str = Depends(get_current_user)) -> dict:
+    _ = user
+    return {"workspace_id": workspace_id, "statuses": get_finding_statuses(workspace_id)}
+
+
+@app.get("/standards/finding-status/audit")
+def get_finding_status_audit_route(
+    workspace_id: str,
+    page: int = 1,
+    page_size: int = 50,
+    status: str | None = None,
+    updated_by: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    user: str = Depends(get_current_user),
+) -> dict:
+    _ = user
+    result = get_finding_status_audit(
+        workspace_id,
+        page=page,
+        page_size=page_size,
+        status=status,
+        updated_by=updated_by,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    return {"workspace_id": workspace_id, "audit": result.get("rows", []), "meta": {k: v for k, v in result.items() if k != "rows"}}
+
+
+@app.post("/standards/evaluate")
+def standards_evaluate(ast: CanvasAST, session=Depends(get_current_session)) -> dict:
+    results: list[dict] = []
+
+    templates_root = Path(__file__).resolve().parents[2] / "docs" / "templates"
+    standards_template = {}
+    regulatory_template = {}
+    standards_path = templates_root / "standards_template_basic.json"
+    regulatory_path = templates_root / "regulatory_template_basic.json"
+    if standards_path.exists():
+        standards_template = json.loads(standards_path.read_text(encoding="utf-8"))
+    if regulatory_path.exists():
+        regulatory_template = json.loads(regulatory_path.read_text(encoding="utf-8"))
+
+    docs = list_policy_documents(ast.workspace_id)
+    require_table_desc = bool(
+        standards_template.get("sections", {}).get("documentation", {}).get("require_table_description", False)
+    )
+    require_col_desc = bool(
+        standards_template.get("sections", {}).get("documentation", {}).get("require_column_description", False)
+    )
+    forbid_generic = {
+        str(v).lower()
+        for v in standards_template.get("sections", {}).get("quality", {}).get("forbid_generic_column_names", [])
+    }
+    pii_terms = {
+        str(v).lower()
+        for v in regulatory_template.get("sections", {}).get("pii_controls", {}).get("masking_required_for", ["ssn", "dob", "email", "phone"])
+    }
+
+    for d in docs:
+        name = str(d.get("doc_name") or "").lower()
+        if "standard" in name:
+            require_table_desc = True
+        if "regulatory" in name:
+            pii_terms = pii_terms or {"ssn", "dob", "email", "phone"}
+
+    statuses = get_finding_statuses(ast.workspace_id)
+
+    for table in ast.tables:
+        hits = search_policy_chunks(ast.workspace_id, table.table, limit=3)
+        for h in hits:
+            results.append({
+                "table": table.table,
+                "finding": f"Policy mention found for table '{table.table}'",
+                "source_ref": h.get("source_ref") or f"chunk:{h.get('chunk_index')}",
+                "document_id": h.get("document_id"),
+                "excerpt": str(h.get("chunk_text") or "")[:180],
+                "severity": "LOW",
+            })
+
+        if require_table_desc and not (table.description or "").strip():
+            results.append({
+                "table": table.table,
+                "finding": "Table description required by standards template.",
+                "source_ref": "standards_template_basic.sections.documentation.require_table_description",
+                "document_id": None,
+                "excerpt": "",
+                "severity": "MED",
+            })
+
+        for col in table.columns:
+            c_name = col.name.lower()
+            if require_col_desc and not (col.description or "").strip():
+                results.append({
+                    "table": table.table,
+                    "finding": f"Column '{col.name}' description required by standards template.",
+                    "source_ref": "standards_template_basic.sections.documentation.require_column_description",
+                    "document_id": None,
+                    "excerpt": "",
+                    "severity": "LOW",
+                })
+            if c_name in forbid_generic:
+                results.append({
+                    "table": table.table,
+                    "finding": f"Generic column name '{col.name}' is forbidden by standards template.",
+                    "source_ref": "standards_template_basic.sections.quality.forbid_generic_column_names",
+                    "document_id": None,
+                    "excerpt": "",
+                    "severity": "MED",
+                })
+            if any(term in c_name for term in pii_terms):
+                results.append({
+                    "table": table.table,
+                    "finding": f"Potential PII column '{col.name}' requires masking/tokenization review.",
+                    "source_ref": "regulatory_template_basic.sections.pii_controls.masking_required_for",
+                    "document_id": None,
+                    "excerpt": "",
+                    "severity": "HIGH",
+                })
+
+    for r in results:
+        key = f"{r.get('table','')}|{r.get('source_ref','')}|{r.get('finding','')}"
+        r["finding_key"] = key
+        st = statuses.get(key)
+        r["status"] = (st or {}).get("status", "open")
+        r["status_note"] = (st or {}).get("note")
+
+    return {"workspace_id": ast.workspace_id, "findings": results}
+
+
+@app.get("/runs/history")
+def runs_history(workspace_id: str, limit: int = 50, user: str = Depends(get_current_user)) -> dict:
+    _ = user
+    return {"workspace_id": workspace_id, "runs": get_run_history(workspace_id, limit=limit)}
+
+
+@app.get("/demo/readiness")
+def demo_readiness(workspace_id: str, user: str = Depends(get_current_user)) -> dict:
+    _ = user
+
+    connections = get_connection_settings(workspace_id)
+    conn_types = {str(c.get("connection_type") or "") for c in connections}
+    has_databricks = "databricks_uc" in conn_types
+
+    docs = list_policy_documents(workspace_id)
+    runs = get_run_history(workspace_id, limit=200)
+
+    validation_runs = [r for r in runs if str(r.get("run_type")) == "validation"]
+    impact_runs = [r for r in runs if str(r.get("run_type")) == "impact"]
+
+    blockers: list[str] = []
+    if not has_databricks:
+        blockers.append("Databricks connection not configured for workspace")
+    if len(docs) == 0:
+        blockers.append("No standards/regulatory documents uploaded")
+    if len(validation_runs) == 0:
+        blockers.append("No validation run history found")
+    if len(impact_runs) == 0:
+        blockers.append("No impact run history found")
+
+    return {
+        "workspace_id": workspace_id,
+        "ready": len(blockers) == 0,
+        "summary": {
+            "connections_configured": len(connections),
+            "connection_types": sorted([c for c in conn_types if c]),
+            "databricks_configured": has_databricks,
+            "policy_documents": len(docs),
+            "validation_runs": len(validation_runs),
+            "impact_runs": len(impact_runs),
+            "total_runs": len(runs),
+        },
+        "blockers": blockers,
+    }
+
+
+@app.post("/reports/pr-summary")
+def pr_summary(ast: CanvasAST, session=Depends(get_current_session)) -> dict:
+    eval_res = standards_evaluate(ast, session=session)
+    findings = eval_res.get("findings", [])
+    by_sev = {"HIGH": 0, "MED": 0, "LOW": 0}
+    for f in findings:
+        sev = str(f.get("severity") or "LOW")
+        if sev in by_sev:
+            by_sev[sev] += 1
+
+    summary_lines = [
+        f"### ERD Governance Check ({ast.workspace_id})",
+        f"- Findings: {len(findings)} (HIGH: {by_sev['HIGH']}, MED: {by_sev['MED']}, LOW: {by_sev['LOW']})",
+        f"- Run history entries: {len(get_run_history(ast.workspace_id, limit=20))}",
+        "- Top findings:",
+    ]
+    for f in findings[:5]:
+        summary_lines.append(f"  - [{f.get('severity','LOW')}] {f.get('table')}: {f.get('finding')}")
+
+    return {"workspace_id": ast.workspace_id, "markdown": "\n".join(summary_lines), "findings": findings[:20]}
+
+
+@app.post("/reports/pr-webhook")
+def pr_webhook(req: PrWebhookRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    body = json.dumps({"text": req.markdown}).encode("utf-8")
+    http_req = urlrequest.Request(
+        req.webhook_url,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlrequest.urlopen(http_req, timeout=8) as resp:
+            code = getattr(resp, "status", 200)
+            return {"ok": 200 <= int(code) < 300, "status_code": int(code)}
+    except HTTPError as e:
+        return {"ok": False, "status_code": e.code, "message": str(e)}
+    except URLError as e:
+        return {"ok": False, "message": f"URLError: {e.reason}"}
+    except Exception as e:
+        return {"ok": False, "message": str(e)}
+
+
+def _github_put_file(api_url: str, token: str, repo: str, branch: str, path: str, content_text: str, message: str) -> dict:
+    get_url = f"{api_url.rstrip('/')}/repos/{repo}/contents/{path}?ref={branch}"
+    get_req = urlrequest.Request(
+        get_url,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+        },
+        method="GET",
+    )
+    sha = None
+    try:
+        with urlrequest.urlopen(get_req, timeout=10) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+            sha = payload.get("sha")
+    except Exception:
+        sha = None
+
+    put_url = f"{api_url.rstrip('/')}/repos/{repo}/contents/{path}"
+    body = {
+        "message": message,
+        "content": base64.b64encode(content_text.encode("utf-8")).decode("utf-8"),
+        "branch": branch,
+    }
+    if sha:
+        body["sha"] = sha
+
+    put_req = urlrequest.Request(
+        put_url,
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/vnd.github+json",
+        },
+        method="PUT",
+    )
+    with urlrequest.urlopen(put_req, timeout=15) as resp:
+        code = getattr(resp, "status", 200)
+        payload = json.loads(resp.read().decode("utf-8"))
+        return {"status_code": int(code), "content": payload.get("content", {})}
+
+
+@app.post("/reports/pr-comment")
+def pr_comment_provider(req: ProviderPrCommentRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+
+    provider = req.provider.strip().lower()
+    if provider == "github":
+        if not req.repo or not req.pr_number:
+            return {"ok": False, "message": "GitHub requires repo and pr_number"}
+        url = f"{req.api_url.rstrip('/')}/repos/{req.repo}/issues/{req.pr_number}/comments"
+        payload = {"body": req.markdown}
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {req.token}",
+            "Accept": "application/vnd.github+json",
+        }
+    elif provider == "gitlab":
+        if not req.project_id or not req.merge_request_iid:
+            return {"ok": False, "message": "GitLab requires project_id and merge_request_iid"}
+        url = f"{req.api_url.rstrip('/')}/projects/{req.project_id}/merge_requests/{req.merge_request_iid}/notes"
+        payload = {"body": req.markdown}
+        headers = {
+            "Content-Type": "application/json",
+            "PRIVATE-TOKEN": req.token,
+        }
+    else:
+        return {"ok": False, "message": "Unsupported provider"}
+
+    http_req = urlrequest.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
+    try:
+        with urlrequest.urlopen(http_req, timeout=10) as resp:
+            code = getattr(resp, "status", 200)
+            return {"ok": 200 <= int(code) < 300, "status_code": int(code), "provider": provider}
+    except HTTPError as e:
+        return {"ok": False, "status_code": e.code, "message": str(e), "provider": provider}
+    except URLError as e:
+        return {"ok": False, "message": f"URLError: {e.reason}", "provider": provider}
+    except Exception as e:
+        return {"ok": False, "message": str(e), "provider": provider}
+
+
+@app.post("/reports/github-artifacts")
+def github_artifacts(req: GithubArtifactsRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    ast_path = f"{req.base_path.rstrip('/')}/ast-{ts}.json"
+    findings_path = f"{req.base_path.rstrip('/')}/findings-{ts}.json"
+
+    try:
+        ast_result = _github_put_file(
+            api_url=req.api_url,
+            token=req.token,
+            repo=req.repo,
+            branch=req.branch,
+            path=ast_path,
+            content_text=json.dumps(req.ast, indent=2),
+            message=f"Add AST artifact {ts}",
+        )
+        findings_result = _github_put_file(
+            api_url=req.api_url,
+            token=req.token,
+            repo=req.repo,
+            branch=req.branch,
+            path=findings_path,
+            content_text=json.dumps(req.findings, indent=2),
+            message=f"Add findings artifact {ts}",
+        )
+        return {
+            "ok": True,
+            "repo": req.repo,
+            "branch": req.branch,
+            "files": [
+                {"path": ast_path, "status_code": ast_result.get("status_code")},
+                {"path": findings_path, "status_code": findings_result.get("status_code")},
+            ],
+        }
+    except HTTPError as e:
+        return {"ok": False, "status_code": e.code, "message": str(e)}
+    except URLError as e:
+        return {"ok": False, "message": f"URLError: {e.reason}"}
+    except Exception as e:
+        return {"ok": False, "message": str(e)}
+
+
+@app.post("/coaching/intake")
+def coaching_intake(req: CoachingIntakeRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    submission_id = str(uuid4())
+    save_coaching_intake_submission(
+        submission_id=submission_id,
+        workspace_id=req.workspace_id,
+        applicant_name=req.applicant_name,
+        applicant_email=req.applicant_email or "",
+        resume_text=req.resume_text,
+        self_assessment_text=req.self_assessment_text,
+        job_links=req.job_links or [],
+        preferences=req.preferences or {},
+        status="submitted",
+        submitted_by=session.username,
+    )
+    return {"ok": True, "submission_id": submission_id, "workspace_id": req.workspace_id}
+
+
+@app.post("/coaching/jobs/parse")
+def coaching_jobs_parse(req: CoachingJobParseRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    intake = get_coaching_intake_submission(req.submission_id)
+    if not intake:
+        return {"ok": False, "message": "submission not found", "submission_id": req.submission_id}
+
+    parsed_jobs: list[dict] = []
+    for link in (intake.get("job_links_json") or []):
+        cache_key = f"{req.submission_id}:{link}".strip().lower()
+        cached = None if req.force_refresh else get_coaching_job_parse_cache(cache_key)
+        if cached:
+            parsed_jobs.append({
+                "url": link,
+                "source": "cache",
+                "text_excerpt": str(cached.get("parsed_text") or "")[:400],
+                "signals": cached.get("parsed_json") or {},
+            })
+            continue
+
+        fetched = fetch_job_text(link)
+        signals = extract_job_signals(fetched.get("text") or "") if fetched.get("ok") else {}
+        upsert_coaching_job_parse_cache(
+            cache_key=cache_key,
+            source_url=link,
+            parsed_text=fetched.get("text") or "",
+            parsed_json=signals,
+        )
+        parsed_jobs.append({
+            "url": link,
+            "source": "live",
+            "ok": fetched.get("ok"),
+            "error": fetched.get("error"),
+            "text_excerpt": str(fetched.get("text") or "")[:400],
+            "signals": signals,
+        })
+
+    return {"ok": True, "submission_id": req.submission_id, "parsed_jobs": parsed_jobs}
+
+
+@app.post("/coaching/sow/generate")
+def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    intake = get_coaching_intake_submission(req.submission_id)
+    if not intake:
+        return {"ok": False, "message": "submission not found", "submission_id": req.submission_id}
+
+    parsed_jobs = req.parsed_jobs or []
+    sow = build_sow_skeleton(
+        intake={
+            "applicant_name": intake.get("applicant_name"),
+            "preferences": intake.get("preferences_json") or {},
+        },
+        parsed_jobs=parsed_jobs,
+    )
+    return {
+        "ok": True,
+        "submission_id": req.submission_id,
+        "workspace_id": req.workspace_id,
+        "sow": sow,
+        "schema": {
+            "schema_version": "0.1",
+            "required_sections": [
+                "project_title",
+                "business_outcome",
+                "solution_architecture",
+                "milestones",
+                "roi_dashboard_requirements",
+                "resource_plan",
+                "mentoring_cta",
+            ],
+        },
+    }
+
+
+@app.post("/coaching/sow/validate-loop")
+def coaching_validate_loop(req: CoachingValidateLoopRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    intake = get_coaching_intake_submission(req.submission_id)
+    if not intake:
+        return {"ok": False, "message": "submission not found", "submission_id": req.submission_id}
+
+    first_findings = validate_sow_payload(req.sow)
+    revised = None
+    final_findings = first_findings
+
+    if req.auto_revise_once and first_findings:
+        revised = auto_revise_sow_once(req.sow, first_findings)
+        final_findings = validate_sow_payload(revised)
+
+    final_sow = revised or req.sow
+    run_id = str(uuid4())
+    save_coaching_generation_run(
+        run_id=run_id,
+        submission_id=req.submission_id,
+        workspace_id=req.workspace_id,
+        run_status="completed" if len(final_findings) == 0 else "needs_review",
+        parsed_jobs=[],
+        sow=final_sow,
+        validation={
+            "first_pass_findings": first_findings,
+            "final_findings": final_findings,
+            "auto_revised": bool(revised),
+        },
+        error_message=None,
+        created_by=session.username,
+    )
+
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "submission_id": req.submission_id,
+        "workspace_id": req.workspace_id,
+        "auto_revised": bool(revised),
+        "first_pass_findings": first_findings,
+        "final_findings": final_findings,
+        "sow": final_sow,
+    }
+
+
+@app.get("/admin/users")
+def admin_users(session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin"})
+    return {"users": list_users()}
+
+
+@app.post("/admin/users")
+def admin_upsert_user(req: UserUpsertRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin"})
+    upsert_user(username=req.username, password=req.password, role=req.role, active=req.active)
+    revoked = revoke_user_sessions(req.username) if not req.active else 0
+    return {"ok": True, "revoked_sessions": revoked}

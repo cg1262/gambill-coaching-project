@@ -1,0 +1,23 @@
+{
+  "template_name": "basic_data_modeling_standards",
+  "version": "1.0",
+  "sections": {
+    "naming": {
+      "table_case": "snake_lower",
+      "column_case": "snake_lower",
+      "pk_suffix": "_id"
+    },
+    "keys": {
+      "require_primary_key": true,
+      "require_foreign_key_description": false
+    },
+    "documentation": {
+      "require_table_description": true,
+      "require_column_description": false
+    },
+    "quality": {
+      "require_not_null_for_keys": true,
+      "forbid_generic_column_names": ["value", "data", "misc"]
+    }
+  }
+}

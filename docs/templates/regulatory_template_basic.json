@@ -1,0 +1,23 @@
+{
+  "template_name": "regulatory_governance_baseline",
+  "version": "1.0",
+  "sections": {
+    "data_classification": {
+      "required_levels": ["public", "internal", "confidential", "restricted"],
+      "default_level": "internal"
+    },
+    "pii_controls": {
+      "masking_required_for": ["ssn", "dob", "email", "phone"],
+      "tokenization_allowed": true
+    },
+    "retention": {
+      "default_retention_days": 365,
+      "regulatory_exceptions": []
+    },
+    "audit": {
+      "track_actor_user": true,
+      "track_change_timestamp": true,
+      "require_change_reason": false
+    }
+  }
+}

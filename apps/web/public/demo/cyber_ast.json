@@ -1,0 +1,11 @@
+{
+  "version": "1.0",
+  "workspaceId": "demo-cyber",
+  "tables": [
+    {"id":"alert","schema":"cyber","table":"threat_alert","columns":[{"name":"alert_id","dataType":"string","nullable":false,"isPrimaryKey":true},{"name":"asset_id","dataType":"string","nullable":false},{"name":"severity","dataType":"string","nullable":false}],"source":"mock","position":{"x":80,"y":100}},
+    {"id":"asset","schema":"cyber","table":"asset_inventory","columns":[{"name":"asset_id","dataType":"string","nullable":false,"isPrimaryKey":true},{"name":"owner_team","dataType":"string","nullable":true}],"source":"mock","position":{"x":390,"y":220}}
+  ],
+  "relationships": [
+    {"id":"alert-asset","fromTableId":"alert","toTableId":"asset","fromColumn":"asset_id","toColumn":"asset_id","relationshipType":"many_to_one"}
+  ]
+}
