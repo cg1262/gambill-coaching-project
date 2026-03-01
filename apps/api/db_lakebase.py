@@ -280,6 +280,45 @@ def _ensure_duckdb_bootstrap(conn) -> None:
 
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS coaching_accounts (
+            workspace_id VARCHAR,
+            username VARCHAR,
+            email VARCHAR,
+            plan_tier VARCHAR,
+            subscription_status VARCHAR,
+            renewal_date TIMESTAMP,
+            provider_customer_id VARCHAR,
+            provider_subscription_id VARCHAR,
+            provider_source VARCHAR,
+            last_synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_by VARCHAR,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (workspace_id, email)
+        )
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS coaching_subscription_events (
+            event_id VARCHAR PRIMARY KEY,
+            workspace_id VARCHAR,
+            provider VARCHAR,
+            event_type VARCHAR,
+            email VARCHAR,
+            provider_customer_id VARCHAR,
+            provider_subscription_id VARCHAR,
+            payload_json JSON,
+            processed BOOLEAN DEFAULT FALSE,
+            processed_at TIMESTAMP,
+            received_by VARCHAR,
+            received_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS dependency_mappings (
             workspace_id VARCHAR,
             source_object VARCHAR,
@@ -509,6 +548,8 @@ def bootstrap_status() -> dict[str, Any]:
         "coaching_intake_submissions",
         "coaching_generation_runs",
         "coaching_job_parse_cache",
+        "coaching_accounts",
+        "coaching_subscription_events",
     ]
 
     try:
@@ -1750,3 +1791,151 @@ def get_coaching_job_parse_cache(cache_key: str) -> dict[str, Any] | None:
         except Exception:
             row["parsed_json"] = {}
     return row
+
+
+def upsert_coaching_account_subscription(
+    workspace_id: str,
+    email: str,
+    plan_tier: str,
+    subscription_status: str,
+    renewal_date: str | None,
+    provider_customer_id: str | None,
+    provider_subscription_id: str | None,
+    provider_source: str,
+    updated_by: str,
+    username: str | None = None,
+) -> None:
+    if not is_configured() or not str(email).strip():
+        return
+
+    if _using_duckdb():
+        with lakebase_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO coaching_accounts
+                (workspace_id, username, email, plan_tier, subscription_status, renewal_date, provider_customer_id, provider_subscription_id, provider_source, last_synced_at, updated_by, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(workspace_id, email) DO UPDATE
+                SET username=excluded.username,
+                    plan_tier=excluded.plan_tier,
+                    subscription_status=excluded.subscription_status,
+                    renewal_date=excluded.renewal_date,
+                    provider_customer_id=excluded.provider_customer_id,
+                    provider_subscription_id=excluded.provider_subscription_id,
+                    provider_source=excluded.provider_source,
+                    last_synced_at=CURRENT_TIMESTAMP,
+                    updated_by=excluded.updated_by,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                [workspace_id, username, email, plan_tier, subscription_status, renewal_date, provider_customer_id, provider_subscription_id, provider_source, updated_by],
+            )
+        return
+
+    with lakebase_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO coaching_accounts
+                (workspace_id, username, email, plan_tier, subscription_status, renewal_date, provider_customer_id, provider_subscription_id, provider_source, last_synced_at, updated_by, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s, CURRENT_TIMESTAMP)
+                ON CONFLICT(workspace_id, email) DO UPDATE
+                SET username=excluded.username,
+                    plan_tier=excluded.plan_tier,
+                    subscription_status=excluded.subscription_status,
+                    renewal_date=excluded.renewal_date,
+                    provider_customer_id=excluded.provider_customer_id,
+                    provider_subscription_id=excluded.provider_subscription_id,
+                    provider_source=excluded.provider_source,
+                    last_synced_at=CURRENT_TIMESTAMP,
+                    updated_by=excluded.updated_by,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (workspace_id, username, email, plan_tier, subscription_status, renewal_date, provider_customer_id, provider_subscription_id, provider_source, updated_by),
+            )
+            conn.commit()
+
+
+def get_coaching_account_subscription(workspace_id: str, username: str | None = None, email: str | None = None) -> dict[str, Any] | None:
+    if not is_configured():
+        return None
+
+    username = (username or "").strip()
+    email = (email or "").strip().lower()
+
+    if _using_duckdb():
+        with lakebase_connection() as conn:
+            if email:
+                rows = conn.execute(
+                    "SELECT * FROM coaching_accounts WHERE workspace_id = ? AND lower(email) = ? LIMIT 1",
+                    [workspace_id, email],
+                ).fetchall()
+            elif username:
+                rows = conn.execute(
+                    "SELECT * FROM coaching_accounts WHERE workspace_id = ? AND username = ? LIMIT 1",
+                    [workspace_id, username],
+                ).fetchall()
+            else:
+                rows = []
+            if not rows:
+                return None
+            cols = [d[0] for d in conn.description]
+            return dict(zip(cols, rows[0]))
+
+    import psycopg
+    with lakebase_connection() as conn:
+        with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+            if email:
+                cur.execute(
+                    "SELECT * FROM coaching_accounts WHERE workspace_id = %s AND lower(email) = %s LIMIT 1",
+                    (workspace_id, email),
+                )
+            elif username:
+                cur.execute(
+                    "SELECT * FROM coaching_accounts WHERE workspace_id = %s AND username = %s LIMIT 1",
+                    (workspace_id, username),
+                )
+            else:
+                return None
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
+def save_coaching_subscription_event(
+    event_id: str,
+    workspace_id: str,
+    provider: str,
+    event_type: str,
+    email: str | None,
+    provider_customer_id: str | None,
+    provider_subscription_id: str | None,
+    payload: dict[str, Any],
+    received_by: str,
+) -> None:
+    if not is_configured():
+        return
+
+    payload_json = json.dumps(payload or {})
+
+    if _using_duckdb():
+        with lakebase_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO coaching_subscription_events
+                (event_id, workspace_id, provider, event_type, email, provider_customer_id, provider_subscription_id, payload_json, processed, processed_at, received_by, received_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, FALSE, NULL, ?, CURRENT_TIMESTAMP)
+                """,
+                [event_id, workspace_id, provider, event_type, email, provider_customer_id, provider_subscription_id, payload_json, received_by],
+            )
+        return
+
+    with lakebase_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO coaching_subscription_events
+                (event_id, workspace_id, provider, event_type, email, provider_customer_id, provider_subscription_id, payload_json, processed, processed_at, received_by, received_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, FALSE, NULL, %s, CURRENT_TIMESTAMP)
+                """,
+                (event_id, workspace_id, provider, event_type, email, provider_customer_id, provider_subscription_id, payload_json, received_by),
+            )
+            conn.commit()

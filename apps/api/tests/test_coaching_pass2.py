@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 
-from auth import Session, get_current_session, get_current_user
+from auth import Session, get_current_session
 from main import app
 
 
@@ -51,7 +51,7 @@ def test_coaching_sow_validate_requires_structured_model(monkeypatch):
 
 
 def test_coaching_seed_package_endpoint(monkeypatch):
-    app.dependency_overrides[get_current_user] = lambda: "tester"
+    app.dependency_overrides[get_current_session] = _override_session("viewer")
     monkeypatch.setattr("main.list_coaching_intake_submissions", lambda workspace_id, limit=1: [{"applicant_name": "Alex"}])
 
     client = TestClient(app)

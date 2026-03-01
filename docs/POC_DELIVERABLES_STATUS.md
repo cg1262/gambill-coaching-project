@@ -453,3 +453,41 @@ Deliverable: “enterprise-quality demo and stronger impact fidelity.”
   1. Add middleware/log filter to enforce masking invariants regardless of endpoint code.
   2. Implement multipart resume upload with MIME sniffing + malware scan hook.
   3. Add end-to-end regression proving raw resume/job text never appears in logs/exports.
+
+## Checkpoint Update (2026-03-01 - Squarespace Subscription Backend Scaffold)
+
+### Done
+- Added coaching account/subscription data scaffold in `apps/api/db_lakebase.py`:
+  - `coaching_accounts` table for member subscription state (`email`, `plan_tier`, `subscription_status`, `renewal_date`, provider IDs/source).
+  - `coaching_subscription_events` table for webhook/sync event intake history.
+- Added persistence helpers:
+  - `upsert_coaching_account_subscription(...)`
+  - `get_coaching_account_subscription(...)`
+  - `save_coaching_subscription_event(...)`
+- Added subscription endpoints in `apps/api/main.py`:
+  - `GET /coaching/subscription/status` (session-aware status lookup + normalized active flag)
+  - `POST /coaching/subscription/sync` (Squarespace/Stripe webhook-sync stub to persist event + update account state)
+- Added normalized subscription status mapping (`active`, `past_due`, `inactive`, `unknown`) for provider-status compatibility.
+- Tightened coaching read-route guards to use session + role assertions (`admin/editor/viewer`) for:
+  - `GET /coaching/intake/submissions`
+  - `GET /coaching/intake/submissions/{submission_id}`
+  - `GET /coaching/demo/seed-package`
+- Added tests for new subscription flow:
+  - `apps/api/tests/test_coaching_subscription.py`
+
+### Validation
+- `python -m pytest tests/test_coaching_subscription.py tests/test_coaching_pass2.py tests/test_rbac_endpoints.py -q` (run from `apps/api`)
+  - Result: `19 passed`.
+
+### Risks
+- Webhook ingestion is currently a trusted stub; signature verification for Squarespace/Stripe webhook authenticity is not implemented yet.
+- Subscription enforcement on all coaching execution routes is not globally required yet (status endpoint + sync path are now available for progressive rollout).
+
+### Needs
+- Provider webhook signature validation (Stripe-Signature / Squarespace equivalent) and replay protection.
+- Product decision on enforcement mode: hard-block inactive users vs grace-period behavior for `past_due`.
+
+### Next
+1. Add verified webhook signature validation and event idempotency checks.
+2. Wire account linking from app user/session to subscription record (`username`↔`email`) for deterministic gating.
+3. Enable subscription-required guard on selected coaching generation routes once frontend member flow is connected.
