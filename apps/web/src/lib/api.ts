@@ -147,6 +147,23 @@ export interface DemoReadinessResult {
   blockers: string[];
 }
 
+export interface CoachingIntakeSubmission {
+  submission_id: string;
+  workspace_id: string;
+  applicant_name: string;
+  applicant_email?: string;
+  status?: string;
+  submitted_by?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CoachingIntakeSubmissionListResult {
+  workspace_id: string;
+  submissions: CoachingIntakeSubmission[];
+  total: number;
+}
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
 let AUTH_TOKEN = "";
 
@@ -366,4 +383,17 @@ export const api = {
     getJson<RunHistoryResult>(`/runs/history?workspace_id=${encodeURIComponent(workspaceId)}&limit=${limit}`),
   demoReadiness: (workspaceId: string) =>
     getJson<DemoReadinessResult>(`/demo/readiness?workspace_id=${encodeURIComponent(workspaceId)}`),
+  listCoachingIntakeSubmissions: (workspaceId: string, limit = 50) =>
+    getJson<CoachingIntakeSubmissionListResult>(
+      `/coaching/intake/submissions?workspace_id=${encodeURIComponent(workspaceId)}&limit=${limit}`
+    ),
+  coachingIntake: (payload: {
+    workspace_id: string;
+    applicant_name: string;
+    applicant_email?: string;
+    resume_text?: string;
+    self_assessment_text?: string;
+    job_links?: string[];
+    preferences?: Record<string, any>;
+  }) => postJson<{ ok: boolean; submission_id: string; workspace_id: string }>("/coaching/intake", payload),
 };

@@ -318,6 +318,28 @@ Deliverable: “enterprise-quality demo and stronger impact fidelity.”
   - ROI requirements checklist
 - Added local scaffold generation flow (`Build Project Scaffold`) to connect intake draft inputs to a structured output preview component.
 
+## Latest Update (2026-03-01 - Coaching Frontend Pass 2 Checkpoint)
+- **Done**
+  - Added backend coach review list endpoint: `GET /coaching/intake/submissions`.
+  - Added web API client methods/types for coaching intake submit + submissions list.
+  - Built coach review queue table in `CoachingProjectWorkbench` using backend list endpoint.
+  - Added generation stage badges: **Intake Parsed**, **SOW Generated**, **Validated**.
+  - Enhanced output viewer with **Recommended Resources** and **Mentoring CTA/Pricing** block.
+  - Added student package export actions for **Markdown** and **JSON** download.
+- **Validation**
+  - `npm install --no-audit --no-fund` (apps/web)
+  - `npm run typecheck` (apps/web) ✅
+- **Risks**
+  - Stage badges are currently UI-driven flags; not yet synchronized to persisted generation run state.
+  - Mentoring CTA button is presentational only; booking flow integration is pending.
+- **Needs**
+  - Optional backend endpoint to load latest generation run per submission for fully server-backed stage status.
+  - Product decision on final pricing copy + booking URL.
+- **Next**
+  - Wire status badges to persisted generation records (`coaching_generation_runs`).
+  - Add row action from review queue to load selected submission into the workbench.
+  - Add export confirmation toast + test coverage for download helpers.
+
 ## Checkpoint Update (2026-03-01 - Coaching Backend Pass 2)
 
 ### Done
