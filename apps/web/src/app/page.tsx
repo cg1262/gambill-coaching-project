@@ -1,5 +1,5 @@
-import ModelCanvas from "../components/ModelCanvas";
+import CoachingProjectWorkbench from "../components/coaching/CoachingProjectWorkbench";
 
 export default function HomePage() {
-  return <ModelCanvas />;
+  return <CoachingProjectWorkbench />;
 }
