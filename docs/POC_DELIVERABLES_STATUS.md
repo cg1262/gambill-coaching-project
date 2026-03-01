@@ -454,6 +454,37 @@ Deliverable: “enterprise-quality demo and stronger impact fidelity.”
   2. Implement multipart resume upload with MIME sniffing + malware scan hook.
   3. Add end-to-end regression proving raw resume/job text never appears in logs/exports.
 
+## Checkpoint Update (2026-03-01 - Coaching Frontend Pass 3: Squarespace Journey States)
+
+### Done
+- Added explicit **coaching auth/subscription gate UI states** in `CoachingProjectWorkbench`:
+  - auth state scaffold (`signedOut` / `authenticated`)
+  - subscription scaffold (`unknown` / `inactive` / `active`)
+  - gated workbench rendering when subscription is inactive or auth missing
+- Added **member launch/landing flow scaffold** for Squarespace handoff simulation:
+  - launch stages (`memberHome` -> `launchRequested` -> `handoffPending` -> `landed`)
+  - launch terms acceptance toggle and contextual state guidance copy
+- Added **plan/tier display and upgrade prompt placement** in workbench:
+  - tier card with included features and monthly pricing
+  - in-flow upgrade CTA for Starter/Pro users
+  - active plan badge surfaced inside the coaching intake area
+
+### Validation
+- `npm run typecheck` (apps/web) ✅
+
+### Risks
+- Auth/subscription/launch states are frontend scaffolds and not yet wired to backend identity/subscription endpoints.
+- Upgrade CTA currently updates local UI state only (no checkout/billing handoff URL).
+
+### Needs
+- Backend subscription status endpoint and launch token verification endpoint for server-backed gate decisions.
+- Product decision for final plan names/pricing copy and billing upgrade destination.
+
+### Next
+1. Wire gate state to persisted account/subscription data from backend.
+2. Replace simulated launch flow with real Squarespace launch token handoff + verification.
+3. Connect upgrade CTA to billing/mentoring booking flow.
+
 ## Checkpoint Update (2026-03-01 - Squarespace Subscription Backend Scaffold)
 
 ### Done
