@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from urllib import request as urlrequest
 from urllib.error import HTTPError, URLError
@@ -21,6 +22,16 @@ COMMON_DOMAINS = {
 COMMON_TOOLS = {
     "databricks", "snowflake", "bigquery", "redshift", "postgres", "mysql", "airflow",
     "dbt", "power bi", "tableau", "git", "github", "gitlab", "jira", "confluence",
+}
+
+TAG_TOPIC_MAP = {
+    "discovery": ["career", "communication", "architecture"],
+    "bronze": ["pipeline", "data-engineering", "pyspark", "spark", "databricks", "big-data"],
+    "silver": ["sql", "quality", "performance", "query-optimization"],
+    "gold": ["bi", "visualization", "storytelling", "warehouse", "dimensional-modeling", "star-schema"],
+    "roi": ["bi", "visualization", "communication"],
+    "governance": ["governance", "data-management"],
+    "architecture": ["architecture", "distributed-systems", "data-platform"],
 }
 
 
@@ -90,7 +101,7 @@ def build_sow_skeleton(
     project_title = f"{(intake.get('applicant_name') or 'Candidate')} Data Engineering Capstone"
 
     return {
-        "schema_version": "0.1",
+        "schema_version": "0.2",
         "project_title": project_title,
         "candidate_profile": {
             "applicant_name": intake.get("applicant_name"),
@@ -114,10 +125,30 @@ def build_sow_skeleton(
             "target_skills": all_skills,
         },
         "milestones": [
-            {"name": "Discovery + Business framing", "duration_weeks": 1, "deliverables": ["scope brief", "KPI definitions"]},
-            {"name": "Bronze/Silver implementation", "duration_weeks": 2, "deliverables": ["ingestion jobs", "DQ checks"]},
-            {"name": "Gold + ROI dashboard", "duration_weeks": 1, "deliverables": ["semantic model", "executive dashboard"]},
-            {"name": "Final review + portfolio assets", "duration_weeks": 1, "deliverables": ["architecture narrative", "repo walkthrough"]},
+            {
+                "name": "Discovery + Business framing",
+                "duration_weeks": 1,
+                "deliverables": ["scope brief", "KPI definitions"],
+                "milestone_tags": ["discovery", "architecture", "roi"],
+            },
+            {
+                "name": "Bronze/Silver implementation",
+                "duration_weeks": 2,
+                "deliverables": ["ingestion jobs", "DQ checks"],
+                "milestone_tags": ["bronze", "silver", "pipeline"],
+            },
+            {
+                "name": "Gold + ROI dashboard",
+                "duration_weeks": 1,
+                "deliverables": ["semantic model", "executive dashboard"],
+                "milestone_tags": ["gold", "roi", "bi"],
+            },
+            {
+                "name": "Final review + portfolio assets",
+                "duration_weeks": 1,
+                "deliverables": ["architecture narrative", "repo walkthrough"],
+                "milestone_tags": ["communication", "career"],
+            },
         ],
         "roi_dashboard_requirements": {
             "required_dimensions": ["time", "business_unit", "product"],
@@ -127,10 +158,13 @@ def build_sow_skeleton(
             "required": [],
             "recommended": [],
             "optional": [],
+            "affiliate_disclosure": "Some recommended resources may include affiliate links. Recommendations are selected for project relevance first.",
+            "trust_language": "Resource recommendations are optional and do not change coaching feedback or project scoring.",
         },
         "mentoring_cta": {
             "recommended_tier": "TBD",
             "reason": "Finalize after validation and skill-gap scoring.",
+            "trust_language": "Mentoring recommendations are guidance-only and should align with the candidate's goals and budget.",
         },
     }
 
@@ -169,10 +203,18 @@ def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
     if total_links == 0:
         findings.append({"code": "RESOURCE_LINKS_MISSING", "message": "Provide at least one resource link in resource_plan."})
 
+    if not str(resources.get("affiliate_disclosure") or "").strip():
+        findings.append({"code": "AFFILIATE_DISCLOSURE_MISSING", "message": "resource_plan.affiliate_disclosure is required for trust transparency."})
+
+    mentoring_cta = sow.get("mentoring_cta") or {}
+    if not str(mentoring_cta.get("trust_language") or "").strip():
+        findings.append({"code": "TRUST_LANGUAGE_MISSING", "message": "mentoring_cta.trust_language is required."})
+
     return findings
 
 
 def auto_revise_sow_once(sow: dict[str, Any], findings: list[dict[str, str]]) -> dict[str, Any]:
+    _ = findings
     out = dict(sow)
     out.setdefault("solution_architecture", {}).setdefault("medallion_plan", {})
     med = out["solution_architecture"]["medallion_plan"]
@@ -182,9 +224,9 @@ def auto_revise_sow_once(sow: dict[str, Any], findings: list[dict[str, str]]) ->
 
     if not out.get("milestones"):
         out["milestones"] = [
-            {"name": "Planning", "duration_weeks": 1, "deliverables": ["scope"]},
-            {"name": "Build", "duration_weeks": 2, "deliverables": ["pipelines"]},
-            {"name": "Report", "duration_weeks": 1, "deliverables": ["dashboard"]},
+            {"name": "Planning", "duration_weeks": 1, "deliverables": ["scope"], "milestone_tags": ["discovery"]},
+            {"name": "Build", "duration_weeks": 2, "deliverables": ["pipelines"], "milestone_tags": ["bronze", "silver"]},
+            {"name": "Report", "duration_weeks": 1, "deliverables": ["dashboard"], "milestone_tags": ["gold", "roi"]},
         ]
 
     out.setdefault("roi_dashboard_requirements", {})
@@ -195,5 +237,115 @@ def auto_revise_sow_once(sow: dict[str, Any], findings: list[dict[str, str]]) ->
     out["resource_plan"].setdefault("required", [{"title": "Project README Template", "url": "https://example.com/readme-template"}])
     out["resource_plan"].setdefault("recommended", [])
     out["resource_plan"].setdefault("optional", [])
+    out["resource_plan"].setdefault(
+        "affiliate_disclosure",
+        "Some recommended resources may include affiliate links. Recommendations are selected for project relevance first.",
+    )
+    out["resource_plan"].setdefault(
+        "trust_language",
+        "Resource recommendations are optional and do not change coaching feedback or project scoring.",
+    )
+
+    out.setdefault("mentoring_cta", {})
+    out["mentoring_cta"].setdefault(
+        "trust_language",
+        "Mentoring recommendations are guidance-only and should align with the candidate's goals and budget.",
+    )
 
     return out
+
+
+def _load_resource_library(resource_file: str | Path) -> dict[str, Any]:
+    return json.loads(Path(resource_file).read_text(encoding="utf-8"))
+
+
+def _resource_topics(resource: dict[str, Any]) -> set[str]:
+    return {str(t).strip().lower() for t in (resource.get("topics") or []) if str(t).strip()}
+
+
+def match_resources_for_sow(sow: dict[str, Any], resource_file: str | Path) -> dict[str, Any]:
+    library = _load_resource_library(resource_file)
+    resources = library.get("resources") or []
+
+    milestone_topics: set[str] = set()
+    for milestone in (sow.get("milestones") or []):
+        for tag in (milestone.get("milestone_tags") or []):
+            mapped = TAG_TOPIC_MAP.get(str(tag).strip().lower()) or []
+            milestone_topics.update(mapped)
+        name = str(milestone.get("name") or "").lower()
+        if "bronze" in name:
+            milestone_topics.update(TAG_TOPIC_MAP["bronze"])
+        if "silver" in name:
+            milestone_topics.update(TAG_TOPIC_MAP["silver"])
+        if "gold" in name:
+            milestone_topics.update(TAG_TOPIC_MAP["gold"])
+
+    target_tools = {str(x).strip().lower() for x in ((sow.get("solution_architecture") or {}).get("primary_tools") or [])}
+    target_skills = {str(x).strip().lower() for x in ((sow.get("solution_architecture") or {}).get("target_skills") or [])}
+
+    scored: list[tuple[int, dict[str, Any]]] = []
+    for r in resources:
+        topics = _resource_topics(r)
+        score = len(topics.intersection(milestone_topics))
+        score += len(topics.intersection(target_tools))
+        score += len(topics.intersection(target_skills))
+        if score > 0:
+            scored.append((score, r))
+
+    scored.sort(key=lambda x: (-x[0], x[1].get("id", "")))
+    top = [x[1] for x in scored[:8]]
+
+    required = top[:3]
+    recommended = top[3:6]
+    optional = top[6:8]
+
+    return {
+        "required": required,
+        "recommended": recommended,
+        "optional": optional,
+        "match_meta": {
+            "milestone_topics": sorted(milestone_topics),
+            "total_candidates": len(scored),
+        },
+        "mentoring": library.get("mentoring") or {},
+    }
+
+
+def compose_demo_project_package(sample_intake: dict[str, Any], resource_file: str | Path) -> dict[str, Any]:
+    parsed_jobs = sample_intake.get("parsed_jobs") or []
+    sow = build_sow_skeleton(
+        intake={
+            "applicant_name": sample_intake.get("applicant_name"),
+            "preferences": sample_intake.get("preferences") or {},
+        },
+        parsed_jobs=parsed_jobs,
+    )
+
+    resource_match = match_resources_for_sow(sow, resource_file)
+    sow["resource_plan"] = {
+        "required": resource_match.get("required") or [],
+        "recommended": resource_match.get("recommended") or [],
+        "optional": resource_match.get("optional") or [],
+    }
+    sow["mentoring_cta"] = {
+        "recommended_tier": ((resource_match.get("mentoring") or {}).get("tiers") or [{}])[0].get("name", "Bi-weekly 1:1"),
+        "reason": "Matched to milestone tags and baseline skill targets.",
+        "program_url": (resource_match.get("mentoring") or {}).get("url"),
+    }
+
+    findings = validate_sow_payload(sow)
+
+    return {
+        "generated_at": utc_now_iso(),
+        "sample_intake": sample_intake,
+        "parsed_jobs": parsed_jobs,
+        "sow": sow,
+        "validation": {
+            "findings": findings,
+            "valid": len(findings) == 0,
+        },
+        "resource_match": {
+            "match_meta": resource_match.get("match_meta") or {},
+            "mentoring": resource_match.get("mentoring") or {},
+        },
+    }

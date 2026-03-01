@@ -317,3 +317,82 @@ Deliverable: “enterprise-quality demo and stronger impact fidelity.”
   - architecture (bronze/silver/gold framing)
   - ROI requirements checklist
 - Added local scaffold generation flow (`Build Project Scaffold`) to connect intake draft inputs to a structured output preview component.
+
+## Checkpoint Update (2026-03-01 - Coaching Backend Pass 2)
+
+### Done
+- Added structured SOW model (`CoachingSowDraft` + `SowMilestone`) and new validation endpoint:
+  - `POST /coaching/sow/validate`
+- Added SOW draft alias endpoint for explicit generation step:
+  - `POST /coaching/sow/generate-draft`
+- Added intake review retrieval APIs for coaches:
+  - `GET /coaching/intake/submissions`
+  - `GET /coaching/intake/submissions/{submission_id}` (includes latest generation run snapshot)
+- Added resource matching baseline service wired to `docs/coaching-project/RESOURCE_LIBRARY.json`:
+  - `POST /coaching/resources/match`
+  - baseline milestone-tag/topic matching + score-based resource tiering
+- Added demo-safe seeded package endpoints:
+  - `POST /coaching/demo/seed-package`
+  - `GET /coaching/demo/seed-package`
+  - returns fully composed intake + parsed signals + SOW + validation + resource/mentoring package
+- Added backend persistence helpers for pass-2 workflow:
+  - `list_coaching_intake_submissions(...)`
+  - `get_latest_coaching_generation_run(...)`
+- Added API tests for pass-2 coaching path:
+  - `apps/api/tests/test_coaching_pass2.py`
+
+### Validation
+- `python -m compileall apps/api`
+- `python -m pytest apps/api/tests/test_coaching_pass2.py`
+
+### Risks
+- Resource matching is intentionally baseline and rules-based; no semantic ranking/embedding relevance yet.
+- Demo seed uses static sample job signals for safety/repeatability, not live fetch.
+
+### Needs
+- Frontend wiring for new pass-2 endpoints (`/coaching/sow/validate`, `/coaching/resources/match`, seed package APIs).
+- Coach dashboard pagination/filtering for larger submission volumes.
+
+### Next
+- Add deterministic mentoring tier recommendation rubric (scorecard over skill gaps/timeline).
+- Extend resource matching with weighted tags + optional semantic rerank.
+- Add one-click endpoint to persist generated seed package as a demo project artifact.
+
+## Latest Update (2026-03-01 - Coaching Security Pass 2)
+
+### Checkpoint
+- **Done**
+  - Added PII-safe logging helper utilities in `apps/api/security.py`:
+    - `pii_safe_text_summary(...)`
+    - `pii_safe_coaching_log_payload(...)`
+  - Applied PII-safe structured logging on coaching intake/generation paths in `apps/api/main.py`:
+    - `POST /coaching/intake`
+    - `POST /coaching/jobs/parse`
+    - `POST /coaching/sow/generate`
+    - `POST /coaching/sow/validate-loop`
+  - Added endpoint-level RBAC coverage for coaching endpoints in `apps/api/tests/test_rbac_endpoints.py`.
+  - Added upload threat-guard documentation: `docs/coaching-project/FILE_UPLOAD_THREAT_GUARD.md`.
+  - Added malicious content-type/oversize test stubs in `apps/api/tests/test_security_regression_stubs.py`.
+  - Added affiliate disclosure + trust language in generated SOW outputs (`apps/api/coaching.py`) and validation checks:
+    - `AFFILIATE_DISCLOSURE_MISSING`
+    - `TRUST_LANGUAGE_MISSING`
+  - Added tests for security-note fields in generated outputs: `apps/api/tests/test_coaching_security_notes.py`.
+
+- **Validation**
+  - `python -m pytest -q apps/api/tests/test_security_baseline.py apps/api/tests/test_coaching_security_notes.py apps/api/tests/test_rbac_endpoints.py apps/api/tests/test_security_regression_stubs.py`
+    - Result: `25 passed, 4 skipped`.
+  - `python -m compileall apps/api`
+    - Result: success.
+
+- **Risks**
+  - Logging safety currently depends on endpoint discipline (manual usage of safe helper), not a global log-filter middleware.
+  - Multipart/byte-level MIME validation and malware scanning are still pending.
+
+- **Needs**
+  - Centralized logging sanitizer/filter applied to all API handlers.
+  - Real multipart upload endpoint with byte-level MIME sniffing and stream-based size guards.
+
+- **Next**
+  1. Add middleware/log filter to enforce masking invariants regardless of endpoint code.
+  2. Implement multipart resume upload with MIME sniffing + malware scan hook.
+  3. Add end-to-end regression proving raw resume/job text never appears in logs/exports.

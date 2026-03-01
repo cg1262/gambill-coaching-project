@@ -12,6 +12,7 @@ Baseline controls for coaching project creation flow covering:
 ---
 
 ## 1) File Handling Guards (Resume Intake)
+Reference: `docs/coaching-project/FILE_UPLOAD_THREAT_GUARD.md`
 - [x] Restrict resume file extensions to approved list (`.pdf`, `.doc`, `.docx`, `.txt`).
 - [x] Restrict accepted content types to expected resume document MIME types.
 - [x] Enforce maximum upload size (`5 MB` baseline).
@@ -38,10 +39,16 @@ Baseline controls for coaching project creation flow covering:
 ## 4) Regression Test Stubs Added
 - `apps/api/tests/test_security_regression_stubs.py`
   - resume upload polyglot rejection (stub)
-  - coaching intake RBAC regression (stub)
+  - malicious content-type upload rejection (stub)
+  - oversize upload rejection (stub)
   - export/log masking regression (stub)
 
-## 5) Immediate Follow-ups (Next Sprint)
+## 5) Affiliate/Trust Language in Generated Outputs
+- [x] Include affiliate disclosure language in generated `resource_plan.affiliate_disclosure`.
+- [x] Include trust-language in `resource_plan.trust_language` and `mentoring_cta.trust_language`.
+- [x] Validate disclosure/trust fields in SOW validation loop (`AFFILIATE_DISCLOSURE_MISSING`, `TRUST_LANGUAGE_MISSING`).
+
+## 6) Immediate Follow-ups (Next Sprint)
 1. Implement true multipart upload endpoint with byte-level validation.
 2. Add centralized logging filter/middleware for secret masking.
 3. Add end-to-end test to prove uploaded resume never appears in logs/raw exports.

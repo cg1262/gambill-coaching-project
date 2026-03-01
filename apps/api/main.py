@@ -8,8 +8,9 @@ from urllib import request as urlrequest
 from urllib.error import URLError, HTTPError
 import base64
 from datetime import datetime, timezone
+import logging
 
-from models import CanvasAST, ValidationResult, ImpactResult
+from models import CanvasAST, ValidationResult, ImpactResult, CoachingSowDraft
 from services import (
     run_deterministic_validation,
     run_probabilistic_validation,
@@ -22,6 +23,8 @@ from coaching import (
     build_sow_skeleton,
     validate_sow_payload,
     auto_revise_sow_once,
+    match_resources_for_sow,
+    compose_demo_project_package,
 )
 from db_lakebase import (
     healthcheck as lakebase_health,
@@ -44,7 +47,9 @@ from db_lakebase import (
     is_configured as lakebase_is_configured,
     save_coaching_intake_submission,
     get_coaching_intake_submission,
+    list_coaching_intake_submissions,
     save_coaching_generation_run,
+    get_latest_coaching_generation_run,
     upsert_coaching_job_parse_cache,
     get_coaching_job_parse_cache,
 )
@@ -57,10 +62,13 @@ from security import (
     FileValidationError,
     build_safe_resume_path,
     mask_sensitive_dict,
+    pii_safe_coaching_log_payload,
     validate_resume_metadata,
 )
 
 app = FastAPI(title="AI Data Modeling IDE API", version="0.2.0")
+logger = logging.getLogger("gambill_coaching.api")
+RESOURCE_LIBRARY_PATH = Path(__file__).resolve().parents[2] / "docs" / "coaching-project" / "RESOURCE_LIBRARY.json"
 
 
 def _chunk_text(content: str, max_len: int = 800) -> list[str]:
@@ -253,6 +261,22 @@ class CoachingValidateLoopRequest(BaseModel):
     submission_id: str
     sow: dict
     auto_revise_once: bool = True
+
+
+class CoachingSowValidateRequest(BaseModel):
+    workspace_id: str
+    submission_id: str
+    sow: CoachingSowDraft
+
+
+class CoachingResourceMatchRequest(BaseModel):
+    workspace_id: str
+    sow: CoachingSowDraft
+
+
+class CoachingDemoSeedRequest(BaseModel):
+    workspace_id: str
+    applicant_name: str = "Demo Candidate"
 
 
 class ResumeUploadValidationRequest(BaseModel):
@@ -1081,6 +1105,22 @@ def github_artifacts(req: GithubArtifactsRequest, session=Depends(get_current_se
 def coaching_intake(req: CoachingIntakeRequest, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor"})
     submission_id = str(uuid4())
+    logger.info(
+        "coaching_intake_received",
+        extra={
+            "actor": session.username,
+            "role": session.role,
+            "payload": pii_safe_coaching_log_payload(
+                workspace_id=req.workspace_id,
+                submission_id=submission_id,
+                applicant_name=req.applicant_name,
+                applicant_email=req.applicant_email,
+                resume_text=req.resume_text,
+                self_assessment_text=req.self_assessment_text,
+                job_links=req.job_links,
+            ),
+        },
+    )
     save_coaching_intake_submission(
         submission_id=submission_id,
         workspace_id=req.workspace_id,
@@ -1096,9 +1136,36 @@ def coaching_intake(req: CoachingIntakeRequest, session=Depends(get_current_sess
     return {"ok": True, "submission_id": submission_id, "workspace_id": req.workspace_id}
 
 
+@app.get("/coaching/intake/submissions")
+def coaching_intake_submissions(workspace_id: str, limit: int = 50, user: str = Depends(get_current_user)) -> dict:
+    _ = user
+    rows = list_coaching_intake_submissions(workspace_id=workspace_id, limit=limit)
+    return {"workspace_id": workspace_id, "submissions": rows, "total": len(rows)}
+
+
+@app.get("/coaching/intake/submissions/{submission_id}")
+def coaching_intake_submission_detail(submission_id: str, user: str = Depends(get_current_user)) -> dict:
+    _ = user
+    intake = get_coaching_intake_submission(submission_id)
+    if not intake:
+        return {"ok": False, "message": "submission not found", "submission_id": submission_id}
+    latest_run = get_latest_coaching_generation_run(submission_id)
+    return {"ok": True, "submission": intake, "latest_generation_run": latest_run}
+
+
 @app.post("/coaching/jobs/parse")
 def coaching_jobs_parse(req: CoachingJobParseRequest, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor"})
+    logger.info(
+        "coaching_jobs_parse_requested",
+        extra={
+            "actor": session.username,
+            "role": session.role,
+            "workspace_id": req.workspace_id,
+            "submission_id": req.submission_id,
+            "force_refresh": req.force_refresh,
+        },
+    )
     intake = get_coaching_intake_submission(req.submission_id)
     if not intake:
         return {"ok": False, "message": "submission not found", "submission_id": req.submission_id}
@@ -1133,12 +1200,35 @@ def coaching_jobs_parse(req: CoachingJobParseRequest, session=Depends(get_curren
             "signals": signals,
         })
 
+    logger.info(
+        "coaching_jobs_parse_completed",
+        extra={
+            "actor": session.username,
+            "role": session.role,
+            "payload": pii_safe_coaching_log_payload(
+                workspace_id=req.workspace_id,
+                submission_id=req.submission_id,
+                job_links=intake.get("job_links_json") or [],
+                parsed_jobs=parsed_jobs,
+            ),
+        },
+    )
     return {"ok": True, "submission_id": req.submission_id, "parsed_jobs": parsed_jobs}
 
 
 @app.post("/coaching/sow/generate")
 def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor"})
+    logger.info(
+        "coaching_sow_generate_requested",
+        extra={
+            "actor": session.username,
+            "role": session.role,
+            "workspace_id": req.workspace_id,
+            "submission_id": req.submission_id,
+            "parsed_jobs_count": len(req.parsed_jobs or []),
+        },
+    )
     intake = get_coaching_intake_submission(req.submission_id)
     if not intake:
         return {"ok": False, "message": "submission not found", "submission_id": req.submission_id}
@@ -1151,13 +1241,31 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
         },
         parsed_jobs=parsed_jobs,
     )
+    logger.info(
+        "coaching_sow_generate_completed",
+        extra={
+            "actor": session.username,
+            "role": session.role,
+            "payload": pii_safe_coaching_log_payload(
+                workspace_id=req.workspace_id,
+                submission_id=req.submission_id,
+                applicant_name=intake.get("applicant_name"),
+                applicant_email=intake.get("applicant_email"),
+                resume_text=intake.get("resume_text"),
+                self_assessment_text=intake.get("self_assessment_text"),
+                job_links=intake.get("job_links_json") or [],
+                parsed_jobs=parsed_jobs,
+            ),
+        },
+    )
     return {
         "ok": True,
         "submission_id": req.submission_id,
         "workspace_id": req.workspace_id,
         "sow": sow,
         "schema": {
-            "schema_version": "0.1",
+            "schema_version": "0.2",
+            "model": "CoachingSowDraft",
             "required_sections": [
                 "project_title",
                 "business_outcome",
@@ -1171,9 +1279,108 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
     }
 
 
+@app.post("/coaching/sow/generate-draft")
+def coaching_generate_sow_draft(req: CoachingGenerateSowRequest, session=Depends(get_current_session)) -> dict:
+    return coaching_generate_sow(req, session)
+
+
+@app.post("/coaching/sow/validate")
+def coaching_sow_validate(req: CoachingSowValidateRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    intake = get_coaching_intake_submission(req.submission_id)
+    if not intake:
+        return {"ok": False, "message": "submission not found", "submission_id": req.submission_id}
+
+    sow_payload = req.sow.model_dump(mode="json", by_alias=True)
+    findings = validate_sow_payload(sow_payload)
+    return {
+        "ok": True,
+        "workspace_id": req.workspace_id,
+        "submission_id": req.submission_id,
+        "valid": len(findings) == 0,
+        "findings": findings,
+        "sow": sow_payload,
+    }
+
+
+@app.post("/coaching/resources/match")
+def coaching_resources_match(req: CoachingResourceMatchRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    match = match_resources_for_sow(req.sow.model_dump(mode="json", by_alias=True), RESOURCE_LIBRARY_PATH)
+    return {
+        "ok": True,
+        "workspace_id": req.workspace_id,
+        "resource_plan": {
+            "required": match.get("required") or [],
+            "recommended": match.get("recommended") or [],
+            "optional": match.get("optional") or [],
+        },
+        "match_meta": match.get("match_meta") or {},
+        "mentoring": match.get("mentoring") or {},
+    }
+
+
+@app.post("/coaching/demo/seed-package")
+def coaching_demo_seed_package(req: CoachingDemoSeedRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    sample_intake = {
+        "workspace_id": req.workspace_id,
+        "applicant_name": req.applicant_name,
+        "preferences": {"timeline_weeks": 6, "target_role": "Data Engineer"},
+        "parsed_jobs": [
+            {
+                "url": "https://example.com/jobs/data-engineer-1",
+                "signals": {
+                    "skills": ["python", "sql", "databricks", "spark", "data modeling"],
+                    "tools": ["databricks", "airflow", "power bi"],
+                    "domains": ["retail"],
+                    "seniority": "mid",
+                },
+            }
+        ],
+    }
+    package = compose_demo_project_package(sample_intake=sample_intake, resource_file=RESOURCE_LIBRARY_PATH)
+    return {"ok": True, "workspace_id": req.workspace_id, "project_package": package}
+
+
+@app.get("/coaching/demo/seed-package")
+def coaching_demo_seed_package_get(workspace_id: str, user: str = Depends(get_current_user)) -> dict:
+    _ = user
+    latest = list_coaching_intake_submissions(workspace_id=workspace_id, limit=1)
+    applicant_name = str((latest[0] if latest else {}).get("applicant_name") or "Demo Candidate")
+    sample_intake = {
+        "workspace_id": workspace_id,
+        "applicant_name": applicant_name,
+        "preferences": {"timeline_weeks": 6, "target_role": "Data Engineer"},
+        "parsed_jobs": [
+            {
+                "url": "https://example.com/jobs/data-engineer-1",
+                "signals": {
+                    "skills": ["python", "sql", "databricks", "spark", "data modeling"],
+                    "tools": ["databricks", "airflow", "power bi"],
+                    "domains": ["retail"],
+                    "seniority": "mid",
+                },
+            }
+        ],
+    }
+    package = compose_demo_project_package(sample_intake=sample_intake, resource_file=RESOURCE_LIBRARY_PATH)
+    return {"ok": True, "workspace_id": workspace_id, "project_package": package}
+
+
 @app.post("/coaching/sow/validate-loop")
 def coaching_validate_loop(req: CoachingValidateLoopRequest, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor"})
+    logger.info(
+        "coaching_validate_loop_requested",
+        extra={
+            "actor": session.username,
+            "role": session.role,
+            "workspace_id": req.workspace_id,
+            "submission_id": req.submission_id,
+            "auto_revise_once": req.auto_revise_once,
+        },
+    )
     intake = get_coaching_intake_submission(req.submission_id)
     if not intake:
         return {"ok": False, "message": "submission not found", "submission_id": req.submission_id}
@@ -1204,6 +1411,19 @@ def coaching_validate_loop(req: CoachingValidateLoopRequest, session=Depends(get
         created_by=session.username,
     )
 
+    logger.info(
+        "coaching_validate_loop_completed",
+        extra={
+            "actor": session.username,
+            "role": session.role,
+            "workspace_id": req.workspace_id,
+            "submission_id": req.submission_id,
+            "run_id": run_id,
+            "first_pass_findings_count": len(first_findings),
+            "final_findings_count": len(final_findings),
+            "auto_revised": bool(revised),
+        },
+    )
     return {
         "ok": True,
         "run_id": run_id,

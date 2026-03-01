@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
 import re
 from typing import Any
 
@@ -112,3 +113,41 @@ def mask_sensitive_dict(payload: dict[str, Any], secret_keys: set[str] | None = 
 def pii_hits(text: str) -> dict[str, int]:
     content = text or ""
     return {name: len(pattern.findall(content)) for name, pattern in PII_PATTERNS.items()}
+
+
+def pii_safe_text_summary(text: str, *, include_hash: bool = True) -> dict[str, Any]:
+    content = text or ""
+    summary: dict[str, Any] = {
+        "length": len(content),
+        "pii_hits": pii_hits(content),
+        "present": bool(content.strip()),
+    }
+    if include_hash:
+        summary["sha256_12"] = hashlib.sha256(content.encode("utf-8", errors="ignore")).hexdigest()[:12] if content else None
+    return summary
+
+
+def pii_safe_coaching_log_payload(
+    *,
+    workspace_id: str,
+    submission_id: str | None = None,
+    applicant_name: str | None = None,
+    applicant_email: str | None = None,
+    resume_text: str | None = None,
+    self_assessment_text: str | None = None,
+    job_links: list[str] | None = None,
+    parsed_jobs: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "workspace_id": workspace_id,
+        "submission_id": submission_id,
+        "applicant_name_present": bool(str(applicant_name or "").strip()),
+        "applicant_email_summary": pii_safe_text_summary(applicant_email or "", include_hash=False),
+        "resume_text_summary": pii_safe_text_summary(resume_text or ""),
+        "self_assessment_summary": pii_safe_text_summary(self_assessment_text or ""),
+        "job_link_count": len(job_links or []),
+    }
+    if parsed_jobs is not None:
+        payload["parsed_jobs_count"] = len(parsed_jobs)
+        payload["parsed_jobs_sources"] = sorted({str(j.get("source") or "unknown") for j in parsed_jobs})
+    return payload

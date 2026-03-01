@@ -10,6 +10,8 @@ from security import (
     mask_secrets_in_text,
     mask_sensitive_dict,
     pii_hits,
+    pii_safe_coaching_log_payload,
+    pii_safe_text_summary,
     validate_resume_metadata,
 )
 
@@ -70,3 +72,28 @@ def test_resume_validation_endpoint_baseline():
     assert body["ok"] is True
     assert "safe_storage_path" in body
     app.dependency_overrides = {}
+
+def test_pii_safe_text_summary_masks_content_to_metadata_only():
+    summary = pii_safe_text_summary("Contact me at test@example.com 555-222-3333")
+    assert summary["length"] > 0
+    assert summary["pii_hits"]["email"] >= 1
+    assert summary["pii_hits"]["phone"] >= 1
+    assert "test@example.com" not in str(summary)
+
+
+def test_pii_safe_coaching_log_payload_excludes_raw_resume_text():
+    payload = pii_safe_coaching_log_payload(
+        workspace_id="ws-1",
+        submission_id="sub-1",
+        applicant_name="Candidate",
+        applicant_email="candidate@example.com",
+        resume_text="This is raw resume text with Spark and private details",
+        self_assessment_text="I need help",
+        job_links=["https://example.com/job/1"],
+        parsed_jobs=[{"source": "live", "signals": {"skills": ["python"]}}],
+    )
+    serialized = str(payload)
+    assert "raw resume text" not in serialized
+    assert payload["resume_text_summary"]["length"] > 0
+    assert payload["job_link_count"] == 1
+    assert payload["parsed_jobs_count"] == 1

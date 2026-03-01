@@ -6,8 +6,13 @@ def test_resume_upload_rejects_polyglot_file_stub():
     pass
 
 
-@pytest.mark.skip(reason="Security regression stub: add auth/RBAC privilege-escalation checks for coaching intake endpoints")
-def test_coaching_intake_rbac_regression_stub():
+@pytest.mark.skip(reason="Threat-guard stub: add multipart content-type enforcement test for malicious upload payloads")
+def test_resume_upload_rejects_malicious_content_type_stub():
+    pass
+
+
+@pytest.mark.skip(reason="Threat-guard stub: add oversized multipart payload rejection test in live upload endpoint")
+def test_resume_upload_rejects_oversized_payload_stub():
     pass
 
 
