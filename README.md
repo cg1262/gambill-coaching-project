@@ -1,52 +1,46 @@
-# AI-Powered Data Modeling IDE
+# Gambill Coaching Project Creation
 
-Phase 0 bootstrap for the DataTune March 2026 MVP.
+AI-powered coaching app that generates personalized end-to-end data engineering projects from:
+- resume
+- self-assessment
+- target job postings
 
-## Objective
-Build a proactive data modeling IDE that combines:
-- Visual ERD authoring
-- Databricks Unity Catalog sync + lineage
-- Deterministic standards checks
-- LLM-assisted probabilistic checks via RAG
+## Product Goal
+Help coaching clients build portfolio-ready projects aligned to the roles they want.
 
-## Phase 0 Deliverables (completed)
-- Monorepo skeleton (web, api, contracts, mcp-server)
-- Initial typed schema contract (TS + Python/Pydantic-aligned shape)
-- FastAPI backend scaffold with strict separation of deterministic vs probabilistic endpoints
-- Architecture + milestone docs for MVP execution
+## Core Output
+For each client submission, generate a structured SOW including:
+- business problem framing
+- technical architecture (ingestion/processing/storage/serving)
+- medallion implementation plan (Bronze/Silver/Gold)
+- milestones with success criteria and estimated hours
+- ROI dashboard requirements
+- recommended learning resources (including affiliate catalog)
+- mentoring recommendation + CTA
 
-## Phase 1 (in progress)
-- Env/secret-based connector configuration (`.env.example`, gitignored `.env`)
-- LakeBase/Postgres connector scaffold + health checks
-- Databricks Unity Catalog connector scaffold + health checks
-- Deterministic validation/impact service wiring to connector layers
-- React Flow web scaffold with live AST preview
-- API contract/rule smoke tests (`apps/api/tests`)
-- Demo AST seed packs (telecom/cyber/manufacturing/aviation)
-- CI workflow for API compile/tests + web typecheck
-- MCP tool wrapper scaffold for FastAPI endpoints
+## Current Focus
+- Coaching-first UX
+- Star/Galaxy/Snowflake educational presets
+- AI modeling suggestions (PK/FK inference)
+- Demo/readiness hardening
 
-## Repository Layout
-- `apps/web` — Next.js + React Flow frontend (scaffold placeholder)
-- `apps/api` — FastAPI service
-- `packages/contracts` — shared typed AST contracts
-- `packages/mcp-server` — MCP wrappers for FastAPI tools (placeholder)
-- `docs` — architecture, roadmap, implementation plans
+## Repo Layout
+- `apps/web` — frontend app (intake + project workbench + ERD/teaching tools)
+- `apps/api` — backend services and generation scaffolding
+- `docs/coaching-project` — coaching-specific plans, resources, pricing, CTA snippets
 
-## Immediate Next (Phase 1)
-1. Implement strict AST validation end-to-end (TS + Pydantic v2)
-2. Build deterministic validation engine (PK/naming/acronyms/catalog checks)
-3. Build initial React Flow canvas and AST serializer
-4. Add Qdrant retrieval + strict JSON violation output contract
-
-## Running (API scaffold)
-```bash
+## Run locally
+### API
+```powershell
 cd apps/api
 python -m venv .venv
-. .venv/Scripts/activate
-pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m uvicorn main:app --reload --port 8000
 ```
 
-## Notes
-This phase intentionally prioritizes architecture integrity and typed contracts over UI polish.
+### Web
+```powershell
+cd apps/web
+npm install
+npm run dev
+```

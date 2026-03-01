@@ -1,6 +1,6 @@
 import type { Edge, Node } from "reactflow";
 
-export type DemoKey = "telecom" | "cyber" | "manufacturing" | "aviation" | "star_schema" | "galaxy_schema" | "snowflake_schema";
+export type DemoKey = "star_schema" | "galaxy_schema" | "snowflake_schema";
 
 type DemoAst = {
   tables: Array<{ id: string; schema: string; table: string; position: { x: number; y: number }; columns?: any[] }>;

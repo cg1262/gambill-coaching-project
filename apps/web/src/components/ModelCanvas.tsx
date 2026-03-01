@@ -1036,7 +1036,7 @@ export default function ModelCanvas() {
   async function runDemoScript() {
     try {
       setDemoMode(true);
-      await loadDemo("telecom");
+      await loadDemo("star_schema");
       await runDeterministicValidation();
       await runDeterministicImpact();
       await runProbabilisticImpact();
@@ -1068,7 +1068,7 @@ export default function ModelCanvas() {
   }
 
   async function runPresenterStepAction(stepId: string) {
-    if (stepId === "load") await loadDemo("telecom");
+    if (stepId === "load") await loadDemo("star_schema");
     if (stepId === "det-validate") await runDeterministicValidation();
     if (stepId === "det-impact") await runDeterministicImpact();
     if (stepId === "prob") await runProbabilisticImpact();
@@ -1104,10 +1104,6 @@ export default function ModelCanvas() {
         <div style={{ display: "grid", gap: 8, marginBottom: 12 }}>
           <select onChange={(e) => loadDemo(e.target.value as any)} value={selectedDemo}>
             <option value="starter">Starter graph</option>
-            <option value="telecom">Telecom demo</option>
-            <option value="cyber">Cyber demo</option>
-            <option value="manufacturing">Manufacturing demo</option>
-            <option value="aviation">Aviation demo</option>
             <option value="star_schema">Star Schema example</option>
             <option value="galaxy_schema">Galaxy Schema example</option>
             <option value="snowflake_schema">Snowflake Schema example</option>
