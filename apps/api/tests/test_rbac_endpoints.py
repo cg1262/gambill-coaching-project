@@ -95,6 +95,17 @@ def test_coaching_generate_sow_rbac(role, status_code, monkeypatch):
             "job_links_json": ["https://example.com/job/1"],
         },
     )
+    monkeypatch.setattr(
+        main,
+        "get_coaching_account_subscription",
+        lambda workspace_id, username=None, email=None: {
+            "workspace_id": workspace_id,
+            "username": username,
+            "email": email,
+            "plan_tier": "pro",
+            "subscription_status": "active",
+        },
+    )
 
     client = TestClient(app)
     res = client.post(

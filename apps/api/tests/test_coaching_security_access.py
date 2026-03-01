@@ -113,3 +113,203 @@ def test_auth_login_logging_never_includes_password(monkeypatch):
 
     serialized = str(captured[-1])
     assert "admin123" not in serialized
+
+
+def test_subscription_sync_logging_masks_email_and_raw_event_token(monkeypatch):
+    captured: list[dict] = []
+
+    def _fake_logger(msg, *args, **kwargs):
+        captured.append({"msg": msg, "kwargs": kwargs})
+
+    monkeypatch.setattr(main.logger, "info", _fake_logger)
+    monkeypatch.setattr(main, "save_coaching_subscription_event", lambda **kwargs: None)
+    monkeypatch.setattr(main, "upsert_coaching_account_subscription", lambda **kwargs: None)
+
+    client = TestClient(app)
+    editor_token = issue_token("editor-user", "editor")
+    res = client.post(
+        "/coaching/subscription/sync",
+        headers=_auth_header(editor_token),
+        json={
+            "workspace_id": "ws-1",
+            "provider": "stripe",
+            "event_type": "customer.subscription.updated",
+            "email": "member@example.com",
+            "plan_tier": "pro",
+            "subscription_status": "active",
+            "raw_event": {"authorization": "Bearer super-secret-token"},
+        },
+    )
+
+    assert res.status_code == 200
+    assert captured
+
+    payload = captured[-1]["kwargs"]["extra"]["payload"]
+    serialized = str(payload)
+    assert "member@example.com" not in serialized
+    assert "super-secret-token" not in serialized
+
+
+def test_subscription_status_lookup_logging_masks_email(monkeypatch):
+    captured: list[dict] = []
+
+    def _fake_logger(msg, *args, **kwargs):
+        captured.append({"msg": msg, "kwargs": kwargs})
+
+    monkeypatch.setattr(main.logger, "info", _fake_logger)
+    monkeypatch.setattr(
+        main,
+        "get_coaching_account_subscription",
+        lambda workspace_id, username=None, email=None: {
+            "workspace_id": workspace_id,
+            "username": username,
+            "email": email,
+            "plan_tier": "pro",
+            "subscription_status": "active",
+        },
+    )
+
+    client = TestClient(app)
+    editor_token = issue_token("editor-user", "editor")
+    res = client.get(
+        "/coaching/subscription/status",
+        headers=_auth_header(editor_token),
+        params={"workspace_id": "ws-1", "email": "member@example.com"},
+    )
+
+    assert res.status_code == 200
+    assert captured
+
+    payload = captured[-1]["kwargs"]["extra"]["payload"]
+    serialized = str(payload)
+    assert "member@example.com" not in serialized
+    assert payload["member_email_summary"]["pii_hits"]["email"] >= 1
+
+
+def test_coaching_generate_denied_when_subscription_inactive(monkeypatch):
+    client = TestClient(app)
+    editor_token = issue_token("editor-user", "editor")
+
+    monkeypatch.setattr(
+        main,
+        "get_coaching_intake_submission",
+        lambda submission_id: {
+            "submission_id": submission_id,
+            "applicant_name": "Test Candidate",
+            "applicant_email": "member@example.com",
+            "preferences_json": {},
+            "resume_text": "resume",
+            "self_assessment_text": "self",
+            "job_links_json": [],
+        },
+    )
+    monkeypatch.setattr(
+        main,
+        "get_coaching_account_subscription",
+        lambda workspace_id, username=None, email=None: {
+            "workspace_id": workspace_id,
+            "username": username,
+            "email": email,
+            "plan_tier": "pro",
+            "subscription_status": "inactive",
+        },
+    )
+
+    res = client.post(
+        "/coaching/sow/generate",
+        headers=_auth_header(editor_token),
+        json={"workspace_id": "ws-1", "submission_id": "sub-1", "parsed_jobs": []},
+    )
+    assert res.status_code == 403
+
+
+
+def test_coaching_generate_draft_denied_when_subscription_inactive(monkeypatch):
+    client = TestClient(app)
+    editor_token = issue_token("editor-user", "editor")
+
+    monkeypatch.setattr(
+        main,
+        "get_coaching_intake_submission",
+        lambda submission_id: {
+            "submission_id": submission_id,
+            "applicant_name": "Test Candidate",
+            "applicant_email": "member@example.com",
+            "preferences_json": {},
+            "resume_text": "resume",
+            "self_assessment_text": "self",
+            "job_links_json": [],
+        },
+    )
+    monkeypatch.setattr(
+        main,
+        "get_coaching_account_subscription",
+        lambda workspace_id, username=None, email=None: {
+            "workspace_id": workspace_id,
+            "username": username,
+            "email": email,
+            "plan_tier": "pro",
+            "subscription_status": "inactive",
+        },
+    )
+
+    res = client.post(
+        "/coaching/sow/generate-draft",
+        headers=_auth_header(editor_token),
+        json={"workspace_id": "ws-1", "submission_id": "sub-1", "parsed_jobs": []},
+    )
+    assert res.status_code == 403
+
+
+def test_coaching_export_denied_when_subscription_inactive(monkeypatch):
+    client = TestClient(app)
+    editor_token = issue_token("editor-user", "editor")
+
+    monkeypatch.setattr(
+        main,
+        "get_coaching_intake_submission",
+        lambda submission_id: {
+            "submission_id": submission_id,
+            "applicant_name": "Test Candidate",
+            "applicant_email": "member@example.com",
+            "preferences_json": {},
+            "resume_text": "resume",
+            "self_assessment_text": "self",
+            "job_links_json": [],
+        },
+    )
+    monkeypatch.setattr(
+        main,
+        "get_coaching_account_subscription",
+        lambda workspace_id, username=None, email=None: {
+            "workspace_id": workspace_id,
+            "username": username,
+            "email": email,
+            "plan_tier": "pro",
+            "subscription_status": "inactive",
+        },
+    )
+
+    res = client.post(
+        "/coaching/sow/export",
+        headers=_auth_header(editor_token),
+        json={
+            "workspace_id": "ws-1",
+            "submission_id": "sub-1",
+            "format": "markdown",
+            "sow": {
+                "project_title": "p",
+                "business_outcome": {"problem_statement": "x", "kpi_targets": ["k"], "roi_hypothesis": "r"},
+                "solution_architecture": {"medallion_plan": {"bronze": "b", "silver": "s", "gold": "g"}, "orchestration": ["o"], "semantic_model_outline": ["m"]},
+                "milestones": [{"name": "m1", "duration_weeks": 1, "deliverables": ["d"]}, {"name": "m2", "duration_weeks": 1, "deliverables": ["d"]}, {"name": "m3", "duration_weeks": 1, "deliverables": ["d"]}],
+                "roi_dashboard_requirements": {"required_measures": ["m"], "required_dimensions": ["d"], "target_visuals": ["v"]},
+                "resource_plan": {
+                    "required": [{"title": "t", "url": "https://example.com", "type": "article", "reason": "r"}],
+                    "recommended": [],
+                    "optional": [],
+                },
+                "mentoring_cta": {"recommended_tier": "pro", "reason": "r", "offer": "o", "pricing": "p", "timeline": "t", "cta_text": "c"},
+            },
+        },
+    )
+    assert res.status_code == 403
