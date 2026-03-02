@@ -43,6 +43,7 @@ def test_runs_history_requires_user_auth(monkeypatch):
 def test_coaching_intake_rbac(role, status_code, monkeypatch):
     app.dependency_overrides[get_current_session] = _override_session(role)
     monkeypatch.setattr(main, "save_coaching_intake_submission", lambda **kwargs: None)
+    monkeypatch.setattr(main, "_require_active_coaching_subscription", lambda **kwargs: {"subscription_status": "active"})
 
     client = TestClient(app)
     res = client.post(
@@ -124,6 +125,7 @@ def test_coaching_validate_loop_rbac(role, status_code, monkeypatch):
     app.dependency_overrides[get_current_session] = _override_session(role)
     monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: {"submission_id": submission_id})
     monkeypatch.setattr(main, "save_coaching_generation_run", lambda **kwargs: None)
+    monkeypatch.setattr(main, "_require_active_coaching_subscription", lambda **kwargs: {"subscription_status": "active"})
 
     client = TestClient(app)
     res = client.post(
