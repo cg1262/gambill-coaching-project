@@ -656,3 +656,79 @@ Deliverable: “enterprise-quality demo and stronger impact fidelity.”
 1. Enforce provider webhook signature verification + replay/idempotency controls.
 2. Add route-level rate limiting for auth/subscription endpoints.
 3. Complete deterministic account linking (`session.username` ↔ subscription email identity).
+
+## Checkpoint 2026-03-02 (Security LLM output guardrails pass)
+
+### Delivered
+- Hardened probabilistic/LLM integration behavior for missing API keys in `apps/api/services.py`:
+  - Added explicit env-key presence guard (`OPENAI_API_KEY` / `LLM_API_KEY`).
+  - `run_probabilistic_validation` now emits a safe low-severity `LLM_API_KEY_MISSING` finding instead of silently assuming LLM readiness.
+  - `run_probabilistic_impact` now fails safe with empty dependency output when key is absent.
+- Added generated-output sanitization utilities in `apps/api/coaching.py`:
+  - New `sanitize_generated_sow(...)` and URL safety validator.
+  - Blocks/flags unsafe URL schemes (`javascript:`, `data:`) in `resource_plan.*[].url` and `mentoring_cta.program_url`.
+  - Masks secret-like patterns in generated narrative fields before they are returned/exported.
+- Applied sanitization in API routes (`apps/api/main.py`) so user-provided/generated SOW payloads are sanitized on:
+  - `/coaching/sow/generate`
+  - `/coaching/sow/validate`
+  - `/coaching/sow/validate-loop`
+  - `/coaching/sow/export`
+- Added regression coverage:
+  - New `apps/api/tests/test_llm_output_security.py` for:
+    - missing LLM API key behavior,
+    - unsafe URL blocking/flagging,
+    - secret-like string masking in response payloads.
+- Updated pilot/security docs:
+  - `docs/coaching-project/PILOT_RELEASE_HARDENING_CHECKLIST.md`
+  - `docs/coaching-project/SECURITY_CHECKLIST.md`
+
+### Validation
+- `python -m pytest tests/test_llm_output_security.py tests/test_coaching_generation_guardrails.py tests/test_security_baseline.py -q` (from `apps/api`)
+
+### Risks
+- Current LLM guard checks key presence only; no provider-specific key format validation yet.
+- URL sanitization is scheme/host level and does not yet perform allowlist/domain reputation checks.
+
+### Next
+1. Add provider-specific key validation + startup health warning endpoint for LLM readiness.
+2. Add shared URL-safe renderer utility on frontend to enforce same denylist before clickable rendering.
+3. Add strict typed schema for generated resources/URLs to reduce free-form output risk.
+
+## Checkpoint 2026-03-02 (Backend LLM SOW generation pass)
+
+### Done
+- Integrated OpenAI-compatible provider generation path for coaching SOW output:
+  - Added `generate_sow_with_llm(...)` in `apps/api/coaching.py`.
+  - Reads env config (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `COACHING_SOW_LLM_MODEL`) and calls `/chat/completions`.
+  - Added safe JSON parsing and fallback scaffold behavior when provider is unavailable/fails.
+- Upgraded SOW contract + validator guardrails:
+  - Enforced required `project_story` section.
+  - Enforced `business_outcome.data_sources[*].url` and `ingestion_doc_url` as real non-placeholder links.
+  - Enforced milestone-level `resources` links (resources per step).
+  - Added URL quality checks for `resource_plan` links.
+- Updated generation endpoint (`POST /coaching/sow/generate`):
+  - Uses LLM output first, validates strict contract, and runs one auto-revision pass if fields are missing.
+  - Persists generation metadata + quality flags in `validation_json` via `save_coaching_generation_run(...)`.
+  - Returns `generation_meta` and `quality_flags` in API response.
+- Expanded SOW model contract:
+  - Added `project_story` to `CoachingSowDraft`.
+  - Added milestone `resources` to `SowMilestone`.
+
+### Validation
+- Added tests: `apps/api/tests/test_coaching_llm_contract.py`
+  - Validator catches contract gaps for project story, ingestion doc links, and milestone resources.
+  - Generation endpoint persists/returns LLM metadata and quality flags with retry behavior.
+- Updated existing guardrail tests to include new strict SOW schema fields.
+
+### Risks
+- LLM integration currently depends on runtime API envs; missing/invalid keys fall back to scaffold output.
+- Real-link validation blocks placeholder URLs by design; test payloads and fixtures must use production-style docs links.
+
+### Needs
+- Add deterministic schema-level nested models for `business_outcome.data_sources` and `resource_plan` items (currently dict-validated + custom validator checks).
+- Add telemetry dashboard on generation quality flags over time (fallback rates, retry rates, invalid-link rates).
+
+### Next
+1. Add prompt versioning + experiment IDs in persisted generation metadata.
+2. Add second-stage revision prompt path (LLM-guided fix-up) behind a feature flag for higher pass rates.
+3. Add end-to-end API tests with mocked provider error/status branches.

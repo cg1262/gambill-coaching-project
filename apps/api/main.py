@@ -22,10 +22,12 @@ from coaching import (
     fetch_job_text,
     extract_job_signals,
     build_sow_skeleton,
+    generate_sow_with_llm,
     validate_sow_payload,
     auto_revise_sow_once,
     match_resources_for_sow,
     compose_demo_project_package,
+    sanitize_generated_sow,
 )
 from db_lakebase import (
     healthcheck as lakebase_health,
@@ -1529,7 +1531,16 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
     )
 
     parsed_jobs = req.parsed_jobs or []
-    sow = build_sow_skeleton(
+    llm_result = generate_sow_with_llm(
+        intake={
+            "applicant_name": intake.get("applicant_name"),
+            "preferences": intake.get("preferences_json") or {},
+            "resume_text": intake.get("resume_text") or "",
+            "self_assessment_text": intake.get("self_assessment_text") or "",
+        },
+        parsed_jobs=parsed_jobs,
+    )
+    sow = llm_result.get("sow") or build_sow_skeleton(
         intake={
             "applicant_name": intake.get("applicant_name"),
             "preferences": intake.get("preferences_json") or {},
@@ -1539,11 +1550,14 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
 
     first_findings = validate_sow_payload(sow)
     auto_revised = False
+    retried_after_validation = False
     if first_findings:
         sow = auto_revise_sow_once(sow, first_findings)
         auto_revised = True
+        retried_after_validation = True
 
     strict_sow = CoachingSowDraft.model_validate(sow).model_dump(mode="json", by_alias=True)
+    strict_sow, sanitize_findings = sanitize_generated_sow(strict_sow)
     final_findings = validate_sow_payload(strict_sow)
 
     run_id = str(uuid4())
@@ -1557,8 +1571,16 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
         validation={
             "first_pass_findings": first_findings,
             "final_findings": final_findings,
+            "sanitize_findings": sanitize_findings,
             "auto_revised": auto_revised,
+            "retried_after_validation": retried_after_validation,
             "guardrails": {"strict_schema": True, "auto_revise_once": True},
+            "generation_meta": llm_result.get("meta") or {},
+            "quality_flags": {
+                "has_required_contract_fields": len(final_findings) == 0,
+                "used_llm_provider": (llm_result.get("meta") or {}).get("provider") == "openai-compatible",
+                "fallback_used": not bool(llm_result.get("ok")),
+            },
         },
         error_message=None,
         created_by=session.username,
@@ -1590,6 +1612,13 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
         "valid": len(final_findings) == 0,
         "auto_revised": auto_revised,
         "findings": final_findings,
+        "generation_meta": llm_result.get("meta") or {},
+        "quality_flags": {
+            "has_required_contract_fields": len(final_findings) == 0,
+            "used_llm_provider": (llm_result.get("meta") or {}).get("provider") == "openai-compatible",
+            "fallback_used": not bool(llm_result.get("ok")),
+            "retried_after_validation": retried_after_validation,
+        },
         "schema": {
             "schema_version": "0.2",
             "model": "CoachingSowDraft",
@@ -1597,6 +1626,7 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
                 "project_title",
                 "business_outcome",
                 "solution_architecture",
+                "project_story",
                 "milestones",
                 "roi_dashboard_requirements",
                 "resource_plan",
@@ -1619,6 +1649,7 @@ def coaching_sow_validate(req: CoachingSowValidateRequest, session=Depends(get_c
         return {"ok": False, "message": "submission not found", "submission_id": req.submission_id}
 
     sow_payload = req.sow.model_dump(mode="json", by_alias=True)
+    sow_payload, _ = sanitize_generated_sow(sow_payload)
     findings = validate_sow_payload(sow_payload)
     return {
         "ok": True,
@@ -1709,6 +1740,7 @@ def coaching_sow_export(req: CoachingSowExportRequest, session=Depends(get_curre
     )
 
     sow_payload = req.sow.model_dump(mode="json", by_alias=True)
+    sow_payload, _ = sanitize_generated_sow(sow_payload)
     fmt = str(req.format or "markdown").strip().lower()
     if fmt == "json":
         return {
@@ -1775,15 +1807,17 @@ def coaching_validate_loop(req: CoachingValidateLoopRequest, session=Depends(get
     if not intake:
         return {"ok": False, "message": "submission not found", "submission_id": req.submission_id}
 
-    first_findings = validate_sow_payload(req.sow)
+    safe_input_sow, _ = sanitize_generated_sow(req.sow)
+    first_findings = validate_sow_payload(safe_input_sow)
     revised = None
     final_findings = first_findings
 
     if req.auto_revise_once and first_findings:
-        revised = auto_revise_sow_once(req.sow, first_findings)
+        revised = auto_revise_sow_once(safe_input_sow, first_findings)
+        revised, _ = sanitize_generated_sow(revised)
         final_findings = validate_sow_payload(revised)
 
-    final_sow = revised or req.sow
+    final_sow = revised or safe_input_sow
     run_id = str(uuid4())
     save_coaching_generation_run(
         run_id=run_id,

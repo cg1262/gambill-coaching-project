@@ -108,6 +108,7 @@ class SowMilestone(BaseModel):
     duration_weeks: int = Field(ge=1, validation_alias=AliasChoices("duration_weeks", "durationWeeks"))
     deliverables: list[str] = Field(default_factory=list)
     milestone_tags: list[str] = Field(default_factory=list, validation_alias=AliasChoices("milestone_tags", "milestoneTags"))
+    resources: list[dict] = Field(default_factory=list)
 
 
 class CoachingSowDraft(BaseModel):
@@ -118,6 +119,7 @@ class CoachingSowDraft(BaseModel):
     candidate_profile: dict = Field(default_factory=dict)
     business_outcome: dict
     solution_architecture: dict
+    project_story: dict
     milestones: list[SowMilestone]
     roi_dashboard_requirements: dict = Field(validation_alias=AliasChoices("roi_dashboard_requirements", "roiDashboardRequirements"))
     resource_plan: dict = Field(validation_alias=AliasChoices("resource_plan", "resourcePlan"))

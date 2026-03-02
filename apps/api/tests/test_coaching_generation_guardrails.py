@@ -57,6 +57,7 @@ def test_generate_sow_applies_guardrails_and_persists_run(monkeypatch):
             "candidate_profile": {},
             "business_outcome": {},
             "solution_architecture": {"medallion_plan": {"bronze": "", "silver": "", "gold": ""}},
+            "project_story": {},
             "milestones": [],
             "roi_dashboard_requirements": {},
             "resource_plan": {"required": [], "recommended": [], "optional": []},
@@ -107,10 +108,11 @@ def test_export_requires_active_subscription(monkeypatch):
                 "candidate_profile": {},
                 "business_outcome": {"problem_statement": "x"},
                 "solution_architecture": {"medallion_plan": {"bronze": "a", "silver": "b", "gold": "c"}},
+                "project_story": {"executive_summary": "x", "challenge": "y", "approach": "z", "impact_story": "q"},
                 "milestones": [
-                    {"name": "M1", "duration_weeks": 1, "deliverables": ["d1"], "milestone_tags": ["discovery"]},
-                    {"name": "M2", "duration_weeks": 1, "deliverables": ["d2"], "milestone_tags": ["bronze"]},
-                    {"name": "M3", "duration_weeks": 1, "deliverables": ["d3"], "milestone_tags": ["gold"]},
+                    {"name": "M1", "duration_weeks": 1, "deliverables": ["d1"], "milestone_tags": ["discovery"], "resources": [{"title": "r1", "url": "https://docs.python.org"}]},
+                    {"name": "M2", "duration_weeks": 1, "deliverables": ["d2"], "milestone_tags": ["bronze"], "resources": [{"title": "r2", "url": "https://airflow.apache.org/docs/"}]},
+                    {"name": "M3", "duration_weeks": 1, "deliverables": ["d3"], "milestone_tags": ["gold"], "resources": [{"title": "r3", "url": "https://learn.microsoft.com/power-bi/"}]},
                 ],
                 "roi_dashboard_requirements": {"required_dimensions": ["time"], "required_measures": ["cost_savings"]},
                 "resource_plan": {
