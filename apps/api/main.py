@@ -1363,10 +1363,11 @@ def coaching_intake(req: CoachingIntakeRequest, session=Depends(get_current_sess
 
 
 @app.get("/coaching/intake/submissions")
-def coaching_intake_submissions(workspace_id: str, limit: int = 50, session=Depends(get_current_session)) -> dict:
+def coaching_intake_submissions(workspace_id: str, limit: int = 50, status: str | None = None, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor", "viewer"})
-    rows = list_coaching_intake_submissions(workspace_id=workspace_id, limit=limit)
-    return {"workspace_id": workspace_id, "submissions": rows, "total": len(rows)}
+    _require_active_coaching_subscription(workspace_id=workspace_id, session=session)
+    rows = list_coaching_intake_submissions(workspace_id=workspace_id, limit=limit, review_status=status)
+    return {"workspace_id": workspace_id, "status_filter": status, "submissions": rows, "total": len(rows)}
 
 
 @app.get("/coaching/intake/submissions/{submission_id}")
@@ -1619,8 +1620,25 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
 
     prior_runs = list_coaching_generation_runs(req.submission_id, limit=1)
     prior_score = None
+    prior_findings_count = None
     if prior_runs:
-        prior_score = (((prior_runs[0].get("validation_json") or {}).get("quality") or {}).get("score"))
+        prior_validation = prior_runs[0].get("validation_json") or {}
+        prior_score = ((prior_validation.get("quality") or {}).get("score"))
+        prior_final_findings = prior_validation.get("final_findings") or []
+        if isinstance(prior_final_findings, list):
+            prior_findings_count = len(prior_final_findings)
+    quality_delta_meta = {
+        "before": {
+            "score": int(prior_score) if prior_score is not None else None,
+            "findings_count": prior_findings_count,
+        },
+        "after": {
+            "score": int(quality.get("score") or 0),
+            "findings_count": len(final_findings),
+        },
+        "score_delta": (quality.get("score") - int(prior_score)) if prior_score is not None else None,
+        "findings_delta": (len(final_findings) - int(prior_findings_count)) if prior_findings_count is not None else None,
+    }
 
     run_id = str(uuid4())
     save_coaching_generation_run(
@@ -1646,7 +1664,8 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
             "quality": {
                 **quality,
                 "regenerate_requested": bool(req.regenerate_with_improvements),
-                "quality_delta": (quality.get("score") - int(prior_score)) if prior_score is not None else None,
+                "quality_delta": quality_delta_meta.get("score_delta"),
+                "quality_delta_meta": quality_delta_meta,
             },
         },
         error_message=None,
@@ -1689,7 +1708,8 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
         "quality": {
             **quality,
             "regenerate_requested": bool(req.regenerate_with_improvements),
-            "quality_delta": (quality.get("score") - int(prior_score)) if prior_score is not None else None,
+            "quality_delta": quality_delta_meta.get("score_delta"),
+            "quality_delta_meta": quality_delta_meta,
         },
         "schema": {
             "schema_version": "0.2",
@@ -1719,6 +1739,12 @@ def coaching_sow_validate(req: CoachingSowValidateRequest, session=Depends(get_c
     intake = get_coaching_intake_submission(req.submission_id)
     if not intake:
         return {"ok": False, "message": "submission not found", "submission_id": req.submission_id}
+
+    _require_active_coaching_subscription(
+        workspace_id=req.workspace_id,
+        session=session,
+        email=str(intake.get("applicant_email") or "").strip().lower() or None,
+    )
 
     sow_payload = req.sow.model_dump(mode="json", by_alias=True)
     sow_payload, _ = sanitize_generated_sow(sow_payload)
@@ -1895,16 +1921,28 @@ def coaching_review_status_update(req: CoachingReviewStatusUpdateRequest, sessio
 @app.get("/coaching/health/readiness")
 def coaching_health_readiness(workspace_id: str, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor", "viewer"})
-    llm_key_present = bool(str((__import__('os').getenv("OPENAI_API_KEY") or "")).strip())
+    _require_active_coaching_subscription(workspace_id=workspace_id, session=session)
+    api_key = str(os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY") or "").strip()
+    base_url = str(os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").strip()
+    provider_ok, provider_message = _check_llm_provider_reachability(base_url=base_url, api_key=api_key)
     lb_ok, lb_msg = lakebase_health()
+    backend_health = {
+        "ok": lb_ok,
+        "message": lb_msg,
+    }
     return {
         "ok": True,
         "workspace_id": workspace_id,
         "readiness": {
-            "llm_key_present": llm_key_present,
+            "api_key_present": bool(api_key),
+            "llm_key_present": bool(api_key),
+            "provider_reachable": provider_ok,
+            "provider_message": provider_message,
+            "base_url": base_url,
+            "backend_health": backend_health,
             "lakebase_ok": lb_ok,
             "lakebase_message": lb_msg,
-            "ready": bool(llm_key_present and lb_ok),
+            "ready": bool(api_key and provider_ok and lb_ok),
         },
     }
 
@@ -1925,6 +1963,12 @@ def coaching_validate_loop(req: CoachingValidateLoopRequest, session=Depends(get
     intake = get_coaching_intake_submission(req.submission_id)
     if not intake:
         return {"ok": False, "message": "submission not found", "submission_id": req.submission_id}
+
+    _require_active_coaching_subscription(
+        workspace_id=req.workspace_id,
+        session=session,
+        email=str(intake.get("applicant_email") or "").strip().lower() or None,
+    )
 
     safe_input_sow, _ = sanitize_generated_sow(req.sow)
     first_findings = validate_sow_payload(safe_input_sow)

@@ -33,36 +33,80 @@ Owner: ERD Program Team
 2. Surface quality score/delta and regenerate affordance in coaching UI.
 3. Extend readiness endpoint with optional provider reachability probe.
 
+## Checkpoint Update (2026-03-02 - Coaching Backend Sprint 2 Close Pass)
+
+### Done
+- **D1 coach notes/status roundtrip completed**
+  - `GET /coaching/intake/submissions` now supports optional `status` filter and returns `status_filter` echo.
+  - backend storage query path supports `review_status` filtering for both DuckDB and Postgres.
+  - list endpoint now enforces active subscription before returning queue data.
+- **C1 premium-route gating audit + patch**
+  - added active-subscription enforcement for:
+    - `POST /coaching/sow/validate`
+    - `POST /coaching/sow/validate-loop`
+    - `GET /coaching/health/readiness`
+  - kept existing review/detail/generate/export gating in place.
+- **E1 readiness payload expanded for frontend panel**
+  - `GET /coaching/health/readiness` now returns:
+    - `api_key_present` (+ backward-compatible `llm_key_present`)
+    - `provider_reachable`, `provider_message`, `base_url`
+    - `backend_health` (`ok`, `message`) and legacy `lakebase_*` fields
+    - unified `ready` signal (`key && provider && backend`).
+- **B2 regenerate quality delta metadata hardened**
+  - generation response + persisted validation now include `quality.quality_delta_meta` with:
+    - `before`: score/findings_count
+    - `after`: score/findings_count
+    - `score_delta`, `findings_delta`
+  - `quality_delta` remains available as score-delta alias.
+- Added/updated backend tests for these close items:
+  - `apps/api/tests/test_coaching_sprint2_backend.py`
+  - `apps/api/tests/test_security_sprint2.py`
+  - `apps/api/tests/test_coaching_pass2.py`
+  - `apps/api/tests/test_coaching_review_endpoints.py`
+
+### Validation
+- `python -m pytest tests/test_coaching_sprint2_backend.py tests/test_security_sprint2.py tests/test_coaching_review_endpoints.py tests/test_coaching_pass2.py -q` (from `apps/api`) ✅
+- `python -m compileall main.py db_lakebase.py` (from `apps/api`) ✅
+
+### Risks / Follow-ups
+- Readiness provider probe is request-time; if provider is degraded this route can become slower/noisier for UI refresh loops.
+- Intake list status filter is exact normalized match; if future states expand, shared enum constants should be introduced.
+
 ## Checkpoint Update (2026-03-02 - Coaching Frontend Sprint 2 Integration Pass)
 
 ### Done
-- Completed frontend integration pass for Sprint 2 coaching tasks in `CoachingProjectWorkbench`:
-  - **A1/A2 integration checks:** aligned frontend with backend coaching generation/review endpoints and run-history wiring.
-  - **B2 regenerate UX:** added `Generate SOW` + `Regenerate with improvements` actions with running/success/error states.
-  - **B3 fallback transparency:** surfaced explicit source indicator (`LLM generated` vs `Scaffold fallback`) from backend quality flags.
-  - **C1 premium gating consistency:** standardized upgrade-required behavior/messages for generation attempts when subscription is inactive.
-  - **C2 mentoring rationale:** added rationale display in mentoring recommendation block.
-  - **D1 coach ops UI:** added coach review status selector and notes entry panel (UI scaffold; persistence endpoint still pending).
-  - **D2 timeline view:** added per-submission timeline rendering using submission + generation run history.
+- Completed frontend closeout pass for remaining Sprint 2 coaching items in `CoachingProjectWorkbench`.
+- **D1 coach ops backend wiring:**
+  - wired coach review save action to `POST /coaching/review/status`
+  - loaded existing `coach_review_status` + `coach_notes` from submission detail endpoint
+  - added queue status filter control using backend status filter via `GET /coaching/review/open-submissions?status=...`
+- **B2/B3 output transparency:**
+  - surfaced fallback explanation text when scaffold fallback is used
+  - surfaced quality score/band and regenerate delta details (before→after)
+  - passed `regenerate_with_improvements` flag in generation requests
+- **E1 readiness panel:**
+  - added frontend readiness health card wired to `GET /coaching/health/readiness`
+  - includes refresh action and key readiness signals (LLM key, LakeBase health)
+- **Security UX hardening:**
+  - added frontend safe-link guard for rendered links (job links, data sources, resource links)
+  - blocked/unsafe links now render warning badges instead of clickable anchors
 - Extended frontend API client (`apps/web/src/lib/api.ts`) with typed methods/contracts for:
-  - `POST /coaching/sow/generate`
-  - `GET /coaching/review/open-submissions`
-  - `GET /coaching/review/submissions/{submission_id}/runs`
+  - `POST /coaching/review/status`
+  - `GET /coaching/health/readiness`
+  - `GET /coaching/review/open-submissions` (status filter + typed review status payload)
+  - `POST /coaching/sow/generate` (`regenerate_with_improvements` request + `quality` response)
 
 ### Validation
 - `npm run typecheck` (apps/web) ✅
-- `npm run build` (apps/web) ⚠️ failed due to local environment file/permission issue:
-  - `EISDIR ... next/dist/pages/_app.js`
-  - `EPERM ... .next/trace`
+- `npm run build` (apps/web) ✅ (after clean reset of `.next`)
 
 ### Risks
-- Coach notes/status controls are currently frontend workflow scaffolds; no save/update API route wired yet.
-- Build failure appears environment-specific (filesystem/permissions), not type-level regression.
+- Readiness endpoint currently checks key presence + LakeBase health only (no provider live ping yet).
 
 ### Next
-1. Add backend endpoint for persisting coach review status/notes and wire save action.
-2. Add timeline event normalization for exports/review updates once those records are exposed as first-class API events.
-3. Resolve local Next build FS/permission issue and re-run production build validation.
+1. Add optional provider reachability probe to readiness endpoint.
+2. Add richer quality telemetry rollups in UI (trend over runs).
+3. Normalize timeline events for review status updates as first-class timeline entries.
 
 ## Scope
 POC for AI Data Modeling IDE with:

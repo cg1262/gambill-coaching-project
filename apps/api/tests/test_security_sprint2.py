@@ -210,3 +210,38 @@ def test_e2_fetch_job_text_blocks_unsafe_urls():
     blocked_localhost = fetch_job_text("http://localhost/internal")
     assert blocked_localhost["ok"] is False
     assert "Unsafe URL blocked" in blocked_localhost["error"]
+
+
+def test_c1_premium_validate_loop_requires_active_subscription(monkeypatch):
+    app.dependency_overrides[get_current_session] = _override_session("editor", "coach1")
+    monkeypatch.setattr(main, "get_coaching_account_subscription", _inactive_subscription)
+    monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: _base_intake(submission_id))
+
+    client = TestClient(app)
+    res = client.post(
+        "/coaching/sow/validate-loop",
+        json={"workspace_id": "ws-1", "submission_id": "sub-1", "sow": _valid_sow_payload(), "auto_revise_once": True},
+    )
+    assert res.status_code == 403
+    app.dependency_overrides = {}
+
+
+def test_d1_intake_submissions_filter_passed_to_storage(monkeypatch):
+    app.dependency_overrides[get_current_session] = _override_session("viewer", "coach1")
+    monkeypatch.setattr(main, "_require_active_coaching_subscription", lambda **kwargs: {"subscription_status": "active"})
+    captured = {}
+
+    def _list(workspace_id, limit=50, review_status=None):
+        captured["workspace_id"] = workspace_id
+        captured["limit"] = limit
+        captured["review_status"] = review_status
+        return [{"submission_id": "sub-1", "coach_review_status": review_status or "new"}]
+
+    monkeypatch.setattr(main, "list_coaching_intake_submissions", _list)
+
+    client = TestClient(app)
+    res = client.get("/coaching/intake/submissions", params={"workspace_id": "ws-1", "status": "in_review", "limit": 10})
+    assert res.status_code == 200
+    assert captured["review_status"] == "in_review"
+    assert res.json()["status_filter"] == "in_review"
+    app.dependency_overrides = {}

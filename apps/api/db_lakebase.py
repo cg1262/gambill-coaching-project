@@ -1594,40 +1594,65 @@ def get_coaching_intake_submission(submission_id: str) -> dict[str, Any] | None:
     return row
 
 
-def list_coaching_intake_submissions(workspace_id: str, limit: int = 50) -> list[dict[str, Any]]:
+def list_coaching_intake_submissions(workspace_id: str, limit: int = 50, review_status: str | None = None) -> list[dict[str, Any]]:
     if not is_configured():
         return []
 
     limit = max(1, min(500, int(limit)))
+    status_filter = str(review_status or "").strip().lower() or None
 
     if _using_duckdb():
         with lakebase_connection() as conn:
-            rows = conn.execute(
-                """
-                SELECT *
-                FROM coaching_intake_submissions
-                WHERE workspace_id = ?
-                ORDER BY created_at DESC
-                LIMIT ?
-                """,
-                [workspace_id, limit],
-            ).fetchall()
+            if status_filter:
+                rows = conn.execute(
+                    """
+                    SELECT *
+                    FROM coaching_intake_submissions
+                    WHERE workspace_id = ? AND lower(coach_review_status) = ?
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    [workspace_id, status_filter, limit],
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT *
+                    FROM coaching_intake_submissions
+                    WHERE workspace_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                    """,
+                    [workspace_id, limit],
+                ).fetchall()
             cols = [d[0] for d in conn.description]
             data = [dict(zip(cols, row)) for row in rows]
     else:
         import psycopg
         with lakebase_connection() as conn:
             with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
-                cur.execute(
-                    """
-                    SELECT *
-                    FROM coaching_intake_submissions
-                    WHERE workspace_id = %s
-                    ORDER BY created_at DESC
-                    LIMIT %s
-                    """,
-                    (workspace_id, limit),
-                )
+                if status_filter:
+                    cur.execute(
+                        """
+                        SELECT *
+                        FROM coaching_intake_submissions
+                        WHERE workspace_id = %s AND lower(coach_review_status) = %s
+                        ORDER BY created_at DESC
+                        LIMIT %s
+                        """,
+                        (workspace_id, status_filter, limit),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT *
+                        FROM coaching_intake_submissions
+                        WHERE workspace_id = %s
+                        ORDER BY created_at DESC
+                        LIMIT %s
+                        """,
+                        (workspace_id, limit),
+                    )
                 data = [dict(r) for r in (cur.fetchall() or [])]
 
     for row in data:

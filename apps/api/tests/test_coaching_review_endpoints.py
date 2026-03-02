@@ -21,7 +21,7 @@ def test_open_submissions_returns_non_completed_items(monkeypatch):
     monkeypatch.setattr(
         main,
         "list_coaching_intake_submissions",
-        lambda workspace_id, limit=50: [
+        lambda workspace_id, limit=50, review_status=None: [
             {"submission_id": "sub-1", "workspace_id": workspace_id, "applicant_name": "A"},
             {"submission_id": "sub-2", "workspace_id": workspace_id, "applicant_name": "B"},
         ],

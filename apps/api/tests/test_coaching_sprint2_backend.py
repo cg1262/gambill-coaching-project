@@ -24,7 +24,11 @@ def test_generate_returns_quality_score(monkeypatch):
     )
     monkeypatch.setattr(main, "generate_sow_with_llm", lambda intake, parsed_jobs: {"ok": False, "sow": main.build_sow_skeleton(intake, parsed_jobs), "meta": {"provider": "scaffold"}})
     monkeypatch.setattr(main, "save_coaching_generation_run", lambda **kwargs: None)
-    monkeypatch.setattr(main, "list_coaching_generation_runs", lambda submission_id, limit=1: [])
+    monkeypatch.setattr(
+        main,
+        "list_coaching_generation_runs",
+        lambda submission_id, limit=1: [{"validation_json": {"quality": {"score": 70}, "final_findings": [{"code": "X"}, {"code": "Y"}]}}],
+    )
 
     client = TestClient(app)
     res = client.post("/coaching/sow/generate", json={"workspace_id": "ws-1", "submission_id": "sub-1", "parsed_jobs": []})
@@ -32,6 +36,10 @@ def test_generate_returns_quality_score(monkeypatch):
     body = res.json()
     assert "quality" in body
     assert isinstance(body["quality"]["score"], int)
+    assert "quality_delta_meta" in body["quality"]
+    assert body["quality"]["quality_delta_meta"]["before"]["score"] == 70
+    assert body["quality"]["quality_delta_meta"]["before"]["findings_count"] == 2
+    assert body["quality"]["quality_delta_meta"]["after"]["findings_count"] >= 0
     app.dependency_overrides = {}
 
 
@@ -50,10 +58,17 @@ def test_review_status_update_endpoint(monkeypatch):
 
 def test_coaching_health_readiness(monkeypatch):
     app.dependency_overrides[get_current_session] = _override_session("viewer")
+    monkeypatch.setattr(main, "_require_active_coaching_subscription", lambda **kwargs: {"subscription_status": "active"})
     monkeypatch.setattr(main, "lakebase_health", lambda: (True, "ok"))
+    monkeypatch.setattr(main, "_check_llm_provider_reachability", lambda base_url, api_key, timeout_sec=4: (True, "HTTP 200"))
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
     client = TestClient(app)
     res = client.get("/coaching/health/readiness", params={"workspace_id": "ws-1"})
     assert res.status_code == 200
-    assert "readiness" in res.json()
+    body = res.json()
+    assert "readiness" in body
+    assert body["readiness"]["api_key_present"] is True
+    assert body["readiness"]["provider_reachable"] is True
+    assert body["readiness"]["backend_health"]["ok"] is True
     app.dependency_overrides = {}
