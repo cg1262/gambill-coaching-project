@@ -1,0 +1,92 @@
+version: 1
+owner: chris.gambill
+timezone: America/New_York
+channel: discord
+
+# Copy these specs into your cron/task runner (OpenClaw Control UI cron or Xactron equivalent).
+# Each task output should be concise and action-oriented.
+
+tasks:
+  - id: revenue_pipeline_watch
+    schedule: "0 8 * * 1-5"   # Weekdays 08:00
+    purpose: "Find top 3 revenue-moving actions for today."
+    inputs:
+      - gmail (unread + recent read lead/proposal threads)
+      - calendar (today + next 48h)
+    steps:
+      - Identify net-new leads, stalled proposals (>5 days no reply), and unsigned contracts.
+      - Draft up to 3 highest-impact follow-ups.
+    output_format:
+      title: "Revenue Actions Today"
+      fields: ["priority", "account", "action", "suggested_message", "due"]
+    alert_thresholds:
+      - "any proposal idle >= 7 days"
+      - "any contract awaiting signature >= 5 days"
+
+  - id: coaching_client_risk_monitor
+    schedule: "30 8 * * 1-5"  # Weekdays 08:30
+    purpose: "Detect coaching clients who may churn or stall."
+    inputs:
+      - gmail
+      - billing signals (failed recurring payment emails)
+      - check-in notes (if available)
+    steps:
+      - Flag clients with failed payment, no progress update >= 7 days, or missed check-in.
+      - Produce one recommended intervention message per flagged client.
+    output_format:
+      title: "Coaching Risk Monitor"
+      fields: ["client", "risk_reason", "risk_level", "next_best_action", "message_draft"]
+    alert_thresholds:
+      - "failed payment"
+      - "no update >= 10 days"
+
+  - id: calendar_prep_brief
+    schedule: "0 7 * * 1-5"   # Weekdays 07:00
+    purpose: "Prep brief for meetings in next 24h."
+    inputs:
+      - calendar events next 24h
+      - recent related emails/threads
+    steps:
+      - Summarize context, desired outcome, key questions, and follow-up template.
+    output_format:
+      title: "Daily Meeting Prep"
+      fields: ["meeting", "objective", "must_ask", "risks", "follow_up_template"]
+
+  - id: weekly_kpi_digest
+    schedule: "0 18 * * 5"    # Friday 18:00
+    purpose: "Weekly business dashboard summary."
+    inputs:
+      - lead/proposal activity
+      - coaching renewals/churn signals
+      - content output count (youtube/linkedin)
+    steps:
+      - Summarize wins, misses, trend vs prior week, and next-week focus.
+    output_format:
+      title: "Weekly KPI Digest"
+      fields: ["metric", "this_week", "last_week", "trend", "recommended_action"]
+
+  - id: content_repurposing_queue
+    schedule: "0 11 * * 2,4"  # Tue/Thu 11:00
+    purpose: "Generate LinkedIn drafts from latest content."
+    inputs:
+      - latest youtube/video links (public or provided)
+      - current offers/CTA
+    steps:
+      - Create 1-2 LinkedIn drafts with coaching CTA.
+      - Mark as approval-required before posting.
+    output_format:
+      title: "LinkedIn Draft Queue"
+      fields: ["draft_title", "hook", "body", "cta", "approval_status"]
+
+  - id: invoice_payment_anomaly_check
+    schedule: "15 9 * * 1-5"  # Weekdays 09:15
+    purpose: "Catch payment issues early."
+    inputs:
+      - billing/failure emails
+      - renewal reminders
+    steps:
+      - Flag failed charges, overdue invoices, renewals due within 7 days.
+      - Draft concise outreach.
+    output_format:
+      title: "Billing Watch"
+      fields: ["account", "issue", "urgency", "draft_message", "deadline"]

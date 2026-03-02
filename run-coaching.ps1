@@ -1,0 +1,66 @@
+$ErrorActionPreference = 'Stop'
+
+$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$apiDir = Join-Path $root 'apps/api'
+$webDir = Join-Path $root 'apps/web'
+$venvPython = Join-Path $apiDir '.venv/Scripts/python.exe'
+
+Write-Host 'Starting Gambill Coaching app with health checks...' -ForegroundColor Cyan
+
+if (-not (Test-Path $venvPython)) {
+  Write-Host '[API] Creating virtual environment...' -ForegroundColor Yellow
+  if (Get-Command py -ErrorAction SilentlyContinue) {
+    py -3 -m venv (Join-Path $apiDir '.venv')
+  } elseif (Get-Command python -ErrorAction SilentlyContinue) {
+    python -m venv (Join-Path $apiDir '.venv')
+  } else {
+    throw 'Python not found. Install Python 3 and ensure py/python is on PATH.'
+  }
+}
+
+Write-Host '[API] Installing dependencies...' -ForegroundColor Yellow
+& $venvPython -m pip install -r (Join-Path $apiDir 'requirements.txt') | Out-Host
+
+if (-not (Test-Path (Join-Path $webDir 'node_modules'))) {
+  Write-Host '[WEB] Installing npm dependencies...' -ForegroundColor Yellow
+  Push-Location $webDir
+  npm install | Out-Host
+  Pop-Location
+}
+
+# Start API
+$apiCmd = "cd /d `"$apiDir`" && set LAKEBASE_BACKEND=duckdb && set APP_ENV=dev && .\.venv\Scripts\python.exe -m uvicorn main:app --reload --port 8000"
+Start-Process -FilePath 'cmd.exe' -ArgumentList '/k', $apiCmd -WindowStyle Normal
+
+# Start WEB
+$webCmd = "cd /d `"$webDir`" && npm run dev"
+Start-Process -FilePath 'cmd.exe' -ArgumentList '/k', $webCmd -WindowStyle Normal
+
+function Wait-Url($url, $label, $timeoutSec = 90) {
+  $start = Get-Date
+  while (((Get-Date) - $start).TotalSeconds -lt $timeoutSec) {
+    try {
+      $resp = Invoke-WebRequest -Uri $url -Method Get -TimeoutSec 3 -UseBasicParsing
+      if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 500) {
+        Write-Host "[$label] READY -> $url" -ForegroundColor Green
+        return $true
+      }
+    } catch {
+      Start-Sleep -Milliseconds 800
+    }
+  }
+  Write-Host "[$label] NOT READY within $timeoutSec sec -> $url" -ForegroundColor Red
+  return $false
+}
+
+$apiReady = Wait-Url 'http://127.0.0.1:8000/admin/bootstrap-status' 'API'
+$webReady = Wait-Url 'http://127.0.0.1:3000' 'WEB'
+
+Write-Host ''
+if ($apiReady -and $webReady) {
+  Write-Host 'Gambill Coaching app is ready to use:' -ForegroundColor Green
+  Write-Host '  WEB: http://localhost:3000'
+  Write-Host '  API: http://127.0.0.1:8000'
+} else {
+  Write-Host 'One or more services did not become healthy. Check the opened terminal windows for errors.' -ForegroundColor Yellow
+}
