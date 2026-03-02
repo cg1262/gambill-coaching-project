@@ -839,3 +839,23 @@ _Status refresh: checkpoint finalized with tests + docs updates in this pass._
 1. Add optional outbound domain allowlist config for job parsing (`ALLOWED_JOB_HOSTS`) with environment-based override.
 2. Add readiness detail fields for model selection + last-successful provider check timestamp.
 3. Add negative-path tests for provider probe failures (timeouts/401/5xx) in readiness endpoint coverage.
+
+## Checkpoint Close (2026-03-02 - Sprint 2 Security Close Items)
+
+### Done
+- Added coach notes/status endpoint security coverage in `apps/api/tests/test_security_sprint2.py`:
+  - `test_coach_review_status_update_forbids_viewer_role`
+  - `test_coach_review_status_update_requires_active_subscription`
+- Added regenerate quality-delta response leak regression in `apps/api/tests/test_llm_output_security.py`:
+  - `test_regenerate_quality_delta_response_does_not_leak_prior_sensitive_payload`
+  - Confirms `quality_delta` is returned while prior-run sensitive payload values/keys do not appear in API response.
+- Added frontend link safety policy note + backend/frontend defense-in-depth section in:
+  - `docs/coaching-project/HOSTED_APP_MEMBER_FLOW_THREAT_MODEL.md`
+
+### Validation
+- Targeted security regression suite run (from `apps/api`):
+  - `python -m pytest -q tests/test_security_sprint2.py tests/test_llm_output_security.py`
+  - Result: **9 passed**
+
+### Sprint 2 Security Close Status
+- This security close checkpoint is complete for requested items 1-4 (tests + docs + regression run).

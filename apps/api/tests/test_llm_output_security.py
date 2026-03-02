@@ -48,6 +48,60 @@ def test_probabilistic_validation_reports_missing_llm_key(monkeypatch):
     assert any(v["code"] == "LLM_API_KEY_MISSING" for v in body.get("violations", []))
 
 
+def test_regenerate_quality_delta_response_does_not_leak_prior_sensitive_payload(monkeypatch):
+    app.dependency_overrides[get_current_session] = _override_session("editor")
+    monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: _base_intake(submission_id))
+    monkeypatch.setattr(
+        main,
+        "get_coaching_account_subscription",
+        lambda workspace_id, username=None, email=None: {"subscription_status": "active", "email": email},
+    )
+    monkeypatch.setattr(main, "save_coaching_generation_run", lambda **kwargs: None)
+
+    monkeypatch.setattr(
+        main,
+        "list_coaching_generation_runs",
+        lambda submission_id, limit=1: [
+            {
+                "run_id": "old-run",
+                "validation_json": {
+                    "quality": {"score": 40},
+                    "raw_provider_payload": {"api_key": "sk-super-secret", "token": "tok_private"},
+                },
+            }
+        ],
+    )
+
+    monkeypatch.setattr(
+        main,
+        "generate_sow_with_llm",
+        lambda intake, parsed_jobs: {"ok": True, "sow": main.build_sow_skeleton(intake, parsed_jobs), "meta": {"provider": "openai-compatible"}},
+    )
+
+    try:
+        client = TestClient(app)
+        res = client.post(
+            "/coaching/sow/generate",
+            json={
+                "workspace_id": "ws-1",
+                "submission_id": "sub-1",
+                "parsed_jobs": [],
+                "regenerate_with_improvements": True,
+            },
+        )
+        assert res.status_code == 200
+        body = res.json()
+        assert body["quality"]["quality_delta"] is not None
+
+        serialized = str(body).lower()
+        assert "sk-super-secret" not in serialized
+        assert "tok_private" not in serialized
+        assert "raw_provider_payload" not in serialized
+        assert "api_key" not in serialized
+    finally:
+        app.dependency_overrides = {}
+
+
 def test_generated_sow_blocks_unsafe_urls_and_secret_text(monkeypatch):
     app.dependency_overrides[get_current_session] = _override_session("editor")
     monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: _base_intake(submission_id))

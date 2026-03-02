@@ -1,6 +1,6 @@
 # Hosted Coaching App + Members Flow Threat Model
 
-Last Updated: 2026-03-01  
+Last Updated: 2026-03-02  
 Owner: Security Agent (Squarespace integration workstream)
 
 ## Scope
@@ -89,6 +89,26 @@ The highest-risk boundary is #2 and #3 where token replay or unauthorized caller
 - `test_auth_login_logging_never_includes_password` -> validates PII-safe logging on auth endpoint.
 
 ---
+
+## Frontend Link Safety Policy (Pilot Baseline)
+- Treat all LLM-produced links and user-supplied URLs as untrusted input.
+- Frontend must only render navigation targets with `http://` or `https://` schemes.
+- Frontend must reject or neutralize links using `javascript:`, `data:`, `file:`, or private/loopback hosts.
+- Use `rel="noopener noreferrer"` on external links and avoid `dangerouslySetInnerHTML` for untrusted content.
+- Never expose secrets/tokens/passwords in link text, query strings, or telemetry payloads.
+
+## Backend + Frontend Defense-in-Depth
+Security controls are intentionally layered so one bypass does not expose members or data:
+- **Frontend controls**
+  - URL rendering restrictions and safe-link UI behavior.
+  - Clear user messaging when unsafe links are blocked.
+- **Backend controls**
+  - URL safety validation + fetch hardening in job-link processing.
+  - Role guard + active-subscription checks on review/generation endpoints.
+  - PII-safe logging to prevent sensitive payload leaks in observability paths.
+- **Regression assurance**
+  - API tests cover authz/subscription denials and unsafe content scrubbing.
+  - Regenerate/quality-delta responses are verified to avoid leaking prior raw provider payloads.
 
 ## Residual Risk + Follow-ups
 1. **Launch-token trust model not cryptographically enforced yet**

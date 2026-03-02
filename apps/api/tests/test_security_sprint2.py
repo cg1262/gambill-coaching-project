@@ -126,6 +126,62 @@ def test_c1_premium_review_endpoints_require_active_subscription(monkeypatch):
     app.dependency_overrides = {}
 
 
+def test_coach_review_status_update_forbids_viewer_role(monkeypatch):
+    app.dependency_overrides[get_current_session] = _override_session("viewer", "viewer1")
+    monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: _base_intake(submission_id))
+    monkeypatch.setattr(main, "get_coaching_account_subscription", _active_subscription)
+
+    called = {"updated": False}
+    monkeypatch.setattr(
+        main,
+        "update_coaching_review_status",
+        lambda submission_id, coach_review_status, coach_notes: called.update(updated=True),
+    )
+
+    client = TestClient(app)
+    res = client.post(
+        "/coaching/review/status",
+        json={
+            "workspace_id": "ws-1",
+            "submission_id": "sub-1",
+            "coach_review_status": "in_review",
+            "coach_notes": "looks good",
+        },
+    )
+    assert res.status_code == 403
+    assert called["updated"] is False
+
+    app.dependency_overrides = {}
+
+
+def test_coach_review_status_update_requires_active_subscription(monkeypatch):
+    app.dependency_overrides[get_current_session] = _override_session("editor", "coach2")
+    monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: _base_intake(submission_id))
+    monkeypatch.setattr(main, "get_coaching_account_subscription", _inactive_subscription)
+
+    called = {"updated": False}
+    monkeypatch.setattr(
+        main,
+        "update_coaching_review_status",
+        lambda submission_id, coach_review_status, coach_notes: called.update(updated=True),
+    )
+
+    client = TestClient(app)
+    res = client.post(
+        "/coaching/review/status",
+        json={
+            "workspace_id": "ws-1",
+            "submission_id": "sub-1",
+            "coach_review_status": "in_review",
+            "coach_notes": "needs rewrite",
+        },
+    )
+    assert res.status_code == 403
+    assert called["updated"] is False
+
+    app.dependency_overrides = {}
+
+
 def test_e1_llm_readiness_endpoint(monkeypatch):
     app.dependency_overrides[get_current_session] = _override_session("editor", "ops")
 
