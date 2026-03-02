@@ -195,6 +195,24 @@ export interface CoachingSowGenerateResult {
   findings?: Array<{ code: string; message: string }>;
   generation_meta?: Record<string, any>;
   quality_flags?: Record<string, any>;
+  quality?: Record<string, any>;
+}
+
+export interface CoachingReviewStatusUpdateResult {
+  ok: boolean;
+  message?: string;
+  submission?: CoachingIntakeSubmissionDetail;
+}
+
+export interface CoachingHealthReadinessResult {
+  ok: boolean;
+  workspace_id: string;
+  readiness: {
+    llm_key_present: boolean;
+    lakebase_ok: boolean;
+    lakebase_message: string;
+    ready: boolean;
+  };
 }
 
 export interface CoachingReviewRunsResult {
@@ -209,7 +227,7 @@ export interface CoachingReviewRunsResult {
 export interface CoachingOpenSubmissionsResult {
   ok: boolean;
   workspace_id: string;
-  open_submissions: Array<{ submission: CoachingIntakeSubmission; latest_generation_run?: Record<string, any> | null; review_state?: string }>;
+  open_submissions: Array<{ submission: CoachingIntakeSubmission; latest_generation_run?: Record<string, any> | null; review_state?: string; coach_review_status?: string }>;
   total: number;
 }
 
@@ -453,9 +471,18 @@ export const api = {
     workspace_id: string;
     submission_id: string;
     parsed_jobs?: Record<string, any>[];
+    regenerate_with_improvements?: boolean;
   }) => postJson<CoachingSowGenerateResult>("/coaching/sow/generate", payload),
   coachingReviewSubmissionRuns: (submissionId: string, limit = 20) =>
     getJson<CoachingReviewRunsResult>(`/coaching/review/submissions/${encodeURIComponent(submissionId)}/runs?limit=${limit}`),
-  coachingReviewOpenSubmissions: (workspaceId: string, limit = 50) =>
-    getJson<CoachingOpenSubmissionsResult>(`/coaching/review/open-submissions?workspace_id=${encodeURIComponent(workspaceId)}&limit=${limit}`),
+  coachingReviewOpenSubmissions: (workspaceId: string, limit = 50, status?: string) =>
+    getJson<CoachingOpenSubmissionsResult>(`/coaching/review/open-submissions?workspace_id=${encodeURIComponent(workspaceId)}&limit=${limit}${status ? `&status=${encodeURIComponent(status)}` : ""}`),
+  coachingReviewStatusUpdate: (payload: {
+    workspace_id: string;
+    submission_id: string;
+    coach_review_status: string;
+    coach_notes?: string;
+  }) => postJson<CoachingReviewStatusUpdateResult>("/coaching/review/status", payload),
+  coachingHealthReadiness: (workspaceId: string) =>
+    getJson<CoachingHealthReadinessResult>(`/coaching/health/readiness?workspace_id=${encodeURIComponent(workspaceId)}`),
 };

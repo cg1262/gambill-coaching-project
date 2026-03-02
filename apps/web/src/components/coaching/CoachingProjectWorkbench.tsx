@@ -222,6 +222,24 @@ function normalizeJobLinks(value?: unknown): string[] {
   return value.map((item) => String(item || "").trim()).filter(Boolean);
 }
 
+function safeExternalUrl(url?: string): { safe: boolean; reason?: string; normalized?: string } {
+  const raw = String(url || "").trim();
+  if (!raw) return { safe: false, reason: "empty" };
+  try {
+    const parsed = new URL(raw);
+    if (!["http:", "https:"].includes(parsed.protocol)) return { safe: false, reason: "blocked_scheme" };
+    const host = parsed.hostname.toLowerCase();
+    if (["localhost", "127.0.0.1", "0.0.0.0"].includes(host) || host.endsWith(".local")) {
+      return { safe: false, reason: "blocked_private_host" };
+    }
+    const blocked = ["example.com", "placeholder", "your-link", "tbd"];
+    if (blocked.some((term) => raw.toLowerCase().includes(term))) return { safe: false, reason: "placeholder_or_blocked" };
+    return { safe: true, normalized: parsed.toString() };
+  } catch {
+    return { safe: false, reason: "invalid_url" };
+  }
+}
+
 export default function CoachingProjectWorkbench() {
   const [authState, setAuthState] = useState<CoachingAuthState>("signedOut");
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus>("unknown");
@@ -249,8 +267,11 @@ export default function CoachingProjectWorkbench() {
   const [selectedSubmissionRuns, setSelectedSubmissionRuns] = useState<Record<string, any>[]>([]);
   const [selectedSubmissionStatus, setSelectedSubmissionStatus] = useState<string>("submitted");
   const [coachNotes, setCoachNotes] = useState<string>("");
+  const [queueStatusFilter, setQueueStatusFilter] = useState<string>("all");
+  const [reviewSaveState, setReviewSaveState] = useState<{ saving: boolean; message?: string; error?: string }>({ saving: false });
   const [currentSubmissionId, setCurrentSubmissionId] = useState<string | null>(null);
-  const [generationState, setGenerationState] = useState<{ running: boolean; message?: string; sourceMode?: "llm" | "fallback"; qualityFlags?: Record<string, any>; generationMeta?: Record<string, any> }>({ running: false });
+  const [generationState, setGenerationState] = useState<{ running: boolean; message?: string; sourceMode?: "llm" | "fallback"; qualityFlags?: Record<string, any>; generationMeta?: Record<string, any>; quality?: Record<string, any> }>({ running: false });
+  const [readinessState, setReadinessState] = useState<{ loading: boolean; error?: string; readiness?: Record<string, any> }>({ loading: false });
   const [exportStatus, setExportStatus] = useState<{ format: ExportFormat | null; state: "idle" | "exporting" | "success" | "error"; message?: string }>({
     format: null,
     state: "idle",
@@ -308,8 +329,13 @@ export default function CoachingProjectWorkbench() {
     try {
       setReviewLoading(true);
       setReviewError(null);
-      const out = await api.listCoachingIntakeSubmissions(draft.workspaceId || "demo-workspace", 50);
-      setSubmissions(out.submissions || []);
+      if (queueStatusFilter !== "all") {
+        const out = await api.coachingReviewOpenSubmissions(draft.workspaceId || "demo-workspace", 50, queueStatusFilter);
+        setSubmissions((out.open_submissions || []).map((row) => ({ ...row.submission, status: row.coach_review_status || row.submission.status })));
+      } else {
+        const out = await api.listCoachingIntakeSubmissions(draft.workspaceId || "demo-workspace", 50);
+        setSubmissions(out.submissions || []);
+      }
     } catch (e: any) {
       setReviewError(e?.message || "Failed to load submissions");
     } finally {
@@ -321,7 +347,48 @@ export default function CoachingProjectWorkbench() {
     if (!canAccessWorkbench) return;
     loadSubmissions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canAccessWorkbench]);
+  }, [canAccessWorkbench, queueStatusFilter]);
+
+  async function loadReadiness() {
+    if (!canAccessWorkbench) return;
+    try {
+      setReadinessState({ loading: true });
+      const out = await api.coachingHealthReadiness(draft.workspaceId || "demo-workspace");
+      setReadinessState({ loading: false, readiness: out.readiness });
+    } catch (e: any) {
+      setReadinessState({ loading: false, error: e?.message || "Readiness check failed." });
+    }
+  }
+
+  useEffect(() => {
+    if (!canAccessWorkbench) return;
+    loadReadiness();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canAccessWorkbench, draft.workspaceId]);
+
+  async function saveCoachReview() {
+    if (!selectedSubmissionId) return;
+    try {
+      setReviewSaveState({ saving: true });
+      const out = await api.coachingReviewStatusUpdate({
+        workspace_id: draft.workspaceId || "demo-workspace",
+        submission_id: selectedSubmissionId,
+        coach_review_status: selectedSubmissionStatus,
+        coach_notes: coachNotes,
+      });
+      if (!out.ok) {
+        setReviewSaveState({ saving: false, error: out.message || "Failed to save review." });
+        return;
+      }
+      setReviewSaveState({ saving: false, message: "Review status + notes saved." });
+      if (out.submission) {
+        setSelectedSubmission(out.submission);
+      }
+      await loadSubmissions();
+    } catch (e: any) {
+      setReviewSaveState({ saving: false, error: e?.message || "Failed to save review." });
+    }
+  }
 
   function moveStep(direction: "next" | "back") {
     const current = STEP_ORDER.indexOf(activeStep);
@@ -431,7 +498,7 @@ export default function CoachingProjectWorkbench() {
 
     try {
       setGenerationState({ running: true, message: useImprovements ? "Regenerating with improvements..." : "Generating SOW..." });
-      const out = await api.coachingGenerateSow({ workspace_id: draft.workspaceId, submission_id: currentSubmissionId, parsed_jobs: [] });
+      const out = await api.coachingGenerateSow({ workspace_id: draft.workspaceId, submission_id: currentSubmissionId, parsed_jobs: [], regenerate_with_improvements: useImprovements });
       if (!out.ok || !out.sow) {
         setGenerationState({ running: false, message: out.message || "Generation failed." });
         return;
@@ -445,6 +512,7 @@ export default function CoachingProjectWorkbench() {
         sourceMode: fallbackUsed ? "fallback" : "llm",
         qualityFlags: out.quality_flags || {},
         generationMeta: out.generation_meta || {},
+        quality: out.quality || {},
       });
     } catch (e: any) {
       const msg = e?.message || "Generation failed.";
@@ -471,8 +539,9 @@ export default function CoachingProjectWorkbench() {
       }
       setSelectedSubmission(out.submission);
       setCurrentSubmissionId(out.submission.submission_id);
-      setSelectedSubmissionStatus(String(out.submission.status || "submitted"));
-      setCoachNotes(String((out.latest_generation_run || {}).coach_notes || ""));
+      setSelectedSubmissionStatus(String((out.submission as any).coach_review_status || out.submission.status || "submitted"));
+      setCoachNotes(String((out.submission as any).coach_notes || (out.latest_generation_run || {}).coach_notes || ""));
+      setReviewSaveState({ saving: false });
       setSelectedSubmissionRuns(runsOut.runs || []);
       if (out.latest_generation_run) {
         setStageState({
@@ -712,6 +781,26 @@ export default function CoachingProjectWorkbench() {
 
       {canAccessWorkbench && (
         <>
+          <h4>Readiness Health</h4>
+          <div className="card" style={{ marginBottom: 10 }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
+              <button onClick={loadReadiness} disabled={readinessState.loading}>{readinessState.loading ? "Checking..." : "Refresh readiness"}</button>
+              {readinessState.readiness && (
+                <span className={`badge ${readinessState.readiness.ready ? "success" : "warning"}`}>
+                  {readinessState.readiness.ready ? "Ready" : "Action needed"}
+                </span>
+              )}
+              {readinessState.error && <span className="badge error">{readinessState.error}</span>}
+            </div>
+            {readinessState.readiness && (
+              <div style={{ display: "grid", gap: 6, fontSize: 12 }}>
+                <div>LLM key: <strong>{readinessState.readiness.llm_key_present ? "present" : "missing"}</strong></div>
+                <div>Lakebase: <strong>{readinessState.readiness.lakebase_ok ? "healthy" : "unhealthy"}</strong></div>
+                <div style={{ color: "var(--color-text-muted)" }}>{readinessState.readiness.lakebase_message || "No lakebase details."}</div>
+              </div>
+            )}
+          </div>
+
           <h4>Coach Review Queue</h4>
           <div className="card" style={{ marginBottom: 10 }}>
             {!canAccessReviewQueue ? (
@@ -727,6 +816,14 @@ export default function CoachingProjectWorkbench() {
                     placeholder="workspace id"
                     style={{ maxWidth: 220 }}
                   />
+                  <select value={queueStatusFilter} onChange={(e) => setQueueStatusFilter(e.target.value)}>
+                    <option value="all">All statuses</option>
+                    <option value="new">new</option>
+                    <option value="submitted">submitted</option>
+                    <option value="in_review">in_review</option>
+                    <option value="needs_revision">needs_revision</option>
+                    <option value="ready">ready</option>
+                  </select>
                   <button onClick={loadSubmissions}>Refresh submissions</button>
                   {reviewLoading && <span className="badge info">Loading…</span>}
                   {reviewError && <span className="badge error">{reviewError}</span>}
@@ -794,9 +891,14 @@ export default function CoachingProjectWorkbench() {
                       <div>
                         <strong>Job Links:</strong>
                         <ul style={{ margin: "4px 0 0 18px", padding: 0 }}>
-                          {normalizeJobLinks(selectedSubmission.job_links_json).map((link) => (
-                            <li key={link}><a href={link} target="_blank" rel="noreferrer">{link}</a></li>
-                          ))}
+                          {normalizeJobLinks(selectedSubmission.job_links_json).map((link) => {
+                            const safety = safeExternalUrl(link);
+                            return (
+                              <li key={link}>
+                                {safety.safe ? <a href={safety.normalized} target="_blank" rel="noreferrer">{link}</a> : <span>{link} <span className="badge warning">Blocked unsafe link ({safety.reason})</span></span>}
+                              </li>
+                            );
+                          })}
                           {normalizeJobLinks(selectedSubmission.job_links_json).length === 0 && <li>—</li>}
                         </ul>
                       </div>
@@ -809,14 +911,16 @@ export default function CoachingProjectWorkbench() {
 
                       <div className="card" style={{ padding: 8 }}>
                         <strong>Coach Status + Notes</strong>
-                        <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+                        <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap", alignItems: "center" }}>
                           <select value={selectedSubmissionStatus} onChange={(e) => setSelectedSubmissionStatus(e.target.value)}>
                             <option value="submitted">submitted</option>
                             <option value="in_review">in_review</option>
                             <option value="needs_revision">needs_revision</option>
                             <option value="ready">ready</option>
                           </select>
-                          <span className="badge info">Local UI workflow (save endpoint pending)</span>
+                          <button onClick={saveCoachReview} disabled={reviewSaveState.saving || !selectedSubmissionId}>{reviewSaveState.saving ? "Saving..." : "Save review"}</button>
+                          {reviewSaveState.message && <span className="badge success">{reviewSaveState.message}</span>}
+                          {reviewSaveState.error && <span className="badge error">{reviewSaveState.error}</span>}
                         </div>
                         <textarea
                           value={coachNotes}
@@ -883,6 +987,27 @@ export default function CoachingProjectWorkbench() {
               )}
             </div>
             {generationState.message && <div style={{ fontSize: 12, marginBottom: 8, color: "var(--color-text-muted)" }}>{generationState.message}</div>}
+            {(generationState.sourceMode || generationState.quality) && (
+              <div className="card" style={{ padding: 8, marginBottom: 8, fontSize: 12 }}>
+                {generationState.sourceMode === "fallback" && (
+                  <div style={{ marginBottom: 4 }}>
+                    Fallback explanation: LLM provider was unavailable or returned an invalid payload, so a safe scaffold was used.
+                  </div>
+                )}
+                {generationState.quality && (
+                  <div style={{ display: "grid", gap: 4 }}>
+                    <div>Quality score: <strong>{String(generationState.quality.score ?? "n/a")}</strong></div>
+                    <div>Quality band: <strong>{String(generationState.quality.band ?? "n/a")}</strong></div>
+                    <div>
+                      Regenerate delta: <strong>{String(generationState.quality.quality_delta ?? "n/a")}</strong>
+                      {typeof generationState.quality.score === "number" && typeof generationState.quality.quality_delta === "number" && (
+                        <span> (before {generationState.quality.score - generationState.quality.quality_delta} → after {generationState.quality.score})</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Candidate Name</label>
             <input value={draft.candidateName} onChange={(e) => setDraft((prev) => ({ ...prev, candidateName: e.target.value }))} placeholder="Chris Gambill" style={{ marginBottom: 6 }} />
@@ -989,7 +1114,7 @@ export default function CoachingProjectWorkbench() {
                         </div>
                         <div style={{ fontSize: 12, marginTop: 4 }}>{source.note}</div>
                         <div style={{ fontSize: 12, marginTop: 4 }}>
-                          {source.link ? <a href={source.link} target="_blank" rel="noreferrer">{source.link}</a> : <span style={{ color: "var(--color-text-muted)" }}>No external link provided</span>}
+                          {source.link ? (() => { const safety = safeExternalUrl(source.link); return safety.safe ? <a href={safety.normalized} target="_blank" rel="noreferrer">{source.link}</a> : <span>{source.link} <span className="badge warning">Blocked unsafe link ({safety.reason})</span></span>; })() : <span style={{ color: "var(--color-text-muted)" }}>No external link provided</span>}
                         </div>
                       </div>
                     ))}
@@ -1039,11 +1164,14 @@ export default function CoachingProjectWorkbench() {
                       <div key={step.stepTitle} className="card" style={{ padding: 8 }}>
                         <strong>{step.stepTitle}</strong>
                         <ul style={{ margin: "6px 0 0 18px", padding: 0, fontSize: 12 }}>
-                          {step.resources.map((resource) => (
-                            <li key={resource.url}>
-                              <a href={resource.url} target="_blank" rel="noreferrer">{resource.title}</a> ({resource.type}) — {resource.reason}
-                            </li>
-                          ))}
+                          {step.resources.map((resource) => {
+                            const safety = safeExternalUrl(resource.url);
+                            return (
+                              <li key={resource.url}>
+                                {safety.safe ? <a href={safety.normalized} target="_blank" rel="noreferrer">{resource.title}</a> : <span>{resource.title} <span className="badge warning">Blocked unsafe link ({safety.reason})</span></span>} ({resource.type}) — {resource.reason}
+                              </li>
+                            );
+                          })}
                         </ul>
                       </div>
                     ))}

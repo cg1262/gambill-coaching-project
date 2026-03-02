@@ -74,6 +74,8 @@ Owner: ERD Program Team
 
 ## Checkpoint Update (2026-03-02 - Coaching Frontend Sprint 2 Integration Pass)
 
+_Update note: closeout wiring + safety/readiness pass completed in frontend subagent run (2026-03-02 14:xx EST)._ 
+
 ### Done
 - Completed frontend closeout pass for remaining Sprint 2 coaching items in `CoachingProjectWorkbench`.
 - **D1 coach ops backend wiring:**
