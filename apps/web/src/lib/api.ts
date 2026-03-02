@@ -280,7 +280,10 @@ async function getJson<T>(path: string): Promise<T> {
     throw new Error(`Failed to reach API at ${API_BASE}. Start backend (uvicorn) and retry.`);
   }
 
-  if (!res.ok) throw new Error(`${path} failed (${res.status})`);
+  if (!res.ok) {
+    if (res.status === 401) throw new Error("Session expired (401)");
+    throw new Error(`${path} failed (${res.status})`);
+  }
   return (await res.json()) as T;
 }
 
@@ -299,7 +302,10 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
     throw new Error(`Failed to reach API at ${API_BASE}. Start backend (uvicorn) and retry.`);
   }
 
-  if (!res.ok) throw new Error(`${path} failed (${res.status})`);
+  if (!res.ok) {
+    if (res.status === 401) throw new Error("Session expired (401)");
+    throw new Error(`${path} failed (${res.status})`);
+  }
   return (await res.json()) as T;
 }
 

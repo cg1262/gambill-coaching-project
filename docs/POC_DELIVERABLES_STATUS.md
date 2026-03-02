@@ -3,6 +3,31 @@
 Last Updated: 2026-03-02
 Owner: ERD Program Team
 
+## Checkpoint Update (2026-03-02 - Frontend Feedback Pass: Intake UX + Session Handling)
+
+### Done
+- Updated coaching workbench intake UX for structured collection:
+  - replaced freeform self-assessment textarea with questionnaire fields (career goal, strengths, growth areas, confidence level, weekly commitment, portfolio status).
+  - replaced job links textarea with per-line URL inputs (8-row baseline) and inline validation hints for invalid URLs.
+  - replaced stack freeform entry with platform/tool checkbox groups and timeline picker.
+  - intake submit now composes structured self-assessment text and sends selected platform/tool preferences.
+- Added default prefill support from backend recommendations when available on latest generation run (`recommendations.platforms`, `recommendations.tools`, `recommendations.timeline_weeks`).
+- Hardened frontend 401/session handling:
+  - API client now normalizes 401 responses to `Session expired (401)`.
+  - coaching UI catches unauthorized errors and shows a session-expired banner rather than raw error output.
+  - request error surfaces now use sanitized user-facing messages.
+- Enhanced visual presentation:
+  - added brand logo in hero header (`/brand/logo.png`).
+  - introduced responsive input grid styling (`.coaching-input-grid`) and tightened spacing.
+  - added prominent project output overview card so key sections are visible immediately.
+
+### Validation
+- `npm run typecheck` (from `apps/web`) ✅
+
+### Risks / Follow-ups
+- Structured questionnaire currently serializes into `self_assessment_text` for compatibility; backend-native object binding can be switched on once full payload contract is finalized.
+- Logo render assumes `/brand/logo.png` remains present in web public assets.
+
 ## Checkpoint Update (2026-03-02 - Backend Feedback Pass: Intake/Auth/Recommendations)
 
 ### Done

@@ -20,8 +20,17 @@ type IntakeDraft = {
   targetRole: string;
   resumeFileName: string;
   selfAssessment: string;
-  jobLinksText: string;
-  preferredStack: string;
+  questionnaire: {
+    careerGoal: string;
+    strengths: string;
+    growthAreas: string;
+    confidenceLevel: string;
+    weeklyHours: string;
+    portfolioStatus: string;
+  };
+  jobLinks: string[];
+  selectedPlatforms: string[];
+  selectedTools: string[];
   timelineWeeks: string;
 };
 
@@ -67,6 +76,9 @@ const STEP_LABELS: Record<IntakeStepId, string> = {
   preferences: "4) Stack + Timeline",
 };
 
+const PLATFORM_OPTIONS = ["Databricks", "Snowflake", "BigQuery", "Azure Synapse", "Redshift"];
+const TOOL_OPTIONS = ["dbt", "Airflow", "Power BI", "Tableau", "Python", "Spark"];
+
 const DEFAULT_DRAFT: IntakeDraft = {
   workspaceId: "demo-workspace",
   candidateName: "",
@@ -74,8 +86,17 @@ const DEFAULT_DRAFT: IntakeDraft = {
   targetRole: "Senior Data Engineer",
   resumeFileName: "",
   selfAssessment: "",
-  jobLinksText: "",
-  preferredStack: "Databricks + dbt + Power BI",
+  questionnaire: {
+    careerGoal: "",
+    strengths: "",
+    growthAreas: "",
+    confidenceLevel: "Intermediate",
+    weeklyHours: "5-8",
+    portfolioStatus: "In progress",
+  },
+  jobLinks: Array.from({ length: 8 }, () => ""),
+  selectedPlatforms: ["Databricks"],
+  selectedTools: ["dbt", "Power BI"],
   timelineWeeks: "8",
 };
 
@@ -101,10 +122,7 @@ const PLAN_DETAILS: Record<PlanTier, { label: string; monthly: string; upgradeCt
 };
 
 function buildProjectScaffold(draft: IntakeDraft): ProjectScaffold {
-  const parsedJobLinks = draft.jobLinksText
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
+  const parsedJobLinks = draft.jobLinks.map((line) => line.trim()).filter(Boolean);
 
   const candidateName = draft.candidateName.trim() || "Candidate";
   const targetRole = draft.targetRole.trim() || "Data Engineer";
@@ -112,7 +130,7 @@ function buildProjectScaffold(draft: IntakeDraft): ProjectScaffold {
   return {
     title: `${targetRole} Coaching Project Blueprint`,
     executiveSummary: `${candidateName} will deliver a business-first, medallion-aligned project targeted to ${targetRole}, with measurable KPI impact and a hiring-manager-ready narrative.`,
-    candidateSnapshot: `${candidateName} targeting ${targetRole}. Intake includes ${parsedJobLinks.length || 0} job posting references and stack preference of ${draft.preferredStack}.`,
+    candidateSnapshot: `${candidateName} targeting ${targetRole}. Intake includes ${parsedJobLinks.length || 0} job posting references and stack preference of ${[...draft.selectedPlatforms, ...draft.selectedTools].join(" + ") || "Not specified"}.`,
     businessOutcome: "Design and implement a medallion-aligned analytics platform initiative that demonstrates measurable delivery impact to hiring managers.",
     dataSources: [
       { name: "Resume intake", type: "document", note: "Used to map existing strengths and experience claims." },
@@ -240,6 +258,28 @@ function safeExternalUrl(url?: string): { safe: boolean; reason?: string; normal
   }
 }
 
+function isUnauthorizedError(message?: string): boolean {
+  const text = String(message || "").toLowerCase();
+  return text.includes("401") || text.includes("unauthorized") || text.includes("invalid token") || text.includes("expired");
+}
+
+function uiErrorMessage(message?: string): string {
+  if (isUnauthorizedError(message)) return "Your session expired. Please sign in again.";
+  return "We hit a request issue. Please retry.";
+}
+
+function buildStructuredAssessment(draft: IntakeDraft): string {
+  const q = draft.questionnaire;
+  return [
+    `Career Goal: ${q.careerGoal || ""}`,
+    `Current Strengths: ${q.strengths || ""}`,
+    `Growth Areas: ${q.growthAreas || ""}`,
+    `Confidence Level: ${q.confidenceLevel || ""}`,
+    `Weekly Commitment: ${q.weeklyHours || ""}`,
+    `Portfolio Status: ${q.portfolioStatus || ""}`,
+  ].join("\n");
+}
+
 export default function CoachingProjectWorkbench() {
   const [authState, setAuthState] = useState<CoachingAuthState>("signedOut");
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus>("unknown");
@@ -276,12 +316,13 @@ export default function CoachingProjectWorkbench() {
     format: null,
     state: "idle",
   });
+  const [sessionBanner, setSessionBanner] = useState<string | null>(null);
 
   const completion = useMemo(() => ({
     resume: Boolean(draft.resumeFileName.trim()),
-    selfAssessment: draft.selfAssessment.trim().length > 40,
-    jobLinks: draft.jobLinksText.trim().length > 0,
-    preferences: Boolean(draft.preferredStack.trim()) && Boolean(draft.timelineWeeks.trim()),
+    selfAssessment: Boolean(draft.questionnaire.careerGoal.trim()) && Boolean(draft.questionnaire.growthAreas.trim()),
+    jobLinks: draft.jobLinks.some((link) => link.trim().length > 0),
+    preferences: (draft.selectedPlatforms.length + draft.selectedTools.length) > 0 && Boolean(draft.timelineWeeks.trim()),
   }), [draft]);
 
   const completedCount = Object.values(completion).filter(Boolean).length;
@@ -337,7 +378,9 @@ export default function CoachingProjectWorkbench() {
         setSubmissions(out.submissions || []);
       }
     } catch (e: any) {
-      setReviewError(e?.message || "Failed to load submissions");
+      const msg = e?.message || "Failed to load submissions";
+      if (isUnauthorizedError(msg)) setSessionBanner("Session expired. Please sign back in to continue.");
+      setReviewError(uiErrorMessage(msg));
     } finally {
       setReviewLoading(false);
     }
@@ -356,7 +399,9 @@ export default function CoachingProjectWorkbench() {
       const out = await api.coachingHealthReadiness(draft.workspaceId || "demo-workspace");
       setReadinessState({ loading: false, readiness: out.readiness });
     } catch (e: any) {
-      setReadinessState({ loading: false, error: e?.message || "Readiness check failed." });
+      const msg = e?.message || "Readiness check failed.";
+      if (isUnauthorizedError(msg)) setSessionBanner("Session expired. Please sign back in to continue.");
+      setReadinessState({ loading: false, error: uiErrorMessage(msg) });
     }
   }
 
@@ -386,7 +431,9 @@ export default function CoachingProjectWorkbench() {
       }
       await loadSubmissions();
     } catch (e: any) {
-      setReviewSaveState({ saving: false, error: e?.message || "Failed to save review." });
+      const msg = e?.message || "Failed to save review.";
+      if (isUnauthorizedError(msg)) setSessionBanner("Session expired. Please sign back in to continue.");
+      setReviewSaveState({ saving: false, error: uiErrorMessage(msg) });
     }
   }
 
@@ -463,28 +510,36 @@ export default function CoachingProjectWorkbench() {
   async function submitIntake() {
     if (!canAccessWorkbench) return;
 
-    const jobLinks = draft.jobLinksText
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
+    const jobLinks = draft.jobLinks.map((line) => line.trim()).filter(Boolean);
+    const preferredStack = [...draft.selectedPlatforms, ...draft.selectedTools].join(" + ");
+    const structuredAssessment = buildStructuredAssessment(draft);
 
-    const intakeResult = await api.coachingIntake({
-      workspace_id: draft.workspaceId,
-      applicant_name: draft.candidateName || "Candidate",
-      applicant_email: draft.candidateEmail || undefined,
-      resume_text: draft.resumeFileName,
-      self_assessment_text: draft.selfAssessment,
-      job_links: jobLinks,
-      preferences: {
-        target_role: draft.targetRole,
-        preferred_stack: draft.preferredStack,
-        timeline_weeks: draft.timelineWeeks,
-      },
-    });
+    try {
+      const intakeResult = await api.coachingIntake({
+        workspace_id: draft.workspaceId,
+        applicant_name: draft.candidateName || "Candidate",
+        applicant_email: draft.candidateEmail || undefined,
+        resume_text: draft.resumeFileName,
+        self_assessment_text: structuredAssessment,
+        job_links: jobLinks,
+        preferences: {
+          target_role: draft.targetRole,
+          preferred_stack: preferredStack,
+          timeline_weeks: draft.timelineWeeks,
+          selected_platforms: draft.selectedPlatforms,
+          selected_tools: draft.selectedTools,
+        },
+      });
 
-    setCurrentSubmissionId(intakeResult.submission_id || null);
-    setStageState((prev) => ({ ...prev, intakeParsed: true }));
-    await loadSubmissions();
+      setDraft((prev) => ({ ...prev, selfAssessment: structuredAssessment }));
+      setCurrentSubmissionId(intakeResult.submission_id || null);
+      setStageState((prev) => ({ ...prev, intakeParsed: true }));
+      await loadSubmissions();
+    } catch (e: any) {
+      const msg = e?.message || "Unable to submit intake.";
+      if (isUnauthorizedError(msg)) setSessionBanner("Session expired. Please sign back in to continue.");
+      setGenerationState({ running: false, message: uiErrorMessage(msg) });
+    }
   }
 
   async function generateSow(useImprovements = false) {
@@ -516,7 +571,8 @@ export default function CoachingProjectWorkbench() {
       });
     } catch (e: any) {
       const msg = e?.message || "Generation failed.";
-      setGenerationState({ running: false, message: msg.includes("403") ? "Upgrade required: active subscription needed for generation." : msg });
+      if (isUnauthorizedError(msg)) setSessionBanner("Session expired. Please sign back in to continue.");
+      setGenerationState({ running: false, message: msg.includes("403") ? "Upgrade required: active subscription needed for generation." : uiErrorMessage(msg) });
     }
   }
 
@@ -543,6 +599,15 @@ export default function CoachingProjectWorkbench() {
       setCoachNotes(String((out.submission as any).coach_notes || (out.latest_generation_run || {}).coach_notes || ""));
       setReviewSaveState({ saving: false });
       setSelectedSubmissionRuns(runsOut.runs || []);
+      const recs = ((out.latest_generation_run || {}) as any).recommendations || {};
+      if (recs.platforms || recs.tools || recs.timeline_weeks) {
+        setDraft((prev) => ({
+          ...prev,
+          selectedPlatforms: Array.isArray(recs.platforms) && recs.platforms.length ? recs.platforms.map((x: any) => String(x)) : prev.selectedPlatforms,
+          selectedTools: Array.isArray(recs.tools) && recs.tools.length ? recs.tools.map((x: any) => String(x)) : prev.selectedTools,
+          timelineWeeks: recs.timeline_weeks ? String(recs.timeline_weeks) : prev.timelineWeeks,
+        }));
+      }
       if (out.latest_generation_run) {
         setStageState({
           intakeParsed: true,
@@ -551,8 +616,10 @@ export default function CoachingProjectWorkbench() {
         });
       }
     } catch (e: any) {
+      const msg = e?.message || "Unable to load submission details.";
+      if (isUnauthorizedError(msg)) setSessionBanner("Session expired. Please sign back in to continue.");
       setSelectedSubmission(null);
-      setSubmissionDetailError(e?.message || "Unable to load submission details.");
+      setSubmissionDetailError(uiErrorMessage(msg));
     } finally {
       setSubmissionDetailLoading(false);
     }
@@ -570,8 +637,9 @@ export default function CoachingProjectWorkbench() {
       targetRole: String(preferences.target_role || prev.targetRole),
       resumeFileName: selectedSubmission.resume_text || prev.resumeFileName,
       selfAssessment: selectedSubmission.self_assessment_text || prev.selfAssessment,
-      jobLinksText: parsedJobLinks.length ? parsedJobLinks.join("\n") : prev.jobLinksText,
-      preferredStack: String(preferences.preferred_stack || prev.preferredStack),
+      jobLinks: parsedJobLinks.length ? [...parsedJobLinks, ...Array.from({ length: Math.max(0, 8 - parsedJobLinks.length) }, () => "")].slice(0, 10) : prev.jobLinks,
+      selectedPlatforms: Array.isArray((preferences as any).selected_platforms) ? (preferences as any).selected_platforms.map((x: any) => String(x)) : prev.selectedPlatforms,
+      selectedTools: Array.isArray((preferences as any).selected_tools) ? (preferences as any).selected_tools.map((x: any) => String(x)) : prev.selectedTools,
       timelineWeeks: String(preferences.timeline_weeks || prev.timelineWeeks),
     }));
 
@@ -687,12 +755,16 @@ export default function CoachingProjectWorkbench() {
   return (
     <div className="coaching-shell">
       <div className="coaching-hero">
-        <div>
-          <h2>Gambill Coaching Project Builder</h2>
-          <p>Generate portfolio-ready, business-outcome-driven data engineering projects from resume + job targets.</p>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <img src="/brand/logo.png" alt="Gambill Coaching" style={{ width: 44, height: 44, objectFit: "contain", borderRadius: 8 }} />
+          <div>
+            <h2>Gambill Coaching Project Builder</h2>
+            <p>Generate portfolio-ready, business-outcome-driven data engineering projects from resume + job targets.</p>
+          </div>
         </div>
         <span className="badge info">Coaching App</span>
       </div>
+      {sessionBanner && <div className="card" style={{ border: "1px solid #f59e0b", background: "#fffbeb", color: "#92400e" }}>{sessionBanner}</div>}
 
       <h4>Squarespace Member Launch Flow</h4>
       <div className="card coaching-card" style={{ marginBottom: 10 }}>
@@ -1026,25 +1098,36 @@ export default function CoachingProjectWorkbench() {
             )}
 
             {activeStep === "selfAssessment" && (
-              <>
-                <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Self-Assessment</label>
-                <textarea value={draft.selfAssessment} onChange={(e) => setDraft((prev) => ({ ...prev, selfAssessment: e.target.value }))} placeholder="Current strengths, gaps, and confidence areas..." style={{ width: "100%", minHeight: 90, marginTop: 4 }} />
-              </>
+              <div className="coaching-input-grid">
+                <input value={draft.questionnaire.careerGoal} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, careerGoal: e.target.value } }))} placeholder="Career goal" />
+                <input value={draft.questionnaire.strengths} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, strengths: e.target.value } }))} placeholder="Current strengths" />
+                <input value={draft.questionnaire.growthAreas} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, growthAreas: e.target.value } }))} placeholder="Growth areas" />
+                <select value={draft.questionnaire.confidenceLevel} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, confidenceLevel: e.target.value } }))}><option>Beginner</option><option>Intermediate</option><option>Advanced</option></select>
+                <select value={draft.questionnaire.weeklyHours} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, weeklyHours: e.target.value } }))}><option>1-4</option><option>5-8</option><option>9-12</option><option>12+</option></select>
+                <select value={draft.questionnaire.portfolioStatus} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, portfolioStatus: e.target.value } }))}><option>Not started</option><option>In progress</option><option>Ready to showcase</option></select>
+              </div>
             )}
 
             {activeStep === "jobLinks" && (
               <>
-                <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Job Posting URLs (one per line)</label>
-                <textarea value={draft.jobLinksText} onChange={(e) => setDraft((prev) => ({ ...prev, jobLinksText: e.target.value }))} placeholder="https://company.com/jobs/123" style={{ width: "100%", minHeight: 90, marginTop: 4 }} />
+                <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Job Posting URLs (5-10 links)</label>
+                <div className="coaching-input-grid" style={{ marginTop: 4 }}>
+                  {draft.jobLinks.map((link, idx) => {
+                    const safety = safeExternalUrl(link);
+                    return <div key={idx}><input value={link} onChange={(e) => setDraft((prev) => ({ ...prev, jobLinks: prev.jobLinks.map((v, i) => i === idx ? e.target.value : v) }))} placeholder={`https://company.com/jobs/${idx + 1}`} />{link.trim() && !safety.safe && <div style={{ fontSize: 11, color: "#b45309" }}>Use full http/https URL.</div>}</div>;
+                  })}
+                </div>
               </>
             )}
 
             {activeStep === "preferences" && (
               <>
-                <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Preferred Stack</label>
-                <input value={draft.preferredStack} onChange={(e) => setDraft((prev) => ({ ...prev, preferredStack: e.target.value }))} placeholder="Databricks + dbt + Power BI" style={{ marginBottom: 6 }} />
-                <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Timeline (weeks)</label>
-                <input value={draft.timelineWeeks} onChange={(e) => setDraft((prev) => ({ ...prev, timelineWeeks: e.target.value }))} placeholder="8" />
+                <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Platforms</label>
+                <div>{PLATFORM_OPTIONS.map((option) => <label key={option} style={{ display: "inline-flex", marginRight: 8 }}><input type="checkbox" checked={draft.selectedPlatforms.includes(option)} onChange={(e) => setDraft((prev) => ({ ...prev, selectedPlatforms: e.target.checked ? [...prev.selectedPlatforms, option] : prev.selectedPlatforms.filter((x) => x !== option) }))} />{option}</label>)}</div>
+                <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Tools</label>
+                <div>{TOOL_OPTIONS.map((option) => <label key={option} style={{ display: "inline-flex", marginRight: 8 }}><input type="checkbox" checked={draft.selectedTools.includes(option)} onChange={(e) => setDraft((prev) => ({ ...prev, selectedTools: e.target.checked ? [...prev.selectedTools, option] : prev.selectedTools.filter((x) => x !== option) }))} />{option}</label>)}</div>
+                <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Timeline target</label>
+                <select value={draft.timelineWeeks} onChange={(e) => setDraft((prev) => ({ ...prev, timelineWeeks: e.target.value }))}><option value="4">4 weeks</option><option value="6">6 weeks</option><option value="8">8 weeks</option><option value="12">12 weeks</option></select>
               </>
             )}
 
@@ -1078,6 +1161,12 @@ export default function CoachingProjectWorkbench() {
                     <span style={{ marginLeft: 6, fontSize: 12, color: "var(--color-text-muted)" }}>{exportStatus.message}</span>
                   </div>
                 )}
+
+                <div className="card" style={{ padding: 10, marginBottom: 10 }}>
+                  <div style={{ fontSize: 13, marginBottom: 6 }}><strong>Executive Summary</strong>: {scaffold.executiveSummary}</div>
+                  <div style={{ fontSize: 12, marginBottom: 6 }}><strong>Business Outcome</strong>: {scaffold.businessOutcome}</div>
+                  <div style={{ fontSize: 12 }}><strong>Milestones</strong>: {scaffold.milestones.map((m) => m.title).join(" • ")}</div>
+                </div>
 
                 <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
                   <button onClick={() => setViewerTab("summary")}>Executive Summary</button>

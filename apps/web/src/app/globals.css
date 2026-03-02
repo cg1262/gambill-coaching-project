@@ -308,7 +308,13 @@ input:focus, select:focus, button:focus {
 /* Coaching app polish */
 .coaching-shell {
   display: grid;
-  gap: 10px;
+  gap: 8px;
+}
+
+.coaching-input-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
 }
 
 .coaching-hero {
