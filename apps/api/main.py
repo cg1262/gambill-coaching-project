@@ -9,6 +9,7 @@ from urllib.error import URLError, HTTPError
 import base64
 from datetime import datetime, timezone
 import logging
+import os
 from typing import Any
 
 from models import CanvasAST, ValidationResult, ImpactResult, CoachingSowDraft
@@ -28,6 +29,7 @@ from coaching import (
     match_resources_for_sow,
     compose_demo_project_package,
     sanitize_generated_sow,
+    compute_sow_quality_score,
 )
 from db_lakebase import (
     healthcheck as lakebase_health,
@@ -54,6 +56,7 @@ from db_lakebase import (
     save_coaching_generation_run,
     get_latest_coaching_generation_run,
     list_coaching_generation_runs,
+    update_coaching_review_status,
     upsert_coaching_job_parse_cache,
     get_coaching_job_parse_cache,
     upsert_coaching_account_subscription,
@@ -263,6 +266,7 @@ class CoachingGenerateSowRequest(BaseModel):
     workspace_id: str
     submission_id: str
     parsed_jobs: list[dict] | None = None
+    regenerate_with_improvements: bool = False
 
 
 class CoachingValidateLoopRequest(BaseModel):
@@ -372,6 +376,13 @@ class CoachingSowExportRequest(BaseModel):
     format: str = "markdown"  # markdown | json
 
 
+class CoachingReviewStatusUpdateRequest(BaseModel):
+    workspace_id: str
+    submission_id: str
+    coach_review_status: str
+    coach_notes: str | None = None
+
+
 def _require_active_coaching_subscription(workspace_id: str, session: Session, email: str | None = None) -> dict:
     account = get_coaching_account_subscription(
         workspace_id=workspace_id,
@@ -385,6 +396,26 @@ def _require_active_coaching_subscription(workspace_id: str, session: Session, e
     if not _is_active_subscription(status):
         raise HTTPException(status_code=403, detail=f"Subscription status '{status}' is not active")
     return account
+
+
+def _check_llm_provider_reachability(base_url: str, api_key: str, timeout_sec: int = 4) -> tuple[bool, str]:
+    if not api_key:
+        return False, "api_key_missing"
+    try:
+        req = urlrequest.Request(
+            f"{base_url.rstrip('/')}/models",
+            headers={"Authorization": f"Bearer {api_key}"},
+            method="GET",
+        )
+        with urlrequest.urlopen(req, timeout=timeout_sec) as resp:
+            code = int(getattr(resp, "status", 200))
+            return 200 <= code < 300, f"HTTP {code}"
+    except HTTPError as e:
+        return False, f"HTTPError {e.code}"
+    except URLError as e:
+        return False, f"URLError {e.reason}"
+    except Exception as e:
+        return False, f"Error: {e}"
 
 
 def _render_sow_markdown(sow: dict[str, Any]) -> str:
@@ -424,6 +455,25 @@ def health() -> dict:
         "connectors": {
             "lakebase": {"ok": lb_ok, "message": lb_msg},
             "unity_catalog": {"ok": uc_ok, "message": uc_msg},
+        },
+    }
+
+
+@app.get("/coaching/health/llm-readiness")
+def coaching_llm_readiness(session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    api_key = str(os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY") or "").strip()
+    base_url = str(os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").strip()
+    provider_ok, provider_message = _check_llm_provider_reachability(base_url=base_url, api_key=api_key)
+    ready = bool(api_key) and provider_ok
+    return {
+        "ok": True,
+        "readiness": {
+            "ready": ready,
+            "api_key_present": bool(api_key),
+            "provider_reachable": provider_ok,
+            "provider_message": provider_message,
+            "base_url": base_url,
         },
     }
 
@@ -1323,6 +1373,12 @@ def coaching_intake_submissions(workspace_id: str, limit: int = 50, session=Depe
 def coaching_intake_submission_detail(submission_id: str, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor", "viewer"})
     intake = get_coaching_intake_submission(submission_id)
+    if intake:
+        _require_active_coaching_subscription(
+            workspace_id=str(intake.get("workspace_id") or ""),
+            session=session,
+            email=str(intake.get("applicant_email") or "").strip().lower() or None,
+        )
     if not intake:
         return {"ok": False, "message": "submission not found", "submission_id": submission_id}
     latest_run = get_latest_coaching_generation_run(submission_id)
@@ -1559,6 +1615,12 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
     strict_sow = CoachingSowDraft.model_validate(sow).model_dump(mode="json", by_alias=True)
     strict_sow, sanitize_findings = sanitize_generated_sow(strict_sow)
     final_findings = validate_sow_payload(strict_sow)
+    quality = compute_sow_quality_score(strict_sow, final_findings)
+
+    prior_runs = list_coaching_generation_runs(req.submission_id, limit=1)
+    prior_score = None
+    if prior_runs:
+        prior_score = (((prior_runs[0].get("validation_json") or {}).get("quality") or {}).get("score"))
 
     run_id = str(uuid4())
     save_coaching_generation_run(
@@ -1580,6 +1642,11 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
                 "has_required_contract_fields": len(final_findings) == 0,
                 "used_llm_provider": (llm_result.get("meta") or {}).get("provider") == "openai-compatible",
                 "fallback_used": not bool(llm_result.get("ok")),
+            },
+            "quality": {
+                **quality,
+                "regenerate_requested": bool(req.regenerate_with_improvements),
+                "quality_delta": (quality.get("score") - int(prior_score)) if prior_score is not None else None,
             },
         },
         error_message=None,
@@ -1618,6 +1685,11 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
             "used_llm_provider": (llm_result.get("meta") or {}).get("provider") == "openai-compatible",
             "fallback_used": not bool(llm_result.get("ok")),
             "retried_after_validation": retried_after_validation,
+        },
+        "quality": {
+            **quality,
+            "regenerate_requested": bool(req.regenerate_with_improvements),
+            "quality_delta": (quality.get("score") - int(prior_score)) if prior_score is not None else None,
         },
         "schema": {
             "schema_version": "0.2",
@@ -1762,6 +1834,7 @@ def coaching_sow_export(req: CoachingSowExportRequest, session=Depends(get_curre
 @app.get("/coaching/review/open-submissions")
 def coaching_review_open_submissions(workspace_id: str, limit: int = 50, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor", "viewer"})
+    _require_active_coaching_subscription(workspace_id=workspace_id, session=session)
     submissions = list_coaching_intake_submissions(workspace_id=workspace_id, limit=limit)
     enriched: list[dict[str, Any]] = []
     for sub in submissions:
@@ -1778,6 +1851,12 @@ def coaching_review_open_submissions(workspace_id: str, limit: int = 50, session
 def coaching_review_submission_runs(submission_id: str, limit: int = 20, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor", "viewer"})
     submission = get_coaching_intake_submission(submission_id)
+    if submission:
+        _require_active_coaching_subscription(
+            workspace_id=str(submission.get("workspace_id") or ""),
+            session=session,
+            email=str(submission.get("applicant_email") or "").strip().lower() or None,
+        )
     if not submission:
         return {"ok": False, "message": "submission not found", "submission_id": submission_id}
     runs = list_coaching_generation_runs(submission_id=submission_id, limit=limit)

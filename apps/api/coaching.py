@@ -9,6 +9,8 @@ from urllib.parse import urlparse
 import json
 import os
 import re
+import socket
+import ipaddress
 
 from security import mask_secrets_in_text
 
@@ -43,6 +45,32 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _is_private_or_loopback_host(host: str) -> bool:
+    value = str(host or "").strip().lower()
+    if not value:
+        return True
+    if value in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    try:
+        ip = ipaddress.ip_address(value)
+        return bool(ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved)
+    except ValueError:
+        pass
+    try:
+        infos = socket.getaddrinfo(value, None)
+    except Exception:
+        return True
+    for info in infos:
+        ip_txt = str(info[4][0])
+        try:
+            ip = ipaddress.ip_address(ip_txt)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                return True
+        except ValueError:
+            return True
+    return False
+
+
 def _validate_safe_url(url: str) -> tuple[bool, str | None]:
     raw = str(url or "").strip()
     if not raw:
@@ -55,6 +83,8 @@ def _validate_safe_url(url: str) -> tuple[bool, str | None]:
         return False, f"unsupported_scheme:{scheme or 'none'}"
     if not parsed.netloc:
         return False, "missing_host"
+    if _is_private_or_loopback_host(parsed.hostname or ""):
+        return False, "blocked_private_host"
     return True, None
 
 
@@ -115,11 +145,17 @@ def _plain_text_from_html(body: str) -> str:
 
 
 def fetch_job_text(url: str, timeout: int = 8) -> dict[str, Any]:
+    ok, reason = _validate_safe_url(url)
+    if not ok:
+        return {"ok": False, "url": url, "text": "", "error": f"Unsafe URL blocked ({reason})"}
+
     req = urlrequest.Request(url, headers={"User-Agent": "Mozilla/5.0 (OpenClaw CoachingBot)"})
     try:
         with urlrequest.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read()
+            raw = resp.read(2 * 1024 * 1024)
             ctype = str(resp.headers.get("Content-Type") or "").lower()
+            if ctype and not any(x in ctype for x in ["html", "text", "json", "xml"]):
+                return {"ok": False, "url": url, "text": "", "error": f"Unsupported content type: {ctype}"}
             decoded = raw.decode("utf-8", errors="ignore")
             if "html" in ctype or "<html" in decoded[:400].lower():
                 txt = _plain_text_from_html(decoded)
@@ -184,6 +220,7 @@ def generate_sow_with_llm(
     intake: dict[str, Any],
     parsed_jobs: list[dict[str, Any]],
     timeout: int = 45,
+    max_retries: int = 2,
 ) -> dict[str, Any]:
     api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
     model = (os.getenv("COACHING_SOW_LLM_MODEL") or "gpt-4o-mini").strip()
@@ -251,29 +288,62 @@ def generate_sow_with_llm(
         },
         method="POST",
     )
-    try:
-        with urlrequest.urlopen(req, timeout=timeout) as resp:
-            payload = json.loads(resp.read().decode("utf-8", errors="ignore"))
-        content = (((payload.get("choices") or [{}])[0].get("message") or {}).get("content") or "{}")
-        sow = _safe_json_loads(content)
-        return {
-            "ok": True,
-            "sow": sow,
-            "meta": {
-                "provider": "openai-compatible",
-                "model": model,
-                "base_url": base_url,
-                "usage": payload.get("usage") or {},
-                "finish_reason": (((payload.get("choices") or [{}])[0].get("finish_reason")) or ""),
-            },
-        }
-    except Exception as e:
-        return {
-            "ok": False,
-            "error": str(e),
-            "sow": build_sow_skeleton(intake=intake, parsed_jobs=parsed_jobs),
-            "meta": {"provider": "scaffold", "model": "fallback", "base_url": base_url},
-        }
+    attempts = 0
+    last_error = "unknown_error"
+    error_type = "provider"
+    while attempts <= max_retries:
+        attempts += 1
+        try:
+            with urlrequest.urlopen(req, timeout=timeout) as resp:
+                payload = json.loads(resp.read().decode("utf-8", errors="ignore"))
+            content = (((payload.get("choices") or [{}])[0].get("message") or {}).get("content") or "{}")
+            sow = _safe_json_loads(content)
+            return {
+                "ok": True,
+                "sow": sow,
+                "meta": {
+                    "provider": "openai-compatible",
+                    "model": model,
+                    "base_url": base_url,
+                    "usage": payload.get("usage") or {},
+                    "finish_reason": (((payload.get("choices") or [{}])[0].get("finish_reason")) or ""),
+                    "attempts": attempts,
+                    "error_type": None,
+                },
+            }
+        except HTTPError as e:
+            last_error = f"HTTPError {e.code}"
+            error_type = "provider"
+            if e.code < 500 and e.code not in {408, 429}:
+                break
+        except URLError as e:
+            last_error = f"URLError {e.reason}"
+            error_type = "network"
+        except TimeoutError as e:
+            last_error = str(e) or "timeout"
+            error_type = "timeout"
+        except json.JSONDecodeError as e:
+            last_error = str(e)
+            error_type = "schema"
+            break
+        except Exception as e:
+            last_error = str(e)
+            error_type = "provider"
+        if attempts > max_retries:
+            break
+
+    return {
+        "ok": False,
+        "error": last_error,
+        "sow": build_sow_skeleton(intake=intake, parsed_jobs=parsed_jobs),
+        "meta": {
+            "provider": "scaffold",
+            "model": "fallback",
+            "base_url": base_url,
+            "attempts": attempts,
+            "error_type": error_type,
+        },
+    }
 
 
 def build_sow_skeleton(
@@ -444,6 +514,25 @@ def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
         findings.append({"code": "TRUST_LANGUAGE_MISSING", "message": "mentoring_cta.trust_language is required."})
 
     return findings
+
+
+def compute_sow_quality_score(sow: dict[str, Any], findings: list[dict[str, str]] | None = None) -> dict[str, Any]:
+    issues = findings if findings is not None else validate_sow_payload(sow)
+    penalties = min(80, len(issues) * 8)
+    required_sections = [
+        "project_title",
+        "business_outcome",
+        "solution_architecture",
+        "project_story",
+        "milestones",
+        "roi_dashboard_requirements",
+        "resource_plan",
+        "mentoring_cta",
+    ]
+    present = sum(1 for k in required_sections if k in (sow or {}))
+    completeness = int((present / len(required_sections)) * 20)
+    score = max(0, min(100, completeness + (80 - penalties)))
+    return {"score": score, "threshold_passed": score >= 70, "finding_count": len(issues)}
 
 
 def auto_revise_sow_once(sow: dict[str, Any], findings: list[dict[str, str]]) -> dict[str, Any]:
