@@ -1,6 +1,6 @@
 # Coaching Project Security Checklist (Baseline)
 
-Last Updated: 2026-03-01
+Last Updated: 2026-03-02
 Owner: Security Agent
 
 ## Scope
@@ -48,7 +48,16 @@ Reference: `docs/coaching-project/FILE_UPLOAD_THREAT_GUARD.md`
 - [x] Include trust-language in `resource_plan.trust_language` and `mentoring_cta.trust_language`.
 - [x] Validate disclosure/trust fields in SOW validation loop (`AFFILIATE_DISCLOSURE_MISSING`, `TRUST_LANGUAGE_MISSING`).
 
-## 6) Immediate Follow-ups (Next Sprint)
+## 6) LLM Integration + Generated Output Hardening
+- [x] Add missing-key guardrail for probabilistic/LLM-backed validation path (`LLM_API_KEY_MISSING` finding instead of crash).
+- [x] Ensure probabilistic impact path fails safe when no LLM key exists (empty dependencies, no exception).
+- [x] Add generated output URL sanitizer for SOW links and mentoring program URLs.
+- [x] Block dangerous URL schemes (`javascript:`, `data:`) and flag with `UNSAFE_*` findings.
+- [x] Mask secret-like text patterns in generated resource and mentoring narrative before response/export.
+- [x] Add regression tests proving unsafe URLs are blocked/flagged and secret-like strings are absent from response payloads.
+
+## 7) Immediate Follow-ups (Next Sprint)
 1. Implement true multipart upload endpoint with byte-level validation.
 2. Add centralized logging filter/middleware for secret masking.
 3. Add end-to-end test to prove uploaded resume never appears in logs/raw exports.
+4. Replace placeholder probabilistic engine with real LLM client + strict structured output schema validation.

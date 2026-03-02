@@ -22,7 +22,13 @@ Use this as a go/no-go gate before enabling pilot users.
 - [ ] Confirm token/session revocation works immediately for protected routes.
 - [ ] Confirm safe failure behavior when Lakebase/provider dependencies are unavailable.
 
-## 5) Test + Release Evidence
-- [ ] Run API security regression tests (auth, RBAC, inactive-subscription denial, logging masks).
+## 5) LLM Integration + Output Safety
+- [ ] Ensure LLM API key is loaded only from env/secret manager and never returned in API responses.
+- [ ] Verify missing LLM API key behavior is explicit and safe (no crash, no secret leak, deterministic fallback message/finding).
+- [ ] Ensure generated links are URL-sanitized before render/export (block `javascript:` and `data:` schemes).
+- [ ] Ensure generated narrative/resource text is secret-masked before persistence/export.
+
+## 6) Test + Release Evidence
+- [ ] Run API security regression tests (auth, RBAC, inactive-subscription denial, logging masks, LLM guardrails).
 - [ ] Run compile/build checks for API + web.
 - [ ] Attach test/build output + commit SHA to pilot launch notes.

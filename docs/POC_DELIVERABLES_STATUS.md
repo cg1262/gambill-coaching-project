@@ -659,6 +659,8 @@ Deliverable: “enterprise-quality demo and stronger impact fidelity.”
 
 ## Checkpoint 2026-03-02 (Security LLM output guardrails pass)
 
+_Status refresh: checkpoint finalized with tests + docs updates in this pass._
+
 ### Delivered
 - Hardened probabilistic/LLM integration behavior for missing API keys in `apps/api/services.py`:
   - Added explicit env-key presence guard (`OPENAI_API_KEY` / `LLM_API_KEY`).

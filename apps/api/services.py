@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from uuid import uuid4
 
@@ -181,9 +182,30 @@ def run_deterministic_impact(ast: CanvasAST, actor_user: str = "system") -> Impa
 # ------------------------------
 # Probabilistic services
 # ------------------------------
+def _llm_api_key_present() -> bool:
+    for env_key in ("OPENAI_API_KEY", "LLM_API_KEY"):
+        if str(os.getenv(env_key, "")).strip():
+            return True
+    return False
+
+
 def run_probabilistic_validation(ast: CanvasAST, actor_user: str = "system") -> ValidationResult:
     # Placeholder for Qdrant retrieval + LLM structured JSON output
-    result = ValidationResult(violations=[])
+    if not _llm_api_key_present():
+        result = ValidationResult(
+            violations=[
+                Violation(
+                    code="LLM_API_KEY_MISSING",
+                    severity="LOW",
+                    message="Probabilistic validation skipped because LLM API key is not configured.",
+                    table_id=None,
+                    source="probabilistic",
+                    confidence=100.0,
+                )
+            ]
+        )
+    else:
+        result = ValidationResult(violations=[])
     try:
         save_validation_run(
             run_id=str(uuid4()),
@@ -198,6 +220,20 @@ def run_probabilistic_validation(ast: CanvasAST, actor_user: str = "system") -> 
 
 
 def run_probabilistic_impact(ast: CanvasAST, actor_user: str = "system") -> ImpactResult:
+    if not _llm_api_key_present():
+        result = ImpactResult(dependencies=[])
+        try:
+            save_impact_run(
+                run_id=str(uuid4()),
+                project_id=ast.workspace_id,
+                actor_user=actor_user,
+                pass_type="probabilistic",
+                dependencies=[],
+            )
+        except Exception:
+            pass
+        return result
+
     # Placeholder: in Phase 2 this list is produced by LLM+RAG.
     raw = [
         {
