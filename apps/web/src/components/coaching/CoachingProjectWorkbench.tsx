@@ -29,18 +29,24 @@ type Milestone = {
   deliverables: string[];
 };
 
+type ResourceLink = { title: string; type: "course" | "article" | "video" | "doc"; url: string; reason: string };
+
 type ProjectScaffold = {
   title: string;
+  executiveSummary: string;
   candidateSnapshot: string;
   businessOutcome: string;
+  dataSources: { name: string; type: "system" | "document" | "job-posting"; link?: string; note: string }[];
   architecture: {
     bronze: string;
     silver: string;
     gold: string;
   };
   milestones: Milestone[];
+  storyNarrative: string[];
   roiRequirements: string[];
-  recommendedResources: { title: string; type: "course" | "article" | "video"; url: string; reason: string }[];
+  resourceLinksByStep: { stepTitle: string; resources: ResourceLink[] }[];
+  recommendedResources: ResourceLink[];
   mentoringCta: {
     offer: string;
     pricing: string;
@@ -102,8 +108,14 @@ function buildProjectScaffold(draft: IntakeDraft): ProjectScaffold {
 
   return {
     title: `${targetRole} Coaching Project Blueprint`,
+    executiveSummary: `${candidateName} will deliver a business-first, medallion-aligned project targeted to ${targetRole}, with measurable KPI impact and a hiring-manager-ready narrative.`,
     candidateSnapshot: `${candidateName} targeting ${targetRole}. Intake includes ${parsedJobLinks.length || 0} job posting references and stack preference of ${draft.preferredStack}.`,
     businessOutcome: "Design and implement a medallion-aligned analytics platform initiative that demonstrates measurable delivery impact to hiring managers.",
+    dataSources: [
+      { name: "Resume intake", type: "document", note: "Used to map existing strengths and experience claims." },
+      ...parsedJobLinks.map((url, idx) => ({ name: `Target Job Posting ${idx + 1}`, type: "job-posting" as const, link: url, note: "Used to align skills and project language with role expectations." })),
+      { name: "Source operational system", type: "system", note: "Primary system of record used for ingestion and medallion modeling." },
+    ],
     architecture: {
       bronze: "Raw ingest from source systems into immutable bronze layer with ingestion observability and SLA tracking.",
       silver: "Conformed silver transformations with quality checks, schema evolution handling, and tested business logic.",
@@ -126,10 +138,37 @@ function buildProjectScaffold(draft: IntakeDraft): ProjectScaffold {
         deliverables: ["ROI dashboard spec", "Executive walkthrough", "Interview narrative assets"],
       },
     ],
+    storyNarrative: [
+      "Set the business context: what pain exists today and why it matters now.",
+      "Show the technical intervention: architecture choices and delivery trade-offs.",
+      "Close with impact: KPI lift, operational readiness, and next-step roadmap.",
+    ],
     roiRequirements: [
       "Define baseline KPI and target KPI with explicit formula.",
       "Map at least one cost metric and one speed metric to pipeline outcomes.",
       "Include instrumentation plan for 30/60/90 day tracking.",
+    ],
+    resourceLinksByStep: [
+      {
+        stepTitle: "Milestone 1: Intake-to-Model Plan",
+        resources: [
+          { title: "Architecture Diagramming Guide", type: "doc", url: "https://c4model.com/", reason: "Improves system context clarity." },
+          { title: "STAR Story Framework", type: "doc", url: "https://www.themuse.com/advice/star-interview-method", reason: "Supports interview-ready narrative framing." },
+        ],
+      },
+      {
+        stepTitle: "Milestone 2: Medallion Build Sprint",
+        resources: [
+          { title: "Databricks Medallion Architecture Reference", type: "article", url: "https://docs.databricks.com/en/lakehouse/medallion.html", reason: "Aligns implementation to common lakehouse standards." },
+          { title: "dbt Fundamentals", type: "course", url: "https://courses.getdbt.com/courses/fundamentals", reason: "Strengthens testing and transformation practices." },
+        ],
+      },
+      {
+        stepTitle: "Milestone 3: Business Readout",
+        resources: [
+          { title: "Storytelling With Data", type: "video", url: "https://www.youtube.com/@storytellingwithdata", reason: "Improves executive communication quality." },
+        ],
+      },
     ],
     recommendedResources: [
       {
@@ -189,7 +228,7 @@ export default function CoachingProjectWorkbench() {
   const [activeStep, setActiveStep] = useState<IntakeStepId>("resume");
   const [draft, setDraft] = useState<IntakeDraft>(DEFAULT_DRAFT);
   const [scaffold, setScaffold] = useState<ProjectScaffold | null>(null);
-  const [viewerTab, setViewerTab] = useState<"overview" | "milestones" | "architecture" | "roi" | "resources">("overview");
+  const [viewerTab, setViewerTab] = useState<"summary" | "dataSources" | "architecture" | "milestones" | "story" | "roi" | "resources">("summary");
   const [stageState, setStageState] = useState<Record<StageId, boolean>>({
     intakeParsed: false,
     sowGenerated: false,
@@ -222,6 +261,20 @@ export default function CoachingProjectWorkbench() {
   const canAccessMentoringRecommendation = hasActiveSubscription;
   const canBookMentoring = hasActiveSubscription && planTier === "elite";
   const currentPlan = PLAN_DETAILS[planTier];
+
+  const qualityBadges = useMemo(() => {
+    if (!scaffold) return [] as { label: string; pass: boolean }[];
+    return [
+      { label: "Has data source links", pass: scaffold.dataSources.some((source) => Boolean(source.link)) },
+      { label: "Has ROI requirements", pass: scaffold.roiRequirements.length > 0 },
+      {
+        label: "Resources mapped per milestone",
+        pass: scaffold.milestones.every((milestone) => scaffold.resourceLinksByStep.some((step) => step.stepTitle === milestone.title && step.resources.length > 0)),
+      },
+      { label: "Executive summary present", pass: scaffold.executiveSummary.trim().length > 0 },
+      { label: "Story narrative included", pass: scaffold.storyNarrative.length > 0 },
+    ];
+  }, [scaffold]);
 
   async function loadSubmissions() {
     if (!canAccessWorkbench) return;
@@ -349,17 +402,43 @@ export default function CoachingProjectWorkbench() {
       const markdown = [
         `# ${scaffold.title}`,
         "",
-        `## Candidate Snapshot`,
+        "## Executive Summary",
+        scaffold.executiveSummary,
+        "",
+        "## Candidate Snapshot",
         scaffold.candidateSnapshot,
         "",
-        `## Business Outcome`,
+        "## Business Outcome",
         scaffold.businessOutcome,
+        "",
+        "## Data Sources",
+        ...scaffold.dataSources.flatMap((source) => [
+          `- ${source.name} (${source.type})${source.link ? ` — [Link](${source.link})` : ""}`,
+          `  - Note: ${source.note}`,
+        ]),
+        "",
+        "## Architecture",
+        `- Bronze: ${scaffold.architecture.bronze}`,
+        `- Silver: ${scaffold.architecture.silver}`,
+        `- Gold: ${scaffold.architecture.gold}`,
         "",
         "## Milestones",
         ...scaffold.milestones.flatMap((m) => [
           `### ${m.title}`,
           `- Outcome: ${m.outcome}`,
           ...m.deliverables.map((d) => `- Deliverable: ${d}`),
+        ]),
+        "",
+        "## Story Narrative",
+        ...scaffold.storyNarrative.map((line) => `- ${line}`),
+        "",
+        "## ROI Dashboard Requirements",
+        ...scaffold.roiRequirements.map((item) => `- ${item}`),
+        "",
+        "## Resource Links by Step",
+        ...scaffold.resourceLinksByStep.flatMap((step) => [
+          `### ${step.stepTitle}`,
+          ...step.resources.map((resource) => `- [${resource.title}](${resource.url}) (${resource.type}) — ${resource.reason}`),
         ]),
         "",
         "## Recommended Resources",
@@ -709,25 +788,52 @@ export default function CoachingProjectWorkbench() {
                   </div>
                 )}
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 8 }}>
-                  <button onClick={() => setViewerTab("overview")}>Overview</button>
-                  <button onClick={() => setViewerTab("milestones")}>Milestones</button>
+                <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+                  <button onClick={() => setViewerTab("summary")}>Executive Summary</button>
+                  <button onClick={() => setViewerTab("dataSources")}>Data Sources</button>
                   <button onClick={() => setViewerTab("architecture")}>Architecture</button>
-                  <button onClick={() => setViewerTab("roi")}>ROI</button>
-                  <button onClick={() => setViewerTab("resources")}>Resources + Mentoring</button>
+                  <button onClick={() => setViewerTab("milestones")}>Milestones</button>
+                  <button onClick={() => setViewerTab("story")}>Story Narrative</button>
+                  <button onClick={() => setViewerTab("roi")}>ROI Dashboard</button>
+                  <button onClick={() => setViewerTab("resources")}>Resource Links by Step</button>
                 </div>
 
-                {viewerTab === "overview" && (
-                  <div style={{ fontSize: 13 }}>
-                    <div style={{ marginBottom: 6 }}><strong>Candidate Snapshot:</strong> {scaffold.candidateSnapshot}</div>
-                    <div><strong>Business Outcome:</strong> {scaffold.businessOutcome}</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                  {qualityBadges.map((badge) => (
+                    <span key={badge.label} className={`badge ${badge.pass ? "success" : "warning"}`}>
+                      {badge.pass ? "✓" : "!"} {badge.label}
+                    </span>
+                  ))}
+                </div>
+
+                {viewerTab === "summary" && (
+                  <div className="card" style={{ padding: 10, background: "rgba(120,120,255,0.05)" }}>
+                    <div style={{ fontSize: 14, marginBottom: 8, lineHeight: 1.5 }}>{scaffold.executiveSummary}</div>
+                    <div style={{ fontSize: 13, marginBottom: 6 }}><strong>Candidate Snapshot:</strong> {scaffold.candidateSnapshot}</div>
+                    <div style={{ fontSize: 13 }}><strong>Business Outcome:</strong> {scaffold.businessOutcome}</div>
+                  </div>
+                )}
+
+                {viewerTab === "dataSources" && (
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {scaffold.dataSources.map((source) => (
+                      <div key={`${source.name}-${source.link || "nolink"}`} className="card" style={{ padding: 8 }}>
+                        <div style={{ fontSize: 13 }}>
+                          <strong>{source.name}</strong> <span style={{ color: "var(--color-text-muted)" }}>({source.type})</span>
+                        </div>
+                        <div style={{ fontSize: 12, marginTop: 4 }}>{source.note}</div>
+                        <div style={{ fontSize: 12, marginTop: 4 }}>
+                          {source.link ? <a href={source.link} target="_blank" rel="noreferrer">{source.link}</a> : <span style={{ color: "var(--color-text-muted)" }}>No external link provided</span>}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
 
                 {viewerTab === "milestones" && (
-                  <div style={{ display: "grid", gap: 6 }}>
+                  <div style={{ display: "grid", gap: 8 }}>
                     {scaffold.milestones.map((m) => (
-                      <div key={m.title} className="card" style={{ padding: 8 }}>
+                      <div key={m.title} className="card" style={{ padding: 10 }}>
                         <strong>{m.title}</strong>
                         <div style={{ fontSize: 12, marginTop: 4 }}>{m.outcome}</div>
                         <ul style={{ margin: "6px 0 0 18px", padding: 0, fontSize: 12 }}>
@@ -739,31 +845,42 @@ export default function CoachingProjectWorkbench() {
                 )}
 
                 {viewerTab === "architecture" && (
-                  <div style={{ display: "grid", gap: 6, fontSize: 12 }}>
-                    <div><strong>Bronze:</strong> {scaffold.architecture.bronze}</div>
-                    <div><strong>Silver:</strong> {scaffold.architecture.silver}</div>
-                    <div><strong>Gold:</strong> {scaffold.architecture.gold}</div>
+                  <div style={{ display: "grid", gap: 8, fontSize: 12 }}>
+                    <div className="card" style={{ padding: 8 }}><strong>Bronze</strong><div style={{ marginTop: 4 }}>{scaffold.architecture.bronze}</div></div>
+                    <div className="card" style={{ padding: 8 }}><strong>Silver</strong><div style={{ marginTop: 4 }}>{scaffold.architecture.silver}</div></div>
+                    <div className="card" style={{ padding: 8 }}><strong>Gold</strong><div style={{ marginTop: 4 }}>{scaffold.architecture.gold}</div></div>
                   </div>
                 )}
 
+                {viewerTab === "story" && (
+                  <ol style={{ margin: "0 0 0 18px", padding: 0, fontSize: 12, display: "grid", gap: 6 }}>
+                    {scaffold.storyNarrative.map((item) => <li key={item}>{item}</li>)}
+                  </ol>
+                )}
+
                 {viewerTab === "roi" && (
-                  <ul style={{ margin: "0 0 0 18px", padding: 0, fontSize: 12 }}>
-                    {scaffold.roiRequirements.map((item) => <li key={item}>{item}</li>)}
-                  </ul>
+                  <div className="card" style={{ padding: 8 }}>
+                    <strong>ROI Dashboard Requirements</strong>
+                    <ul style={{ margin: "6px 0 0 18px", padding: 0, fontSize: 12 }}>
+                      {scaffold.roiRequirements.map((item) => <li key={item}>{item}</li>)}
+                    </ul>
+                  </div>
                 )}
 
                 {viewerTab === "resources" && (
                   <div style={{ display: "grid", gap: 8 }}>
-                    <div className="card" style={{ padding: 8 }}>
-                      <strong>Recommended Resources</strong>
-                      <ul style={{ margin: "6px 0 0 18px", padding: 0, fontSize: 12 }}>
-                        {scaffold.recommendedResources.map((resource) => (
-                          <li key={resource.url}>
-                            <a href={resource.url} target="_blank" rel="noreferrer">{resource.title}</a> ({resource.type}) — {resource.reason}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
+                    {scaffold.resourceLinksByStep.map((step) => (
+                      <div key={step.stepTitle} className="card" style={{ padding: 8 }}>
+                        <strong>{step.stepTitle}</strong>
+                        <ul style={{ margin: "6px 0 0 18px", padding: 0, fontSize: 12 }}>
+                          {step.resources.map((resource) => (
+                            <li key={resource.url}>
+                              <a href={resource.url} target="_blank" rel="noreferrer">{resource.title}</a> ({resource.type}) — {resource.reason}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
 
                     {canAccessMentoringRecommendation && (
                       <div className="card" style={{ padding: 8, border: "1px solid var(--color-border-strong)" }}>
@@ -773,11 +890,7 @@ export default function CoachingProjectWorkbench() {
                         </div>
                         <div style={{ fontSize: 12 }}><strong>Pricing:</strong> {scaffold.mentoringCta.pricing}</div>
                         <div style={{ fontSize: 12 }}><strong>Timeline:</strong> {scaffold.mentoringCta.timeline}</div>
-                        {!canBookMentoring && (
-                          <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 6 }}>
-                            Upgrade to Elite to unlock live booking and 1:1 mentoring sessions.
-                          </div>
-                        )}
+                        {!canBookMentoring && <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 6 }}>Upgrade to Elite to unlock live booking and 1:1 mentoring sessions.</div>}
                         <button className="btn-primary" style={{ marginTop: 8 }} disabled={!canBookMentoring}>{canBookMentoring ? scaffold.mentoringCta.ctaText : "Elite required"}</button>
                       </div>
                     )}

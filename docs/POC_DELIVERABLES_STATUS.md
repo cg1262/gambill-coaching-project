@@ -594,6 +594,45 @@ Deliverable: “enterprise-quality demo and stronger impact fidelity.”
 2. Add pagination/filtering on review queue once larger submission volume is expected.
 3. Optionally centralize export feedback into shared toast/notification UX.
 
+## Checkpoint Update (2026-03-02 - Coaching Frontend Pass 5: Premium Output Viewer)
+
+### Done
+- Upgraded `CoachingProjectWorkbench` project output viewer from scaffold tabs to **client-facing structured sections**:
+  - Executive Summary
+  - Data Sources (with links/docs)
+  - Architecture
+  - Milestones
+  - Story Narrative
+  - ROI Dashboard Requirements
+  - Resource Links by Step
+- Enriched generated scaffold payload shape (`ProjectScaffold`) so exports and UI stay aligned:
+  - Added `executiveSummary`, `dataSources`, `storyNarrative`, and `resourceLinksByStep`.
+  - Kept existing mentoring/recommended resources while introducing per-step resources.
+- Added explicit **quality badges** in viewer to surface output completeness:
+  - has data source links
+  - has ROI requirements
+  - resources mapped per milestone
+  - executive summary present
+  - story narrative included
+- Improved readability/layout for client handoff:
+  - Card-based section rendering with clearer spacing/hierarchy
+  - Better visual separation of summary vs technical detail blocks
+  - Premium-style section navigation labels matching SOW language
+- Updated Markdown export content to match richer viewer structure and section names.
+- JSON export remains direct from enriched scaffold object, preserving parity with UI/markdown.
+
+### Validation
+- `npm run typecheck` (apps/web) ✅
+
+### Risks
+- Data source and resource link generation is currently scaffolded/static logic (not yet model-derived from backend SOW sections).
+- Viewer styling remains inline/component-local; could be moved to shared design tokens for consistency across future pages.
+
+### Next
+1. Pull section content from backend-generated SOW contract instead of local scaffold defaults.
+2. Add frontend tests for quality badge derivation and markdown export section integrity.
+3. Add visual regression snapshots for premium output viewer presentation.
+
 ## Checkpoint 2026-03-01 (Security next-step pass)
 
 ### Delivered
