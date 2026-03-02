@@ -1,7 +1,38 @@
 # POC Deliverables Status
 
-Last Updated: 2026-03-01
+Last Updated: 2026-03-02
 Owner: ERD Program Team
+
+## Checkpoint Update (2026-03-02 - Coaching Frontend Sprint 2 Integration Pass)
+
+### Done
+- Completed frontend integration pass for Sprint 2 coaching tasks in `CoachingProjectWorkbench`:
+  - **A1/A2 integration checks:** aligned frontend with backend coaching generation/review endpoints and run-history wiring.
+  - **B2 regenerate UX:** added `Generate SOW` + `Regenerate with improvements` actions with running/success/error states.
+  - **B3 fallback transparency:** surfaced explicit source indicator (`LLM generated` vs `Scaffold fallback`) from backend quality flags.
+  - **C1 premium gating consistency:** standardized upgrade-required behavior/messages for generation attempts when subscription is inactive.
+  - **C2 mentoring rationale:** added rationale display in mentoring recommendation block.
+  - **D1 coach ops UI:** added coach review status selector and notes entry panel (UI scaffold; persistence endpoint still pending).
+  - **D2 timeline view:** added per-submission timeline rendering using submission + generation run history.
+- Extended frontend API client (`apps/web/src/lib/api.ts`) with typed methods/contracts for:
+  - `POST /coaching/sow/generate`
+  - `GET /coaching/review/open-submissions`
+  - `GET /coaching/review/submissions/{submission_id}/runs`
+
+### Validation
+- `npm run typecheck` (apps/web) ✅
+- `npm run build` (apps/web) ⚠️ failed due to local environment file/permission issue:
+  - `EISDIR ... next/dist/pages/_app.js`
+  - `EPERM ... .next/trace`
+
+### Risks
+- Coach notes/status controls are currently frontend workflow scaffolds; no save/update API route wired yet.
+- Build failure appears environment-specific (filesystem/permissions), not type-level regression.
+
+### Next
+1. Add backend endpoint for persisting coach review status/notes and wire save action.
+2. Add timeline event normalization for exports/review updates once those records are exposed as first-class API events.
+3. Resolve local Next build FS/permission issue and re-run production build validation.
 
 ## Scope
 POC for AI Data Modeling IDE with:
@@ -734,3 +765,47 @@ _Status refresh: checkpoint finalized with tests + docs updates in this pass._
 1. Add prompt versioning + experiment IDs in persisted generation metadata.
 2. Add second-stage revision prompt path (LLM-guided fix-up) behind a feature flag for higher pass rates.
 3. Add end-to-end API tests with mocked provider error/status branches.
+
+## Checkpoint Update (2026-03-02 - Sprint 2 Security Tasks A2/C1/E1/E2)
+
+### Done
+- **A2 security regression checks**
+  - Added end-to-end regression coverage for coaching flow (`intake -> generate -> validate -> export`) in:
+    - `apps/api/tests/test_security_sprint2.py::test_a2_security_regression_flow_intake_generate_validate_export`
+- **C1 premium action security enforcement test coverage**
+  - Enforced active-subscription checks on premium review/detail actions:
+    - `GET /coaching/review/open-submissions`
+    - `GET /coaching/review/submissions/{submission_id}/runs`
+    - `GET /coaching/intake/submissions/{submission_id}`
+  - Added coverage for subscription-denied behavior:
+    - `apps/api/tests/test_security_sprint2.py::test_c1_premium_review_endpoints_require_active_subscription`
+- **E1 LLM readiness security checks**
+  - Added readiness endpoint:
+    - `GET /coaching/health/llm-readiness`
+  - Includes API-key presence and provider reachability signal (`/models` probe with safe timeout).
+  - Added test coverage:
+    - `apps/api/tests/test_security_sprint2.py::test_e1_llm_readiness_endpoint`
+- **E2 URL/content safety hardening + tests**
+  - Hardened URL safety in `apps/api/coaching.py`:
+    - blocks unsafe schemes and private/loopback hosts
+    - applies to job-link fetch path (`fetch_job_text`)
+    - rejects unsupported content types for fetched job pages
+  - Added regression test:
+    - `apps/api/tests/test_security_sprint2.py::test_e2_fetch_job_text_blocks_unsafe_urls`
+
+### Validation
+- `python -m pytest -q tests/test_security_sprint2.py tests/test_llm_output_security.py tests/test_coaching_generation_guardrails.py` (from `apps/api`) — **9 passed**
+- `python -m compileall .` (from `apps/api`) — **success**
+
+### Risks
+- Provider reachability probe currently checks transport/auth availability only; it does not validate model-level capability fit.
+- Private-host blocking depends on DNS resolution behavior; highly custom DNS/network setups may require explicit allowlist controls.
+
+### Needs from others
+- Product/security decision on whether coach review endpoints should always require active subscription for `viewer` users in all environments.
+- Ops decision on production allowlist policy for outbound job-link domains.
+
+### Next
+1. Add optional outbound domain allowlist config for job parsing (`ALLOWED_JOB_HOSTS`) with environment-based override.
+2. Add readiness detail fields for model selection + last-successful provider check timestamp.
+3. Add negative-path tests for provider probe failures (timeouts/401/5xx) in readiness endpoint coverage.

@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, type CoachingIntakeSubmission, type CoachingIntakeSubmissionDetail } from "../../lib/api";
 
+type TimelineEvent = { id: string; at?: string; label: string; detail?: string; tone?: "info" | "success" | "warning" | "error" };
+
 type IntakeStepId = "resume" | "selfAssessment" | "jobLinks" | "preferences";
 type StageId = "intakeParsed" | "sowGenerated" | "validated";
 type CoachingAuthState = "signedOut" | "authenticated";
@@ -51,6 +53,7 @@ type ProjectScaffold = {
     offer: string;
     pricing: string;
     timeline: string;
+    rationale?: string;
     ctaText: string;
   };
 };
@@ -194,6 +197,7 @@ function buildProjectScaffold(draft: IntakeDraft): ProjectScaffold {
       offer: "1:1 Mentoring Sprint (4 weeks)",
       pricing: "$1,200 flat",
       timeline: "Weekly 60-min sessions + async reviews",
+      rationale: "Recommended when delivery confidence and interview storytelling both need structured support.",
       ctaText: "Book mentoring kickoff",
     },
   };
@@ -242,6 +246,11 @@ export default function CoachingProjectWorkbench() {
   const [selectedSubmission, setSelectedSubmission] = useState<CoachingIntakeSubmissionDetail | null>(null);
   const [submissionDetailLoading, setSubmissionDetailLoading] = useState(false);
   const [submissionDetailError, setSubmissionDetailError] = useState<string | null>(null);
+  const [selectedSubmissionRuns, setSelectedSubmissionRuns] = useState<Record<string, any>[]>([]);
+  const [selectedSubmissionStatus, setSelectedSubmissionStatus] = useState<string>("submitted");
+  const [coachNotes, setCoachNotes] = useState<string>("");
+  const [currentSubmissionId, setCurrentSubmissionId] = useState<string | null>(null);
+  const [generationState, setGenerationState] = useState<{ running: boolean; message?: string; sourceMode?: "llm" | "fallback"; qualityFlags?: Record<string, any>; generationMeta?: Record<string, any> }>({ running: false });
   const [exportStatus, setExportStatus] = useState<{ format: ExportFormat | null; state: "idle" | "exporting" | "success" | "error"; message?: string }>({
     format: null,
     state: "idle",
@@ -276,6 +285,24 @@ export default function CoachingProjectWorkbench() {
     ];
   }, [scaffold]);
 
+  const submissionTimeline = useMemo(() => {
+    const events: TimelineEvent[] = [];
+    if (selectedSubmission) {
+      events.push({ id: `intake-${selectedSubmission.submission_id}`, at: selectedSubmission.created_at, label: "Intake submitted", detail: selectedSubmission.applicant_name || "Candidate", tone: "info" });
+    }
+    selectedSubmissionRuns.forEach((run: any) => {
+      const status = String(run.run_status || "unknown");
+      events.push({
+        id: String(run.run_id || run.id || Math.random()),
+        at: String(run.created_at || run.run_at || ""),
+        label: `Generation run (${status})`,
+        detail: String((run.validation_json || {}).auto_revised ? "Auto-revised once" : "No auto-revision"),
+        tone: status === "completed" ? "success" : status.includes("review") ? "warning" : "info",
+      });
+    });
+    return events;
+  }, [selectedSubmission, selectedSubmissionRuns]);
+
   async function loadSubmissions() {
     if (!canAccessWorkbench) return;
     try {
@@ -307,6 +334,65 @@ export default function CoachingProjectWorkbench() {
     setActiveStep(previous);
   }
 
+  function mapSowToScaffold(sow: Record<string, any>): ProjectScaffold {
+    const businessOutcome = sow.business_outcome || {};
+    const projectStory = sow.project_story || {};
+    const medallion = (sow.solution_architecture || {}).medallion_plan || {};
+    const milestones = Array.isArray(sow.milestones) ? sow.milestones : [];
+    const resourcePlan = sow.resource_plan || {};
+    const mentoring = sow.mentoring_cta || {};
+
+    return {
+      title: String(sow.project_title || "Coaching Project Blueprint"),
+      executiveSummary: String(projectStory.executive_summary || ""),
+      candidateSnapshot: `${draft.candidateName || "Candidate"} targeting ${draft.targetRole || "Data Engineer"}.`,
+      businessOutcome: String(businessOutcome.problem_statement || ""),
+      dataSources: (businessOutcome.data_sources || []).map((source: any) => ({
+        name: String(source.name || "Data source"),
+        type: "document" as const,
+        link: String(source.url || ""),
+        note: String(source.ingestion_doc_url || "Ingestion doc not provided"),
+      })),
+      architecture: {
+        bronze: String(medallion.bronze || ""),
+        silver: String(medallion.silver || ""),
+        gold: String(medallion.gold || ""),
+      },
+      milestones: milestones.map((m: any) => ({
+        title: String(m.name || "Milestone"),
+        outcome: `Duration: ${String(m.duration_weeks || "?")} weeks`,
+        deliverables: Array.isArray(m.deliverables) ? m.deliverables.map((d: any) => String(d)) : [],
+      })),
+      storyNarrative: [String(projectStory.challenge || ""), String(projectStory.approach || ""), String(projectStory.impact_story || "")].filter(Boolean),
+      roiRequirements: [
+        ...(Array.isArray((sow.roi_dashboard_requirements || {}).required_dimensions) ? (sow.roi_dashboard_requirements || {}).required_dimensions : []),
+        ...(Array.isArray((sow.roi_dashboard_requirements || {}).required_measures) ? (sow.roi_dashboard_requirements || {}).required_measures : []),
+      ].map((x: any) => String(x)),
+      resourceLinksByStep: milestones.map((m: any) => ({
+        stepTitle: String(m.name || "Milestone"),
+        resources: (Array.isArray(m.resources) ? m.resources : []).map((r: any) => ({
+          title: String(r.title || "Resource"),
+          type: "doc" as const,
+          url: String(r.url || ""),
+          reason: "Mapped from generation output",
+        })),
+      })),
+      recommendedResources: [...(resourcePlan.required || []), ...(resourcePlan.recommended || [])].map((r: any) => ({
+        title: String(r.title || "Resource"),
+        type: "doc" as const,
+        url: String(r.url || ""),
+        reason: String(r.reason || "Recommended by generation pipeline."),
+      })),
+      mentoringCta: {
+        offer: String(mentoring.recommended_tier || "Mentoring recommendation available"),
+        pricing: String(mentoring.pricing || "See plan"),
+        timeline: String(mentoring.timeline || "Flexible"),
+        rationale: String(mentoring.reason || "Recommendation based on milestone tags and current skill gap profile."),
+        ctaText: String(mentoring.cta_text || "Book mentoring kickoff"),
+      },
+    };
+  }
+
   async function submitIntake() {
     if (!canAccessWorkbench) return;
 
@@ -315,7 +401,7 @@ export default function CoachingProjectWorkbench() {
       .map((line) => line.trim())
       .filter(Boolean);
 
-    await api.coachingIntake({
+    const intakeResult = await api.coachingIntake({
       workspace_id: draft.workspaceId,
       applicant_name: draft.candidateName || "Candidate",
       applicant_email: draft.candidateEmail || undefined,
@@ -329,13 +415,41 @@ export default function CoachingProjectWorkbench() {
       },
     });
 
+    setCurrentSubmissionId(intakeResult.submission_id || null);
     setStageState((prev) => ({ ...prev, intakeParsed: true }));
     await loadSubmissions();
   }
 
-  function buildScaffoldAndAdvance() {
-    setScaffold(buildProjectScaffold(draft));
-    setStageState((prev) => ({ ...prev, sowGenerated: true }));
+  async function generateSow(useImprovements = false) {
+    if (!canAccessWorkbench) return;
+    if (!currentSubmissionId) {
+      setScaffold(buildProjectScaffold(draft));
+      setStageState((prev) => ({ ...prev, sowGenerated: true }));
+      setGenerationState({ running: false, message: "Built local scaffold (submit intake to enable server generation).", sourceMode: "fallback" });
+      return;
+    }
+
+    try {
+      setGenerationState({ running: true, message: useImprovements ? "Regenerating with improvements..." : "Generating SOW..." });
+      const out = await api.coachingGenerateSow({ workspace_id: draft.workspaceId, submission_id: currentSubmissionId, parsed_jobs: [] });
+      if (!out.ok || !out.sow) {
+        setGenerationState({ running: false, message: out.message || "Generation failed." });
+        return;
+      }
+      setScaffold(mapSowToScaffold(out.sow));
+      setStageState((prev) => ({ ...prev, sowGenerated: true, validated: Boolean(out.valid) }));
+      const fallbackUsed = Boolean(out.quality_flags?.fallback_used);
+      setGenerationState({
+        running: false,
+        message: useImprovements ? "Regeneration complete." : "Generation complete.",
+        sourceMode: fallbackUsed ? "fallback" : "llm",
+        qualityFlags: out.quality_flags || {},
+        generationMeta: out.generation_meta || {},
+      });
+    } catch (e: any) {
+      const msg = e?.message || "Generation failed.";
+      setGenerationState({ running: false, message: msg.includes("403") ? "Upgrade required: active subscription needed for generation." : msg });
+    }
   }
 
   function markValidated() {
@@ -349,12 +463,24 @@ export default function CoachingProjectWorkbench() {
 
     try {
       const out = await api.coachingIntakeSubmissionDetail(submissionId);
+      const runsOut = await api.coachingReviewSubmissionRuns(submissionId, 20);
       if (!out.ok || !out.submission) {
         setSelectedSubmission(null);
         setSubmissionDetailError(out.message || "Unable to load submission details.");
         return;
       }
       setSelectedSubmission(out.submission);
+      setCurrentSubmissionId(out.submission.submission_id);
+      setSelectedSubmissionStatus(String(out.submission.status || "submitted"));
+      setCoachNotes(String((out.latest_generation_run || {}).coach_notes || ""));
+      setSelectedSubmissionRuns(runsOut.runs || []);
+      if (out.latest_generation_run) {
+        setStageState({
+          intakeParsed: true,
+          sowGenerated: true,
+          validated: String(out.latest_generation_run.run_status || "").toLowerCase() === "completed",
+        });
+      }
     } catch (e: any) {
       setSelectedSubmission(null);
       setSubmissionDetailError(e?.message || "Unable to load submission details.");
@@ -680,6 +806,39 @@ export default function CoachingProjectWorkbench() {
                           ? `${String(selectedSubmission.preferences_json.target_role || "n/a")} | ${String(selectedSubmission.preferences_json.preferred_stack || "n/a")} | ${String(selectedSubmission.preferences_json.timeline_weeks || "n/a")} weeks`
                           : "—"}
                       </div>
+
+                      <div className="card" style={{ padding: 8 }}>
+                        <strong>Coach Status + Notes</strong>
+                        <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+                          <select value={selectedSubmissionStatus} onChange={(e) => setSelectedSubmissionStatus(e.target.value)}>
+                            <option value="submitted">submitted</option>
+                            <option value="in_review">in_review</option>
+                            <option value="needs_revision">needs_revision</option>
+                            <option value="ready">ready</option>
+                          </select>
+                          <span className="badge info">Local UI workflow (save endpoint pending)</span>
+                        </div>
+                        <textarea
+                          value={coachNotes}
+                          onChange={(e) => setCoachNotes(e.target.value)}
+                          placeholder="Add coaching notes, feedback highlights, and next actions..."
+                          style={{ width: "100%", minHeight: 80, marginTop: 6 }}
+                        />
+                      </div>
+
+                      <div className="card" style={{ padding: 8 }}>
+                        <strong>Submission Timeline</strong>
+                        <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
+                          {submissionTimeline.map((evt) => (
+                            <div key={evt.id} style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
+                              <span className={`badge ${evt.tone || "info"}`}>{evt.label}</span>
+                              <span style={{ color: "var(--color-text-muted)" }}>{evt.at || "time n/a"}</span>
+                              {evt.detail && <span>{evt.detail}</span>}
+                            </div>
+                          ))}
+                          {submissionTimeline.length === 0 && <div style={{ color: "var(--color-text-muted)" }}>No timeline events yet.</div>}
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -717,7 +876,13 @@ export default function CoachingProjectWorkbench() {
               <span className={stageBadgeClass(stageState.intakeParsed)}>Intake Parsed</span>
               <span className={stageBadgeClass(stageState.sowGenerated)}>SOW Generated</span>
               <span className={stageBadgeClass(stageState.validated)}>Validated</span>
+              {generationState.sourceMode && (
+                <span className={`badge ${generationState.sourceMode === "llm" ? "success" : "warning"}`}>
+                  Source: {generationState.sourceMode === "llm" ? "LLM generated" : "Scaffold fallback"}
+                </span>
+              )}
             </div>
+            {generationState.message && <div style={{ fontSize: 12, marginBottom: 8, color: "var(--color-text-muted)" }}>{generationState.message}</div>}
 
             <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Candidate Name</label>
             <input value={draft.candidateName} onChange={(e) => setDraft((prev) => ({ ...prev, candidateName: e.target.value }))} placeholder="Chris Gambill" style={{ marginBottom: 6 }} />
@@ -762,7 +927,8 @@ export default function CoachingProjectWorkbench() {
               <button onClick={() => moveStep("back")}>Back</button>
               <button onClick={() => moveStep("next")}>Next</button>
               <button onClick={submitIntake}>Submit Intake</button>
-              <button className="btn-success" onClick={buildScaffoldAndAdvance}>Build Project Scaffold</button>
+              <button className="btn-success" onClick={() => generateSow(false)} disabled={generationState.running}>Generate SOW</button>
+              <button onClick={() => generateSow(true)} disabled={generationState.running || !stageState.sowGenerated}>Regenerate with improvements</button>
               <button onClick={markValidated}>Mark Validated</button>
             </div>
           </div>
@@ -890,6 +1056,7 @@ export default function CoachingProjectWorkbench() {
                         </div>
                         <div style={{ fontSize: 12 }}><strong>Pricing:</strong> {scaffold.mentoringCta.pricing}</div>
                         <div style={{ fontSize: 12 }}><strong>Timeline:</strong> {scaffold.mentoringCta.timeline}</div>
+                        {scaffold.mentoringCta.rationale && <div style={{ fontSize: 12, marginTop: 4 }}><strong>Rationale:</strong> {scaffold.mentoringCta.rationale}</div>}
                         {!canBookMentoring && <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 6 }}>Upgrade to Elite to unlock live booking and 1:1 mentoring sessions.</div>}
                         <button className="btn-primary" style={{ marginTop: 8 }} disabled={!canBookMentoring}>{canBookMentoring ? scaffold.mentoringCta.ctaText : "Elite required"}</button>
                       </div>

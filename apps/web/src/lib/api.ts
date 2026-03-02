@@ -184,6 +184,35 @@ export interface CoachingIntakeSubmissionDetailResult {
   latest_generation_run?: Record<string, any> | null;
 }
 
+export interface CoachingSowGenerateResult {
+  ok: boolean;
+  message?: string;
+  run_id?: string;
+  submission_id?: string;
+  workspace_id?: string;
+  sow?: Record<string, any>;
+  valid?: boolean;
+  findings?: Array<{ code: string; message: string }>;
+  generation_meta?: Record<string, any>;
+  quality_flags?: Record<string, any>;
+}
+
+export interface CoachingReviewRunsResult {
+  ok: boolean;
+  message?: string;
+  submission_id?: string;
+  workspace_id?: string;
+  runs?: Record<string, any>[];
+  total?: number;
+}
+
+export interface CoachingOpenSubmissionsResult {
+  ok: boolean;
+  workspace_id: string;
+  open_submissions: Array<{ submission: CoachingIntakeSubmission; latest_generation_run?: Record<string, any> | null; review_state?: string }>;
+  total: number;
+}
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
 let AUTH_TOKEN = "";
 
@@ -420,4 +449,13 @@ export const api = {
     job_links?: string[];
     preferences?: Record<string, any>;
   }) => postJson<{ ok: boolean; submission_id: string; workspace_id: string }>("/coaching/intake", payload),
+  coachingGenerateSow: (payload: {
+    workspace_id: string;
+    submission_id: string;
+    parsed_jobs?: Record<string, any>[];
+  }) => postJson<CoachingSowGenerateResult>("/coaching/sow/generate", payload),
+  coachingReviewSubmissionRuns: (submissionId: string, limit = 20) =>
+    getJson<CoachingReviewRunsResult>(`/coaching/review/submissions/${encodeURIComponent(submissionId)}/runs?limit=${limit}`),
+  coachingReviewOpenSubmissions: (workspaceId: string, limit = 50) =>
+    getJson<CoachingOpenSubmissionsResult>(`/coaching/review/open-submissions?workspace_id=${encodeURIComponent(workspaceId)}&limit=${limit}`),
 };
