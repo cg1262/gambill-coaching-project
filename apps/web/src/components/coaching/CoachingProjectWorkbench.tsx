@@ -411,9 +411,17 @@ export default function CoachingProjectWorkbench() {
   }
 
   return (
-    <>
+    <div className="coaching-shell">
+      <div className="coaching-hero">
+        <div>
+          <h2>Gambill Coaching Project Builder</h2>
+          <p>Generate portfolio-ready, business-outcome-driven data engineering projects from resume + job targets.</p>
+        </div>
+        <span className="badge info">Coaching App</span>
+      </div>
+
       <h4>Squarespace Member Launch Flow</h4>
-      <div className="card" style={{ marginBottom: 10 }}>
+      <div className="card coaching-card" style={{ marginBottom: 10 }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
           <span className={authState === "authenticated" ? "badge success" : "badge warning"}>Auth: {authState}</span>
           <span className={subscriptionStatus === "active" ? "badge success" : subscriptionStatus === "inactive" ? "badge error" : "badge warning"}>
@@ -784,6 +792,6 @@ export default function CoachingProjectWorkbench() {
           </div>
         </>
       )}
-    </>
+    </div>
   );
 }
