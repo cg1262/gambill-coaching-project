@@ -241,12 +241,23 @@ def _ensure_duckdb_bootstrap(conn) -> None:
             job_links_json JSON,
             preferences_json JSON,
             status VARCHAR,
+            coach_review_status VARCHAR,
+            coach_notes VARCHAR,
             submitted_by VARCHAR,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
+
+    try:
+        conn.execute("ALTER TABLE coaching_intake_submissions ADD COLUMN coach_review_status VARCHAR")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE coaching_intake_submissions ADD COLUMN coach_notes VARCHAR")
+    except Exception:
+        pass
 
     conn.execute(
         """
@@ -1529,10 +1540,10 @@ def save_coaching_intake_submission(
             conn.execute(
                 """
                 INSERT INTO coaching_intake_submissions
-                (submission_id, workspace_id, applicant_name, applicant_email, resume_text, self_assessment_text, job_links_json, preferences_json, status, submitted_by, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                (submission_id, workspace_id, applicant_name, applicant_email, resume_text, self_assessment_text, job_links_json, preferences_json, status, coach_review_status, coach_notes, submitted_by, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """,
-                [submission_id, workspace_id, applicant_name, applicant_email, resume_text, self_assessment_text, json.dumps(job_links), json.dumps(preferences or {}), status, submitted_by],
+                [submission_id, workspace_id, applicant_name, applicant_email, resume_text, self_assessment_text, json.dumps(job_links), json.dumps(preferences or {}), status, "new", "", submitted_by],
             )
         return
 
@@ -1541,10 +1552,10 @@ def save_coaching_intake_submission(
             cur.execute(
                 """
                 INSERT INTO coaching_intake_submissions
-                (submission_id, workspace_id, applicant_name, applicant_email, resume_text, self_assessment_text, job_links_json, preferences_json, status, submitted_by, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                (submission_id, workspace_id, applicant_name, applicant_email, resume_text, self_assessment_text, job_links_json, preferences_json, status, coach_review_status, coach_notes, submitted_by, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                 """,
-                (submission_id, workspace_id, applicant_name, applicant_email, resume_text, self_assessment_text, json.dumps(job_links), json.dumps(preferences or {}), status, submitted_by),
+                (submission_id, workspace_id, applicant_name, applicant_email, resume_text, self_assessment_text, json.dumps(job_links), json.dumps(preferences or {}), status, "new", "", submitted_by),
             )
             conn.commit()
 
@@ -1629,6 +1640,39 @@ def list_coaching_intake_submissions(workspace_id: str, limit: int = 50) -> list
                     row[key] = [] if key == "job_links_json" else {}
 
     return data
+
+
+def update_coaching_review_status(
+    submission_id: str,
+    coach_review_status: str,
+    coach_notes: str | None,
+) -> None:
+    if not is_configured():
+        return
+
+    if _using_duckdb():
+        with lakebase_connection() as conn:
+            conn.execute(
+                """
+                UPDATE coaching_intake_submissions
+                SET coach_review_status = ?, coach_notes = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE submission_id = ?
+                """,
+                [coach_review_status, coach_notes or "", submission_id],
+            )
+        return
+
+    with lakebase_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE coaching_intake_submissions
+                SET coach_review_status = %s, coach_notes = %s, updated_at = CURRENT_TIMESTAMP
+                WHERE submission_id = %s
+                """,
+                (coach_review_status, coach_notes or "", submission_id),
+            )
+            conn.commit()
 
 
 def save_coaching_generation_run(

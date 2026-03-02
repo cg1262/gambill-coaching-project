@@ -1832,7 +1832,7 @@ def coaching_sow_export(req: CoachingSowExportRequest, session=Depends(get_curre
 
 
 @app.get("/coaching/review/open-submissions")
-def coaching_review_open_submissions(workspace_id: str, limit: int = 50, session=Depends(get_current_session)) -> dict:
+def coaching_review_open_submissions(workspace_id: str, limit: int = 50, status: str | None = None, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor", "viewer"})
     _require_active_coaching_subscription(workspace_id=workspace_id, session=session)
     submissions = list_coaching_intake_submissions(workspace_id=workspace_id, limit=limit)
@@ -1841,8 +1841,11 @@ def coaching_review_open_submissions(workspace_id: str, limit: int = 50, session
         submission_id = str(sub.get("submission_id") or "")
         latest = get_latest_coaching_generation_run(submission_id) if submission_id else None
         run_status = str((latest or {}).get("run_status") or "not_started")
+        review_status = str(sub.get("coach_review_status") or "new")
+        if status and review_status != status:
+            continue
         if run_status != "completed":
-            enriched.append({"submission": sub, "latest_generation_run": latest, "review_state": run_status})
+            enriched.append({"submission": sub, "latest_generation_run": latest, "review_state": run_status, "coach_review_status": review_status})
 
     return {"ok": True, "workspace_id": workspace_id, "open_submissions": enriched, "total": len(enriched)}
 
@@ -1866,6 +1869,43 @@ def coaching_review_submission_runs(submission_id: str, limit: int = 20, session
         "workspace_id": submission.get("workspace_id"),
         "runs": runs,
         "total": len(runs),
+    }
+
+
+@app.post("/coaching/review/status")
+def coaching_review_status_update(req: CoachingReviewStatusUpdateRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    submission = get_coaching_intake_submission(req.submission_id)
+    if not submission:
+        return {"ok": False, "message": "submission not found", "submission_id": req.submission_id}
+    _require_active_coaching_subscription(
+        workspace_id=req.workspace_id,
+        session=session,
+        email=str(submission.get("applicant_email") or "").strip().lower() or None,
+    )
+    update_coaching_review_status(
+        submission_id=req.submission_id,
+        coach_review_status=req.coach_review_status,
+        coach_notes=req.coach_notes,
+    )
+    updated = get_coaching_intake_submission(req.submission_id)
+    return {"ok": True, "submission": updated}
+
+
+@app.get("/coaching/health/readiness")
+def coaching_health_readiness(workspace_id: str, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor", "viewer"})
+    llm_key_present = bool(str((__import__('os').getenv("OPENAI_API_KEY") or "")).strip())
+    lb_ok, lb_msg = lakebase_health()
+    return {
+        "ok": True,
+        "workspace_id": workspace_id,
+        "readiness": {
+            "llm_key_present": llm_key_present,
+            "lakebase_ok": lb_ok,
+            "lakebase_message": lb_msg,
+            "ready": bool(llm_key_present and lb_ok),
+        },
     }
 
 

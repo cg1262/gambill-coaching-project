@@ -17,6 +17,7 @@ def _override_session(role: str = "viewer"):
 def test_open_submissions_returns_non_completed_items(monkeypatch):
     app.dependency_overrides[get_current_session] = _override_session("viewer")
 
+    monkeypatch.setattr(main, "_require_active_coaching_subscription", lambda **kwargs: {"subscription_status": "active"})
     monkeypatch.setattr(
         main,
         "list_coaching_intake_submissions",
@@ -43,6 +44,7 @@ def test_open_submissions_returns_non_completed_items(monkeypatch):
 
 def test_review_submission_runs_returns_runs(monkeypatch):
     app.dependency_overrides[get_current_session] = _override_session("editor")
+    monkeypatch.setattr(main, "_require_active_coaching_subscription", lambda **kwargs: {"subscription_status": "active"})
     monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: {"submission_id": submission_id, "workspace_id": "ws-1"})
     monkeypatch.setattr(main, "list_coaching_generation_runs", lambda submission_id, limit=20: [{"run_id": "run-1", "run_status": "needs_review"}])
 

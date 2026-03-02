@@ -3,6 +3,36 @@
 Last Updated: 2026-03-02
 Owner: ERD Program Team
 
+## Checkpoint Update (2026-03-02 - Coaching Backend Sprint 2 Integration Pass)
+
+### Done
+- A1/A2 integration checks executed for backend contract paths and review flow smoke tests.
+- B1 implemented provider retry/timeout/failure classification in `generate_sow_with_llm` with attempts/error_type metadata.
+- B2 added backend quality scoring (`compute_sow_quality_score`) and regenerate-aware quality delta tracking in generation responses/persistence.
+- C1 enforced premium gating across review-detail and review-queue endpoints using active subscription checks.
+- D1 added coach notes/status backend workflow support:
+  - new intake fields: `coach_review_status`, `coach_notes`
+  - endpoint: `POST /coaching/review/status`
+  - review queue supports status filtering.
+- E1 added backend readiness health signal endpoint: `GET /coaching/health/readiness`.
+- Added backend tests for sprint-2 capabilities:
+  - `apps/api/tests/test_coaching_sprint2_backend.py`
+
+### Validation
+- `python -m pytest -q apps/api/tests/test_coaching_sprint2_backend.py apps/api/tests/test_coaching_review_endpoints.py apps/api/tests/test_coaching_generation_guardrails.py`
+
+### Risks
+- Retry/backoff currently retries immediately; jittered backoff can be added for high-volume provider incidents.
+- Readiness check validates key presence + LakeBase health; provider live ping is not yet enabled in readiness endpoint.
+
+### Needs from others
+- Frontend wiring for coach review status update actions and status filter controls.
+
+### Next
+1. Add bounded exponential backoff with jitter for provider retries.
+2. Surface quality score/delta and regenerate affordance in coaching UI.
+3. Extend readiness endpoint with optional provider reachability probe.
+
 ## Checkpoint Update (2026-03-02 - Coaching Frontend Sprint 2 Integration Pass)
 
 ### Done
