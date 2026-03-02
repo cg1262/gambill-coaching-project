@@ -3,6 +3,62 @@
 Last Updated: 2026-03-02
 Owner: ERD Program Team
 
+## Checkpoint Update (2026-03-02 - Backend Feedback Pass: Intake/Auth/Recommendations)
+
+### Done
+- Added explicit coaching auth/subscription guidance payloads for key UX endpoints:
+  - `POST /coaching/intake`
+  - `GET /coaching/health/readiness`
+  - payload shape now includes `code`, `auth_required`, `subscription_required`, and `message` on 401/403.
+- Tightened intake payload support for structured job links:
+  - new `job_links` entry type supports objects (`{ url, title?, source? }`) in addition to URL strings.
+  - actionable validation errors now point to indexed entries (e.g., `job_links[0].url must start with http:// or https://`).
+- Added backend intake schema support for Google-form-style structured fields:
+  - `self_assessment` object (bounded key set)
+  - `stack_preferences[]` and `tool_preferences[]` checkbox arrays
+  - these are persisted under `preferences_json` for downstream generation/review.
+- Added recommendation endpoint to infer defaults from job links:
+  - `POST /coaching/jobs/recommendations`
+  - parses job postings and returns top `stack` and `tools` recommendations with scores.
+- Added backend tests:
+  - `apps/api/tests/test_coaching_feedback_pass.py`
+  - updated RBAC tests to account for subscription-gated intake/validate-loop paths.
+
+### Validation
+- `python -m pytest -q tests/test_coaching_feedback_pass.py tests/test_rbac_endpoints.py tests/test_coaching_security_access.py` (from `apps/api`) ✅
+
+### Risks / Follow-ups
+- Recommendations are deterministic keyword-driven today; consider weighted ranking + explainability metadata per recommendation.
+- `self_assessment` currently enforces a fixed key set; expand intentionally if form schema evolves.
+
+## Checkpoint Update (2026-03-02 - Security Feedback Pass)
+
+### Done
+- Hardened `CoachingIntakeRequest` validation in `apps/api/main.py`:
+  - strict request shape (`extra=forbid`)
+  - structured-field bounds on `workspace_id`, `applicant_name`, and `preferences.*`
+  - freeform max-length controls for `resume_text` and `self_assessment_text`
+  - job-link constraints (`http/https` only, fully-qualified host, max 20 links)
+- Tightened subscription denial behavior to avoid leaking internal status strings:
+  - `_require_active_coaching_subscription(...)` now returns generic `403 Active coaching subscription required`.
+- Added security regression tests in `apps/api/tests/test_coaching_security_access.py` for:
+  - unsafe job-link scheme rejection
+  - malformed job-link payload rejection
+  - oversized freeform field rejection
+  - non-leaky subscription denial message assertions
+- Added form input validation policy doc:
+  - `docs/coaching-project/FORM_INPUT_VALIDATION_POLICY.md`
+- Updated checklist docs to include intake form validation controls:
+  - `docs/coaching-project/SECURITY_CHECKLIST.md`
+
+### Validation
+- `python -m pytest tests/test_coaching_security_access.py -q` (from `apps/api`) ✅
+- `python -m compileall main.py` (from `apps/api`) ✅
+
+### Risks / Follow-ups
+- Intake URL validation currently enforces scheme + host only; domain allowlists/reputation checks are still out of scope.
+- `preferences` currently allows only the known baseline keys; expand intentionally if product adds additional structured inputs.
+
 ## Checkpoint Update (2026-03-02 - Coaching Backend Sprint 2 Integration Pass)
 
 ### Done

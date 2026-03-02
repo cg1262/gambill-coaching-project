@@ -301,6 +301,7 @@ def test_coaching_export_denied_when_subscription_inactive(monkeypatch):
                 "project_title": "p",
                 "business_outcome": {"problem_statement": "x", "kpi_targets": ["k"], "roi_hypothesis": "r"},
                 "solution_architecture": {"medallion_plan": {"bronze": "b", "silver": "s", "gold": "g"}, "orchestration": ["o"], "semantic_model_outline": ["m"]},
+                "project_story": {"business_narrative": "n", "interview_highlights": ["h1"]},
                 "milestones": [{"name": "m1", "duration_weeks": 1, "deliverables": ["d"]}, {"name": "m2", "duration_weeks": 1, "deliverables": ["d"]}, {"name": "m3", "duration_weeks": 1, "deliverables": ["d"]}],
                 "roi_dashboard_requirements": {"required_measures": ["m"], "required_dimensions": ["d"], "target_visuals": ["v"]},
                 "resource_plan": {
@@ -313,3 +314,81 @@ def test_coaching_export_denied_when_subscription_inactive(monkeypatch):
         },
     )
     assert res.status_code == 403
+
+
+def test_coaching_intake_rejects_unsafe_job_link_scheme():
+    client = TestClient(app)
+    editor_token = issue_token("admin-user", "admin")
+
+    payload = {
+        "workspace_id": "ws-1",
+        "applicant_name": "Candidate",
+        "resume_text": "Resume text",
+        "self_assessment_text": "Self assessment",
+        "job_links": ["javascript:alert(1)"],
+        "preferences": {"timeline_weeks": 8},
+    }
+
+    res = client.post("/coaching/intake", json=payload, headers=_auth_header(editor_token))
+    assert res.status_code == 422
+
+
+def test_coaching_intake_rejects_malformed_job_links_payload():
+    client = TestClient(app)
+    editor_token = issue_token("admin-user", "admin")
+
+    payload = {
+        "workspace_id": "ws-1",
+        "applicant_name": "Candidate",
+        "resume_text": "Resume text",
+        "self_assessment_text": "Self assessment",
+        "job_links": [{"href": "https://example.com/job/1"}],
+        "preferences": {"timeline_weeks": 8},
+    }
+
+    res = client.post("/coaching/intake", json=payload, headers=_auth_header(editor_token))
+    assert res.status_code == 422
+
+
+def test_coaching_intake_rejects_excessively_long_freeform_fields():
+    client = TestClient(app)
+    editor_token = issue_token("admin-user", "admin")
+
+    payload = {
+        "workspace_id": "ws-1",
+        "applicant_name": "Candidate",
+        "resume_text": "R" * 12001,
+        "self_assessment_text": "S" * 12001,
+        "job_links": ["https://example.com/job/1"],
+        "preferences": {"timeline_weeks": 8},
+    }
+
+    res = client.post("/coaching/intake", json=payload, headers=_auth_header(editor_token))
+    assert res.status_code == 422
+
+
+def test_subscription_denial_response_is_generic(monkeypatch):
+    client = TestClient(app)
+    viewer_token = issue_token("viewer-user", "viewer")
+
+    monkeypatch.setattr(
+        main,
+        "get_coaching_account_subscription",
+        lambda workspace_id, username=None, email=None: {
+            "workspace_id": workspace_id,
+            "username": username,
+            "email": email,
+            "plan_tier": "pro",
+            "subscription_status": "inactive",
+        },
+    )
+
+    res = client.get(
+        "/coaching/intake/submissions",
+        params={"workspace_id": "ws-1"},
+        headers=_auth_header(viewer_token),
+    )
+    assert res.status_code == 403
+    detail = res.json().get("detail") or {}
+    assert detail.get("message") == "Active coaching subscription required."
+    assert "inactive" not in str(res.json()).lower()

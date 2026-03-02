@@ -1,11 +1,13 @@
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from uuid import uuid4
 from pathlib import Path
 import json
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from urllib import request as urlrequest
 from urllib.error import URLError, HTTPError
+from urllib.parse import urlparse
 import base64
 from datetime import datetime, timezone
 import logging
@@ -81,6 +83,32 @@ from security import (
 app = FastAPI(title="AI Data Modeling IDE API", version="0.2.0")
 logger = logging.getLogger("gambill_coaching.api")
 RESOURCE_LIBRARY_PATH = Path(__file__).resolve().parents[2] / "docs" / "coaching-project" / "RESOURCE_LIBRARY.json"
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    if request.url.path in {"/coaching/intake", "/coaching/health/readiness"} and exc.status_code in {401, 403}:
+        detail = exc.detail if isinstance(exc.detail, dict) else None
+        is_subscription = bool(detail and detail.get("subscription_required")) or "subscription" in str(exc.detail).lower()
+        message = (
+            str(detail.get("message"))
+            if isinstance(detail, dict) and detail.get("message")
+            else (
+                "Active coaching subscription required. Sync membership or reactivate subscription before retrying."
+                if is_subscription
+                else "Authentication required. Send Authorization: Bearer <token> and ensure your role has access."
+            )
+        )
+        payload = {
+            "ok": False,
+            "code": "subscription_required" if is_subscription else ("auth_required" if exc.status_code == 401 else "forbidden"),
+            "auth_required": exc.status_code == 401,
+            "subscription_required": is_subscription,
+            "message": message,
+        }
+        return JSONResponse(status_code=exc.status_code, content=payload)
+
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
 def _chunk_text(content: str, max_len: int = 800) -> list[str]:
@@ -246,20 +274,116 @@ class DatabricksSchemasRequest(BaseModel):
     settings: dict | None = None
 
 
+class CoachingJobLinkInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = Field(min_length=1, max_length=2000)
+    title: str | None = Field(default=None, max_length=200)
+    source: str | None = Field(default=None, max_length=80)
+
+
 class CoachingIntakeRequest(BaseModel):
-    workspace_id: str
-    applicant_name: str
-    applicant_email: str | None = None
-    resume_text: str = ""
-    self_assessment_text: str = ""
-    job_links: list[str] = []
-    preferences: dict = {}
+    model_config = ConfigDict(extra="forbid")
+
+    workspace_id: str = Field(min_length=1, max_length=120)
+    applicant_name: str = Field(min_length=1, max_length=120)
+    applicant_email: str | None = Field(default=None, max_length=254)
+    resume_text: str = Field(default="", max_length=12000)
+    self_assessment_text: str = Field(default="", max_length=12000)
+    self_assessment: dict[str, Any] = Field(default_factory=dict)
+    stack_preferences: list[str] = Field(default_factory=list, max_length=25)
+    tool_preferences: list[str] = Field(default_factory=list, max_length=40)
+    job_links: list[str | CoachingJobLinkInput] = Field(default_factory=list, max_length=20)
+    preferences: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("stack_preferences", "tool_preferences")
+    @classmethod
+    def validate_checkbox_values(cls, value: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for item in value:
+            txt = str(item or "").strip()
+            if not txt:
+                continue
+            if len(txt) > 80:
+                raise ValueError("Stack/tool entries must be 80 chars or fewer")
+            cleaned.append(txt)
+        return cleaned
+
+    @field_validator("self_assessment")
+    @classmethod
+    def validate_self_assessment(cls, value: dict[str, Any]) -> dict[str, Any]:
+        allowed_keys = {
+            "career_clarity",
+            "sql_confidence",
+            "python_confidence",
+            "data_modeling_confidence",
+            "etl_pipeline_confidence",
+            "cloud_platform_confidence",
+            "analytics_storytelling_confidence",
+            "job_search_execution",
+            "interview_readiness",
+            "portfolio_readiness",
+            "notes",
+        }
+        for key in value.keys():
+            if key not in allowed_keys:
+                raise ValueError(f"Unsupported self_assessment field: {key}")
+        return value
+
+    @field_validator("job_links")
+    @classmethod
+    def validate_job_links(cls, value: list[str | CoachingJobLinkInput]) -> list[CoachingJobLinkInput]:
+        normalized: list[CoachingJobLinkInput] = []
+        for idx, raw in enumerate(value):
+            link_obj = CoachingJobLinkInput(url=raw) if isinstance(raw, str) else raw
+            link = str(link_obj.url or "").strip()
+            if not link:
+                continue
+            parsed = urlparse(link)
+            scheme = (parsed.scheme or "").lower()
+            if scheme not in {"http", "https"}:
+                raise ValueError(f"job_links[{idx}].url must start with http:// or https://")
+            if not parsed.netloc:
+                raise ValueError(f"job_links[{idx}].url must be a fully-qualified URL")
+            normalized.append(CoachingJobLinkInput(url=link, title=link_obj.title, source=link_obj.source))
+        return normalized
+
+    @field_validator("preferences")
+    @classmethod
+    def validate_preferences(cls, value: dict[str, Any]) -> dict[str, Any]:
+        allowed_keys = {"target_role", "preferred_stack", "timeline_weeks"}
+        for key in value.keys():
+            if key not in allowed_keys:
+                raise ValueError(f"Unsupported preference field: {key}")
+
+        target_role = value.get("target_role")
+        if target_role is not None and len(str(target_role).strip()) > 120:
+            raise ValueError("preferences.target_role must be 120 chars or fewer")
+
+        preferred_stack = value.get("preferred_stack")
+        if preferred_stack is not None and len(str(preferred_stack).strip()) > 120:
+            raise ValueError("preferences.preferred_stack must be 120 chars or fewer")
+
+        timeline = value.get("timeline_weeks")
+        if timeline is not None:
+            if isinstance(timeline, bool) or not isinstance(timeline, int):
+                raise ValueError("preferences.timeline_weeks must be an integer")
+            if timeline < 1 or timeline > 104:
+                raise ValueError("preferences.timeline_weeks must be between 1 and 104")
+
+        return value
 
 
 class CoachingJobParseRequest(BaseModel):
     workspace_id: str
     submission_id: str
     force_refresh: bool = False
+
+
+class CoachingRecommendStackToolsRequest(BaseModel):
+    workspace_id: str
+    submission_id: str | None = None
+    job_links: list[str | CoachingJobLinkInput] = Field(default_factory=list)
 
 
 class CoachingGenerateSowRequest(BaseModel):
@@ -390,12 +514,30 @@ def _require_active_coaching_subscription(workspace_id: str, session: Session, e
         email=email,
     )
     if not account:
-        raise HTTPException(status_code=403, detail="Active coaching subscription required")
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "subscription_required", "subscription_required": True, "message": "Active coaching subscription required."},
+        )
 
     status = _normalize_subscription_status(str(account.get("subscription_status") or ""))
     if not _is_active_subscription(status):
-        raise HTTPException(status_code=403, detail=f"Subscription status '{status}' is not active")
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "subscription_required", "subscription_required": True, "message": "Active coaching subscription required."},
+        )
     return account
+
+
+def _require_coaching_session(authorization: str | None) -> Session:
+    return get_current_session(authorization)
+
+
+def _require_coaching_role(session: Session, allowed_roles: set[str]) -> None:
+    assert_role(session, allowed_roles)
+
+
+def _require_coaching_subscription(*, workspace_id: str, session: Session, email: str | None = None) -> dict:
+    return _require_active_coaching_subscription(workspace_id=workspace_id, session=session, email=email)
 
 
 def _check_llm_provider_reachability(base_url: str, api_key: str, timeout_sec: int = 4) -> tuple[bool, str]:
@@ -1330,7 +1472,22 @@ def github_artifacts(req: GithubArtifactsRequest, session=Depends(get_current_se
 @app.post("/coaching/intake")
 def coaching_intake(req: CoachingIntakeRequest, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor"})
+    _require_active_coaching_subscription(
+        workspace_id=req.workspace_id,
+        session=session,
+        email=str(req.applicant_email or "").strip().lower() or None,
+    )
     submission_id = str(uuid4())
+    normalized_job_links = [item.url if isinstance(item, CoachingJobLinkInput) else str(item) for item in (req.job_links or [])]
+    enriched_preferences = dict(req.preferences or {})
+    enriched_preferences["self_assessment"] = req.self_assessment or {}
+    enriched_preferences["stack_preferences"] = req.stack_preferences or []
+    enriched_preferences["tool_preferences"] = req.tool_preferences or []
+    enriched_preferences["job_links_structured"] = [
+        item.model_dump(mode="json") if isinstance(item, CoachingJobLinkInput) else {"url": str(item)}
+        for item in (req.job_links or [])
+    ]
+
     logger.info(
         "coaching_intake_received",
         extra={
@@ -1343,7 +1500,7 @@ def coaching_intake(req: CoachingIntakeRequest, session=Depends(get_current_sess
                 applicant_email=req.applicant_email,
                 resume_text=req.resume_text,
                 self_assessment_text=req.self_assessment_text,
-                job_links=req.job_links,
+                job_links=normalized_job_links,
             ),
         },
     )
@@ -1354,8 +1511,8 @@ def coaching_intake(req: CoachingIntakeRequest, session=Depends(get_current_sess
         applicant_email=req.applicant_email or "",
         resume_text=req.resume_text,
         self_assessment_text=req.self_assessment_text,
-        job_links=req.job_links or [],
-        preferences=req.preferences or {},
+        job_links=normalized_job_links,
+        preferences=enriched_preferences,
         status="submitted",
         submitted_by=session.username,
     )
@@ -1498,6 +1655,76 @@ def coaching_subscription_sync(req: CoachingSubscriptionSyncRequest, session=Dep
         "status": normalized_status,
         "active": _is_active_subscription(normalized_status),
         "message": "Subscription sync stub accepted and stored.",
+    }
+
+
+def _recommend_stack_tools(parsed_jobs: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    stack_scores: dict[str, int] = {}
+    tool_scores: dict[str, int] = {}
+
+    for job in parsed_jobs:
+        signals = job.get("signals") or {}
+        for skill in (signals.get("skills") or []):
+            key = str(skill or "").strip().lower()
+            if not key:
+                continue
+            stack_scores[key] = stack_scores.get(key, 0) + 1
+        for tool in (signals.get("tools") or []):
+            key = str(tool or "").strip().lower()
+            if not key:
+                continue
+            tool_scores[key] = tool_scores.get(key, 0) + 1
+
+    top_stack = [{"name": name, "score": score} for name, score in sorted(stack_scores.items(), key=lambda kv: (-kv[1], kv[0]))[:5]]
+    top_tools = [{"name": name, "score": score} for name, score in sorted(tool_scores.items(), key=lambda kv: (-kv[1], kv[0]))[:8]]
+    return {"stack": top_stack, "tools": top_tools}
+
+
+@app.post("/coaching/jobs/recommendations")
+def coaching_jobs_recommendations(req: CoachingRecommendStackToolsRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor", "viewer"})
+
+    links: list[str] = []
+    if req.submission_id:
+        intake = get_coaching_intake_submission(req.submission_id)
+        if not intake:
+            return {"ok": False, "message": "submission not found", "submission_id": req.submission_id}
+        _require_active_coaching_subscription(
+            workspace_id=req.workspace_id,
+            session=session,
+            email=str(intake.get("applicant_email") or "").strip().lower() or None,
+        )
+        links.extend([str(x or "").strip() for x in (intake.get("job_links_json") or []) if str(x or "").strip()])
+
+    for item in req.job_links:
+        link = item.url if isinstance(item, CoachingJobLinkInput) else str(item or "").strip()
+        if link:
+            links.append(link)
+
+    dedup_links = list(dict.fromkeys(links))
+    if not dedup_links:
+        return {"ok": True, "workspace_id": req.workspace_id, "parsed_jobs": [], "recommendations": {"stack": [], "tools": []}}
+
+    parsed_jobs: list[dict[str, Any]] = []
+    for link in dedup_links[:20]:
+        fetched = fetch_job_text(link)
+        signals = extract_job_signals(fetched.get("text") or "") if fetched.get("ok") else {}
+        parsed_jobs.append(
+            {
+                "url": link,
+                "ok": bool(fetched.get("ok")),
+                "error": fetched.get("error"),
+                "signals": signals,
+            }
+        )
+
+    recommendations = _recommend_stack_tools(parsed_jobs)
+    return {
+        "ok": True,
+        "workspace_id": req.workspace_id,
+        "submission_id": req.submission_id,
+        "parsed_jobs": parsed_jobs,
+        "recommendations": recommendations,
     }
 
 
