@@ -8,6 +8,11 @@
   },
   "packageManager": "npm@10.8.2",
   "scripts": {
+    "runtime:check": "node ./scripts/require-runtime.cjs",
+    "predev": "npm run runtime:check",
+    "pretypecheck": "npm run runtime:check",
+    "prebuild": "npm run runtime:check",
+    "prebuild:clean": "npm run runtime:check",
     "dev": "next dev -p 3000",
     "build": "next build",
     "build:clean": "powershell -ExecutionPolicy Bypass -File ./scripts/build-clean.ps1",

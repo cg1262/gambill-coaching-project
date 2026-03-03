@@ -3,6 +3,8 @@
 ## Runtime / Tooling Baseline
 - Node: **20 LTS** (pinned to **20.11.1** via `.nvmrc`)
 - npm: **10.x** (`packageManager` + `engines` in `package.json`)
+- `npm` scripts now enforce runtime parity before `dev`, `typecheck`, `build`, and `build:clean`.
+  - mismatch exits immediately with a remediation message (switch to Node 20.11.1 + npm 10.x).
 
 ## Deterministic Build Flow (from clean clone)
 From `apps/web`:
@@ -28,8 +30,9 @@ npm run build:clean
 3. if recoverable module/bin corruption is detected (`EISDIR`, missing `next`/`tsc`), remove `node_modules`, run `npm ci`, and retry once.
 
 ## Failure Signatures + Next Action
-- `EISDIR ... page.tsx` or similar filesystem extraction issue
-  - Run: `npm run build:clean`
+- `EISDIR ... page.tsx` or `EISDIR ... node_modules/next/dist/pages/_app.js`
+  - Root cause in this project was runtime drift (host Node 24 / npm 11) against pinned Node 20.11.1 / npm 10.x expectations, which can corrupt install/build paths.
+  - Run: switch runtime first, then `npm ci --no-audit --no-fund` and `npm run build:clean`
 - `'next' is not recognized` / `Cannot find module 'next'`
   - Run: `npm run build:clean`
 - `'tsc' is not recognized` / `Cannot find module 'typescript'`

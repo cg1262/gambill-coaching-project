@@ -3,7 +3,41 @@
 Last Updated: 2026-03-03
 Owner: ERD Program Team
 
-## Checkpoint Update (2026-03-03 - Sprint 6 Security Execution + Pilot Gate Refresh)
+## Checkpoint Update (2026-03-03 - Sprint 7 Frontend Execution: Runtime Parity Gate + Quality-Loop Prompt Tightening)
+
+### Done
+- Implemented runtime parity fail-fast controls for `apps/web` to address root-cause conditions behind recurring deterministic `EISDIR/readlink` signatures under runtime drift.
+- Added strict runtime guard script:
+  - `apps/web/scripts/require-runtime.cjs`
+  - baseline: Node `>=20.11.1 <21`, npm `10.x`
+  - wired into `predev`, `pretypecheck`, `prebuild`, and `prebuild:clean` in `apps/web/package.json`.
+- Hardened clean-build script in `apps/web/scripts/build-clean.ps1`:
+  - strict runtime parity assertion before build/recovery
+  - source path integrity checks on critical app route files to catch file/dir corruption signatures early.
+- Updated web runtime/build docs in `apps/web/README.md` with explicit parity behavior and actionable remediation flow.
+- Tightened coaching quality-loop UX prompts in `apps/web/src/components/coaching/CoachingProjectWorkbench.tsx`:
+  - diagnostics-derived suggested feedback tags
+  - human-readable feedback tag labels
+  - one-click “Apply suggested tags” action
+  - dynamic coach prompt draft text for reviewer notes.
+- Ran controlled pilot flow validations at contract level:
+  - intake -> generate -> export regression
+  - review approve/send handoff regression.
+
+### Validation
+- From `apps/web` (host runtime: Node `v24.13.1`, npm `11.8.0`):
+  - `npm run typecheck` -> **fail-fast expected** with runtime mismatch guidance.
+  - `npm run build` -> **fail-fast expected**.
+  - `npm run build:clean` -> **fail-fast expected**.
+- From `apps/api`:
+  - `python -m pytest -q tests/test_security_sprint2.py::test_a2_security_regression_flow_intake_generate_validate_export tests/test_coaching_review_endpoints.py::test_review_approve_send_generates_launch_token`
+  - Result: **2 passed, 1 warning**.
+
+### Risks / Follow-ups
+- Deterministic web clean-build **success proof** is pending execution on compliant runtime (Node `20.11.1` + npm `10.x`).
+- This host currently validates fail-fast parity behavior only; final green sequence still needs a compliant runner.
+
+## Checkpoint Update (2026-03-03 - Sprint 7 Security Execution + Pilot Gate Refresh)
 
 ### Done
 - Executed Sprint 6 security validation on coaching API auth/session, generation safety, telemetry payload hygiene, and subscription lifecycle controls.
@@ -22,9 +56,14 @@ Owner: ERD Program Team
   - `apps/api/tests/test_coaching_subscription.py` now verifies lifecycle-readiness redacts raw event payload fields and replay status consistency.
 - Updated Sprint 6 task board and pilot hardening checklist with blocker/non-blocker security checkpoint status and refreshed evidence commands.
 - Added webhook verification security controls + tests:
-  - `POST /coaching/subscription/sync` now enforces provider/shared-secret signature + timestamp checks when webhook secret is configured.
-  - New regression suite `apps/api/tests/test_security_rate_limit_webhook.py` covers valid/invalid/missing signature paths, replay-safe duplicate event handling, and timestamp window rejection.
-- Expanded rate-limit regression coverage for auth/generation/review/export routes and generic 429 payload behavior.
+  - `POST /coaching/subscription/sync` enforces provider/shared-secret signature + timestamp checks when webhook secret is configured.
+  - `POST /coaching/subscription/webhook` timestamp/signature rejection paths are regression-covered.
+  - Regression suite `apps/api/tests/test_security_rate_limit_webhook.py` now covers valid/invalid/missing signature paths, replay-safe duplicate event handling, timestamp window rejection, and no-leak rejection behavior.
+- Closed route-level throttling gap for subscription surfaces:
+  - Added `subscription` rate-limit policy in `apps/api/rate_limits.py`.
+  - Enforced throttling on `GET /coaching/subscription/status`, `POST /coaching/subscription/status`, `POST /coaching/subscription/sync`, and `POST /coaching/subscription/webhook`.
+  - Added regression coverage for generic 429 denial payloads on status/sync routes.
+- Validated override model auditability for throttling changes via `GET|PUT /admin/security/rate-limits` snapshot/update controls.
 
 ### Validation
 - Security pack run (from `apps/api`):
@@ -33,16 +72,16 @@ Owner: ERD Program Team
 - API compile check:
   - `python -m compileall -q .` → **pass**.
 - Focused security regression add-on (from `apps/api`):
-  - `python -m pytest -q tests/test_security_rate_limit_webhook.py tests/test_coaching_subscription.py`
-  - Result: **8 passed, 1 warning**.
+  - `python -m pytest -q tests/test_security_rate_limit_webhook.py tests/test_rate_limits_and_webhooks.py tests/test_coaching_subscription.py`
+  - Result: **13 passed, 1 warning**.
 - Web checks (from `apps/web`):
   - `npm run typecheck` → **pass**.
   - `npm run build:clean` → **fail** with persistent `EISDIR` on `node_modules/next/dist/pages/_app.js` after scripted `npm ci` retry.
 
 ### Risks / Follow-ups
 - **Blocker:** web deterministic clean-build proof remains unresolved due to persistent `EISDIR` failure signature.
-- **Blocker:** deterministic web clean-build proof remains unresolved; production alerting for repeated invalid webhook signatures and subscription status-route specific rate-limit policy are still open ops controls.
-- **Non-blocker:** API auth/session generic denial, event/log payload hygiene, URL safety, and diagnostics/output sanitization controls are passing with regression evidence.
+- **Blocker:** production alerting for repeated invalid webhook signatures remains an open ops control.
+- **Non-blocker:** API auth/session generic denial, event/log payload hygiene, URL safety, diagnostics/output sanitization, and route-level subscription throttling are passing with regression evidence.
 
 ## Checkpoint Update (2026-03-03 - Sprint 6 Frontend Execution: Pilot UX + Instrumentation + Interview Artifacts)
 

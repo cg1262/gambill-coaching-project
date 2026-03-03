@@ -14,12 +14,54 @@ function Print-VersionGuidance() {
   $nodeVersion = (node -v) 2>$null
   $npmVersion = (npm -v) 2>$null
   Write-Host "[build-clean] detected node=$nodeVersion npm=$npmVersion"
-  Write-Host "[build-clean] guidance: use Node 20.x LTS (or newer patched LTS compatible with Next 14) and npm 10.x for deterministic installs"
+  Write-Host "[build-clean] required baseline: Node >=20.11.1 <21 and npm 10.x"
+}
+
+function Assert-RuntimeParity() {
+  $nodeRaw = (node -v) 2>$null
+  $npmRaw = (npm -v) 2>$null
+  $node = [regex]::Match([string]$nodeRaw, '(\d+)\.(\d+)\.(\d+)')
+  $npm = [regex]::Match([string]$npmRaw, '(\d+)\.(\d+)\.(\d+)')
+  if (!$node.Success -or !$npm.Success) {
+    Write-Error "[build-clean] unable to parse Node/npm versions. Install Node 20.11.1 + npm 10.x, then rerun."
+    exit 1
+  }
+
+  $nodeMajor = [int]$node.Groups[1].Value
+  $nodeMinor = [int]$node.Groups[2].Value
+  $nodePatch = [int]$node.Groups[3].Value
+  $npmMajor = [int]$npm.Groups[1].Value
+
+  $nodeOk = $nodeMajor -eq 20 -and ($nodeMinor -gt 11 -or ($nodeMinor -eq 11 -and $nodePatch -ge 1))
+  $npmOk = $npmMajor -eq 10
+  if (!$nodeOk -or !$npmOk) {
+    Write-Error "[build-clean] runtime mismatch (detected node=$nodeRaw npm=$npmRaw)."
+    Write-Error "[build-clean] this mismatch is a known trigger for persistent EISDIR/readlink failures in Next build paths."
+    Write-Error "[build-clean] switch to Node 20.11.1 (see .nvmrc) + npm 10.x, then run: npm ci --no-audit --no-fund; npm run typecheck; npm run build"
+    exit 1
+  }
 }
 
 function Ensure-Lockfile() {
   if (!(Test-Path "package-lock.json")) {
     Write-Error "[build-clean] package-lock.json is required for deterministic recovery. Run npm install once to generate and commit lockfile."
+  }
+}
+
+function Assert-SourcePathIntegrity() {
+  $expectedFiles = @(
+    "src/app/page.tsx",
+    "src/app/layout.tsx",
+    "src/app/intake/page.tsx",
+    "src/app/review/page.tsx",
+    "src/app/project/[id]/page.tsx"
+  )
+
+  foreach ($path in $expectedFiles) {
+    if ((Test-Path $path -PathType Container)) {
+      Write-Error "[build-clean] source path corruption detected: '$path' is a directory but must be a file. Restore from git and rerun."
+      exit 1
+    }
   }
 }
 
@@ -43,7 +85,9 @@ function Needs-ModuleRecovery([string]$text) {
 }
 
 Print-VersionGuidance
+Assert-RuntimeParity
 Ensure-Lockfile
+Assert-SourcePathIntegrity
 
 Write-Host "[build-clean] removing .next and ts build artifacts"
 Remove-PathSafe ".next"

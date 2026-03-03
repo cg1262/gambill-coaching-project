@@ -106,6 +106,14 @@ const TOOL_OPTIONS = ["dbt", "Airflow", "Power BI", "Tableau", "Python", "Spark"
 const PLATFORM_EXPOSURE_OPTIONS = ["Databricks", "Snowflake", "BigQuery", "Azure", "AWS", "GCP"];
 const TOOL_EXPOSURE_OPTIONS = ["dbt", "Airflow", "Power BI", "Tableau", "Looker", "Spark", "Python"];
 const COACH_FEEDBACK_TAG_OPTIONS = ["scope_clarity", "business_alignment", "architecture_depth", "storytelling", "portfolio_gap", "execution_risk"];
+const FEEDBACK_TAG_LABELS: Record<string, string> = {
+  scope_clarity: "Scope clarity",
+  business_alignment: "Business alignment",
+  architecture_depth: "Architecture depth",
+  storytelling: "Storytelling",
+  portfolio_gap: "Portfolio gap",
+  execution_risk: "Execution risk",
+};
 
 const DEFAULT_DRAFT: IntakeDraft = {
   workspaceId: "demo-workspace",
@@ -540,6 +548,30 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
     }
     return actions;
   }, [generationState.quality]);
+
+  const suggestedFeedbackTags = useMemo(() => {
+    const q = generationState.quality || {};
+    const diagnostics = (q.quality_diagnostics || {}) as Record<string, any>;
+    const tags = new Set<string>();
+    const missing = Array.isArray(q.missing_sections) ? q.missing_sections.length : 0;
+    const deficiencyCount = Number(diagnostics.deficiency_count || 0);
+    const codes = Array.isArray(diagnostics.deficiency_codes) ? diagnostics.deficiency_codes.map((x: string) => String(x).toLowerCase()) : [];
+
+    if (missing > 0 || codes.some((c: string) => c.includes("scope") || c.includes("section"))) tags.add("scope_clarity");
+    if (codes.some((c: string) => c.includes("business") || c.includes("roi"))) tags.add("business_alignment");
+    if (codes.some((c: string) => c.includes("architecture") || c.includes("data_source") || c.includes("structure"))) tags.add("architecture_depth");
+    if (codes.some((c: string) => c.includes("story") || c.includes("narrative") || c.includes("interview"))) tags.add("storytelling");
+    if (codes.some((c: string) => c.includes("portfolio") || c.includes("artifact"))) tags.add("portfolio_gap");
+    if (deficiencyCount >= 3 || (q.band || "").toString().toLowerCase().includes("low")) tags.add("execution_risk");
+
+    return Array.from(tags).filter((tag) => COACH_FEEDBACK_TAG_OPTIONS.includes(tag)).slice(0, 4);
+  }, [generationState.quality]);
+
+  const reviewPromptDraft = useMemo(() => {
+    if (!suggestedFeedbackTags.length) return "";
+    const labels = suggestedFeedbackTags.map((t) => FEEDBACK_TAG_LABELS[t] || t).join(", ");
+    return `Coach focus: ${labels}. Ask for one concrete milestone-level correction per flagged area and require evidence links before approve/send.`;
+  }, [suggestedFeedbackTags]);
 
   const submissionTimeline = useMemo(() => {
     const events: TimelineEvent[] = [];
@@ -1384,15 +1416,22 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                                   checked={coachFeedbackTags.includes(tag)}
                                   onChange={(e) => setCoachFeedbackTags((prev) => toggleOption(prev, tag, e.target.checked))}
                                 />
-                                {tag}
+                                {FEEDBACK_TAG_LABELS[tag] || tag}
                               </label>
                             ))}
                           </div>
+                          {suggestedFeedbackTags.length > 0 && (
+                            <div style={{ marginTop: 6 }}>
+                              <span className="badge info">Suggested from diagnostics: {suggestedFeedbackTags.map((t) => FEEDBACK_TAG_LABELS[t] || t).join(", ")}</span>
+                              <button style={{ marginLeft: 8 }} onClick={() => setCoachFeedbackTags((prev) => Array.from(new Set([...prev, ...suggestedFeedbackTags])))}>Apply suggested tags</button>
+                            </div>
+                          )}
                         </div>
+                        {reviewPromptDraft && <div style={{ marginTop: 6, fontSize: 11, color: "var(--color-text-muted)" }}><strong>Prompt draft:</strong> {reviewPromptDraft}</div>}
                         <textarea
                           value={coachNotes}
                           onChange={(e) => setCoachNotes(e.target.value)}
-                          placeholder="Add coaching notes, feedback highlights, and next actions..."
+                          placeholder={reviewPromptDraft || "Add coaching notes, feedback highlights, and next actions..."}
                           style={{ width: "100%", minHeight: 80, marginTop: 6 }}
                         />
                         {quickActionState.running && <div style={{ marginTop: 6 }}><span className="badge info">Running quick action…</span></div>}
