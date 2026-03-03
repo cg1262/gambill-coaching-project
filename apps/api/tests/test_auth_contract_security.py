@@ -27,12 +27,13 @@ def test_auth_401_payload_is_generic_for_auth_routes():
         ("GET", "/coaching/health/readiness", {"workspace_id": "ws-1"}),
         ("POST", "/coaching/sow/generate-draft", {"workspace_id": "ws-1", "submission_id": "sub-1", "parsed_jobs": []}),
         ("GET", "/coaching/intake/submissions", {"workspace_id": "ws-1"}),
+        ("GET", "/coaching/health/llm-readiness", None),
     ],
 )
 def test_coaching_401_payload_is_generic_on_protected_routes(method, path, payload):
     client = TestClient(app)
     if method == "GET":
-        res = client.get(path, params=payload)
+        res = client.get(path, params=payload or {})
     else:
         res = client.post(path, json=payload)
     assert res.status_code == 401

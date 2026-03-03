@@ -3,6 +3,50 @@
 Last Updated: 2026-03-03
 Sprint Goal: Pilot hardening closeout + deterministic web build + coach workflow completion.
 
+## Checkpoint Update (2026-03-03 - Sprint 5 Security Execution + D1 Evidence Draft)
+
+### Done:
+- Validated Sprint 5 deterministic build/recovery path does not reduce security posture:
+  - `apps/web/scripts/build-clean.ps1` keeps lockfile-first recovery (`npm ci --no-audit --no-fund`) and does not bypass auth/session, URL policy, or output sanitization controls.
+  - no new privileged execution, secret logging, or unsafe URL allowances introduced by the deterministic-build workflow.
+- Expanded regression coverage for Sprint 5 hardening:
+  - `apps/api/tests/test_auth_contract_security.py`
+    - added generic-401 contract assertion for `GET /coaching/health/llm-readiness`.
+  - `apps/api/tests/test_llm_output_security.py`
+    - added `.local` unsafe URL case (`https://internal.dev.local/admin`) to URL-block regression set.
+    - added diagnostics leak regression to ensure `quality.quality_diagnostics.top_deficiencies` masks secret-like strings.
+- Hardened output-leak surface in backend diagnostics:
+  - `apps/api/coaching.py::build_quality_diagnostics(...)` now masks secret-like text in `top_deficiencies` before returning API payload.
+- Produced D1 pilot evidence draft with blocker vs non-blocker split (see hardening checklist + POC status updates).
+
+### Validation:
+- Security regression pack (from `apps/api`) ✅
+  - `python -m pytest -q tests/test_auth_contract_security.py tests/test_llm_output_security.py tests/test_security_sprint2.py tests/test_coaching_security_access.py tests/test_coaching_generation_guardrails.py`
+  - Result: **44 passed, 1 warning**
+- API compile check (from `apps/api`) ✅
+  - `python -m compileall -q .`
+- Web deterministic checks (from `apps/web`) ⚠️ partial/blocking issue remains
+  - `npm ci --no-audit --no-fund --verbose` ✅ (81 packages installed; engine warning due host on Node 24/npm 11)
+  - `npm run typecheck` ✅
+  - `npm run build:clean` ❌ persistent `EISDIR: illegal operation on a directory, readlink 'src/app/page.tsx'` even after scripted recovery reinstall/retry.
+
+### Risks:
+- **Blocker:** deterministic web build proof from clean install is not yet complete because `npm run build:clean` continues to fail with persistent `EISDIR` path-structure error on `src/app/page.tsx` after lockfile-faithful recovery retry.
+- **Non-blocker:** API security controls/regressions for auth/session contracts, URL safety, and output/diagnostics leak prevention are passing.
+- Open production blockers remain unchanged: provider webhook signature verification and route-level rate limiting.
+
+### Needs from others:
+- Frontend/platform owner to run deterministic web verification under pinned engines (Node 20 LTS + npm 10) and fix `src/app/page.tsx` file/dir integrity issue:
+  - `npm ci`
+  - `npm run typecheck`
+  - `npm run build` (or `npm run build:clean`)
+  - repeat twice from clean clone to satisfy A1 acceptance.
+
+### Next:
+1. Re-run web determinism acceptance on compliant Node/npm runtime and attach logs.
+2. Keep Sprint 5 pilot gate as **CONDITIONAL GO** until web determinism proof + existing production security blockers are closed.
+3. Attach commit SHA + evidence command outputs into pilot launch notes.
+
 ## Checkpoint Update (2026-03-03 - Sprint 5 Backend Reliability + Output Quality)
 
 ### Done

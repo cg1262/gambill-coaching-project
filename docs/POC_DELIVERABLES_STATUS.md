@@ -3,6 +3,35 @@
 Last Updated: 2026-03-03
 Owner: ERD Program Team
 
+## Checkpoint Update (2026-03-03 - Sprint 5 Security Execution + Pilot D1 Evidence Draft)
+
+### Done
+- Completed Sprint 5 security execution pass focused on deterministic build impact + regression expansion.
+- Added auth/session contract regression coverage for protected LLM readiness route:
+  - `apps/api/tests/test_auth_contract_security.py` now includes 401 generic contract for `GET /coaching/health/llm-readiness`.
+- Expanded URL safety regression set for new Sprint 5 changes:
+  - `apps/api/tests/test_llm_output_security.py` now blocks `.local` host payloads (e.g., `https://internal.dev.local/admin`) in generated SOW URL surfaces.
+- Closed an output-leak gap in quality diagnostics:
+  - `apps/api/coaching.py::build_quality_diagnostics(...)` now secret-masks `top_deficiencies` messages.
+  - added regression test proving secret-like strings in deficiency messages are masked before response emission.
+- Drafted D1 pilot evidence pack status with explicit blocker/non-blocker separation in Sprint 5 docs/checklists.
+
+### Validation
+- Security pack run (from `apps/api`):
+  - `python -m pytest -q tests/test_auth_contract_security.py tests/test_llm_output_security.py tests/test_security_sprint2.py tests/test_coaching_security_access.py tests/test_coaching_generation_guardrails.py`
+  - Result: **44 passed, 1 warning**.
+- API compile check:
+  - `python -m compileall -q .` → **pass**.
+- Web deterministic verification attempts (from `apps/web`):
+  - `npm ci --no-audit --no-fund --verbose` → **pass** (81 packages installed; engine warning on host Node/npm versions)
+  - `npm run typecheck` → **pass**
+  - `npm run build:clean` → fail with persistent `EISDIR` on `src/app/page.tsx` even after scripted reinstall/retry.
+
+### Risks / Follow-ups
+- **Blocker:** cannot yet claim A1 deterministic clean-build acceptance in this host context because `build:clean` still fails with persistent `EISDIR` (`src/app/page.tsx`) after lockfile-faithful recovery retry.
+- **Non-blocker:** API security posture for auth/session, URL safety, and output/diagnostics secret masking remains strong and regression-backed.
+- Existing production blockers remain: webhook signature verification and route-level rate limiting.
+
 ## Checkpoint Update (2026-03-03 - Sprint 5 Backend Reliability + Output Quality Execution)
 
 ### Done

@@ -168,6 +168,7 @@ def test_generation_meta_is_sanitized_and_secret_free(monkeypatch):
     [
         "http://127.0.0.1/private",
         "https://user:pass@localhost/admin",
+        "https://internal.dev.local/admin",
         "data:text/html,evil",
         "javascript:alert(1)",
     ],
@@ -343,3 +344,17 @@ def test_quality_diagnostics_remain_provider_secret_free(monkeypatch):
         assert "tok-secret" not in serialized
     finally:
         app.dependency_overrides = {}
+
+
+def test_quality_diagnostics_top_deficiencies_are_secret_masked():
+    from coaching import build_quality_diagnostics
+
+    findings = [
+        {"code": "MISSING_SECTION", "message": "raw token=abc123 leaked in deficiency"},
+        {"code": "RESOURCE_LINKS_MISSING", "message": "api_key=sk-secret in hint"},
+    ]
+    diagnostics = build_quality_diagnostics({"score": 60, "structure_score": 80, "milestone_specificity_score": 60}, findings)
+    serialized = str(diagnostics).lower()
+    assert "abc123" not in serialized
+    assert "sk-secret" not in serialized
+    assert diagnostics["deficiency_count"] == 2

@@ -4,7 +4,7 @@ Use this as a go/no-go gate before enabling pilot users.
 
 ## Current Gate Status (2026-03-03)
 - **Security pilot gate:** CONDITIONAL GO
-- **Why conditional:** auth/session contract, URL hardening, and secret-masking regressions are passing; production blockers remain open in webhook signature verification and route-level rate limiting.
+- **Why conditional:** auth/session contract, URL hardening, and secret-masking regressions (including Sprint 5 diagnostics masking and `.local` URL-block checks) are passing; production blockers remain open in webhook signature verification and route-level rate limiting, and web deterministic build proof is still blocked by persistent `EISDIR` build failure (`src/app/page.tsx`).
 
 ## 1) Auth + Subscription Enforcement
 - [x] Verify all coaching generation routes require authenticated session + allowed role (`admin`/`editor`).
@@ -34,9 +34,11 @@ Use this as a go/no-go gate before enabling pilot users.
 
 ## 6) Test + Release Evidence
 - [x] Run API security regression tests (auth, RBAC, inactive-subscription denial, logging masks, LLM guardrails).
-- [ ] Run compile/build checks for API + web.
+- [ ] Run compile/build checks for API + web. *(API compile passes; web typecheck passes after `npm ci`, but `npm run build:clean` is still blocked by persistent `EISDIR` (`src/app/page.tsx`) even after scripted recovery reinstall/retry.)*
 - [ ] Attach test/build output + commit SHA to pilot launch notes.
 
 ### Evidence Commands (2026-03-03 Security Pilot Gate)
-- `python -m pytest -q tests/test_auth_contract_security.py tests/test_llm_output_security.py`
-- `python -m pytest -q tests/test_security_sprint2.py tests/test_coaching_security_access.py tests/test_coaching_generation_guardrails.py`
+- `python -m pytest -q tests/test_auth_contract_security.py tests/test_llm_output_security.py tests/test_security_sprint2.py tests/test_coaching_security_access.py tests/test_coaching_generation_guardrails.py`
+- `python -m compileall -q .`
+- `npm run typecheck` ✅
+- `npm run build:clean` *(blocked: persistent `EISDIR` on `src/app/page.tsx` after retry path in `build-clean.ps1`)*
