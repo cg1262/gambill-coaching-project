@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type CoachingIntakeSubmission, type CoachingIntakeSubmissionDetail } from "../../lib/api";
+import { trackConversionEvent } from "../../lib/conversion";
 
 type TimelineEvent = { id: string; at?: string; label: string; detail?: string; tone?: "info" | "success" | "warning" | "error" };
 
@@ -77,6 +78,11 @@ type ProjectScaffold = {
     rationale?: string;
     ctaText: string;
   };
+  interviewArtifacts: {
+    starStories: { situation: string; task: string; action: string; result: string }[];
+    portfolioChecklist: string[];
+    recruiterMapping: { requirement: string; evidence: string }[];
+  };
 };
 
 const STEP_ORDER: IntakeStepId[] = ["resume", "selfAssessment", "jobLinks", "preferences"];
@@ -92,6 +98,7 @@ const PLATFORM_OPTIONS = ["Databricks", "Snowflake", "BigQuery", "Azure Synapse"
 const TOOL_OPTIONS = ["dbt", "Airflow", "Power BI", "Tableau", "Python", "Spark"];
 const PLATFORM_EXPOSURE_OPTIONS = ["Databricks", "Snowflake", "BigQuery", "Azure", "AWS", "GCP"];
 const TOOL_EXPOSURE_OPTIONS = ["dbt", "Airflow", "Power BI", "Tableau", "Looker", "Spark", "Python"];
+const COACH_FEEDBACK_TAG_OPTIONS = ["scope_clarity", "business_alignment", "architecture_depth", "storytelling", "portfolio_gap", "execution_risk"];
 
 const DEFAULT_DRAFT: IntakeDraft = {
   workspaceId: "demo-workspace",
@@ -223,6 +230,26 @@ function buildProjectScaffold(draft: IntakeDraft): ProjectScaffold {
       rationale: "Recommended when delivery confidence and interview storytelling both need structured support.",
       ctaText: "Book mentoring kickoff",
     },
+    interviewArtifacts: {
+      starStories: [
+        {
+          situation: "Legacy reporting took multiple days and metrics were inconsistent.",
+          task: "Design a reliable medallion pipeline and shared KPI layer.",
+          action: "Implemented tested bronze/silver/gold transformations with KPI contracts and observability.",
+          result: "Reduced reporting lag from days to hours and improved stakeholder trust in published metrics.",
+        },
+      ],
+      portfolioChecklist: [
+        "Architecture diagram with bronze/silver/gold and trade-off notes",
+        "Before/after KPI table with clear definitions",
+        "GitHub repo or project writeup with reproducible steps",
+        "Short executive summary version for recruiter screens",
+      ],
+      recruiterMapping: [
+        { requirement: "End-to-end pipeline delivery", evidence: "Milestone 2 deliverables + lineage/runbook artifacts" },
+        { requirement: "Business impact communication", evidence: "Business readout narrative + ROI dashboard requirements" },
+      ],
+    },
   };
 }
 
@@ -293,6 +320,19 @@ function toggleOption(items: string[], value: string, checked: boolean): string[
   return items.filter((x) => x !== value);
 }
 
+function parseCoachTagsFromNotes(notes?: string): string[] {
+  const text = String(notes || "");
+  const match = text.match(/\[tags:([^\]]+)\]/i);
+  if (!match) return [];
+  return match[1].split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+function composeCoachNotesWithTags(notes: string, tags: string[]): string {
+  const body = String(notes || "").replace(/\s*\[tags:[^\]]+\]\s*/gi, "").trim();
+  if (!tags.length) return body;
+  return `${body}\n\n[tags: ${tags.join(", ")}]`.trim();
+}
+
 function buildStructuredAssessment(draft: IntakeDraft): string {
   const q = draft.questionnaire;
   return [
@@ -342,7 +382,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   const [activeStep, setActiveStep] = useState<IntakeStepId>("resume");
   const [draft, setDraft] = useState<IntakeDraft>(DEFAULT_DRAFT);
   const [scaffold, setScaffold] = useState<ProjectScaffold | null>(null);
-  const [viewerTab, setViewerTab] = useState<"summary" | "dataSources" | "architecture" | "milestones" | "story" | "roi" | "resources">("summary");
+  const [viewerTab, setViewerTab] = useState<"summary" | "dataSources" | "architecture" | "milestones" | "story" | "roi" | "resources" | "interview">("summary");
   const [stageState, setStageState] = useState<Record<StageId, boolean>>({
     intakeParsed: false,
     sowGenerated: false,
@@ -359,6 +399,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   const [selectedSubmissionRuns, setSelectedSubmissionRuns] = useState<Record<string, any>[]>([]);
   const [selectedSubmissionStatus, setSelectedSubmissionStatus] = useState<string>("submitted");
   const [coachNotes, setCoachNotes] = useState<string>("");
+  const [coachFeedbackTags, setCoachFeedbackTags] = useState<string[]>([]);
   const [queueStatusFilter, setQueueStatusFilter] = useState<string>("all");
   const [reviewSaveState, setReviewSaveState] = useState<{ saving: boolean; message?: string; error?: string }>({ saving: false });
   const [quickActionState, setQuickActionState] = useState<{ running: boolean; message?: string; error?: string; launchToken?: string }>({ running: false });
@@ -417,6 +458,16 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       clearAuthStaleState();
     }
   }, [authState, subscriptionStatus]);
+
+  useEffect(() => {
+    if (showLaunchAndAccess) {
+      trackConversionEvent({ name: "launch_path_viewed", workspaceId: draft.workspaceId, planTier, details: { authState, subscriptionStatus } });
+    }
+    if (!canAccessWorkbench) {
+      trackConversionEvent({ name: "upgrade_cta_viewed", workspaceId: draft.workspaceId, planTier, details: { authState, subscriptionStatus } });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showLaunchAndAccess, canAccessWorkbench]);
 
   const qualityBadges = useMemo(() => {
     if (!scaffold) return [] as { label: string; pass: boolean }[];
@@ -541,7 +592,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
         workspace_id: draft.workspaceId || "demo-workspace",
         submission_id: selectedSubmissionId,
         coach_review_status: selectedSubmissionStatus,
-        coach_notes: coachNotes,
+        coach_notes: composeCoachNotesWithTags(coachNotes, coachFeedbackTags),
       });
       markAuthenticatedApiSuccess();
       if (!out.ok) {
@@ -567,7 +618,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
         workspace_id: draft.workspaceId || "demo-workspace",
         submission_id: selectedSubmissionId,
         coach_review_status: action,
-        coach_notes: coachNotes,
+        coach_notes: composeCoachNotesWithTags(coachNotes, coachFeedbackTags),
       });
       markAuthenticatedApiSuccess();
       if (!out.ok) {
@@ -595,7 +646,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       const out = await api.coachingReviewApproveSend({
         workspace_id: draft.workspaceId || "demo-workspace",
         submission_id: selectedSubmissionId,
-        coach_notes: coachNotes,
+        coach_notes: composeCoachNotesWithTags(coachNotes, coachFeedbackTags),
       });
       markAuthenticatedApiSuccess();
       if (!out.ok) {
@@ -683,6 +734,27 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
         rationale: String(mentoring.reason || "Recommendation based on milestone tags and current skill gap profile."),
         ctaText: String(mentoring.cta_text || "Book mentoring kickoff"),
       },
+      interviewArtifacts: {
+        starStories: Array.isArray((sow.interview_ready || {}).star_stories) && (sow.interview_ready || {}).star_stories.length
+          ? (sow.interview_ready || {}).star_stories.map((s: any) => ({
+              situation: String(s.situation || ""),
+              task: String(s.task || ""),
+              action: String(s.action || ""),
+              result: String(s.result || ""),
+            }))
+          : [{
+              situation: "Business stakeholders lacked trusted KPI visibility.",
+              task: "Deliver an interview-ready analytics initiative with measurable impact.",
+              action: "Built medallion data model + quality gates + KPI dashboard contract.",
+              result: "Reduced reporting lag and improved KPI confidence for decision-making.",
+            }],
+        portfolioChecklist: Array.isArray((sow.interview_ready || {}).portfolio_checklist)
+          ? (sow.interview_ready || {}).portfolio_checklist.map((x: any) => String(x))
+          : ["Architecture diagram", "KPI before/after metrics", "README with delivery narrative"],
+        recruiterMapping: Array.isArray((sow.interview_ready || {}).recruiter_mapping)
+          ? (sow.interview_ready || {}).recruiter_mapping.map((r: any) => ({ requirement: String(r.requirement || ""), evidence: String(r.evidence || "") }))
+          : [{ requirement: "Data platform delivery", evidence: "Milestone deliverables and runbook" }],
+      },
     };
   }
 
@@ -713,6 +785,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       markAuthenticatedApiSuccess();
       setDraft((prev) => ({ ...prev, selfAssessment: structuredAssessment }));
       setCurrentSubmissionId(intakeResult.submission_id || null);
+      trackConversionEvent({ name: "intake_submitted", workspaceId: draft.workspaceId, submissionId: intakeResult.submission_id, planTier, details: { jobLinks: jobLinks.length } });
       setStageState((prev) => ({ ...prev, intakeParsed: true }));
       await loadSubmissions();
     } catch (e: any) {
@@ -731,6 +804,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
     }
 
     try {
+      trackConversionEvent({ name: useImprovements ? "sow_regenerate_clicked" : "sow_generate_clicked", workspaceId: draft.workspaceId, submissionId: currentSubmissionId, planTier });
       setGenerationState({ running: true, message: useImprovements ? "Regenerating with improvements..." : "Generating SOW..." });
       const out = await api.coachingGenerateSow({ workspace_id: draft.workspaceId, submission_id: currentSubmissionId, parsed_jobs: [], regenerate_with_improvements: useImprovements });
       markAuthenticatedApiSuccess();
@@ -749,6 +823,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
         generationMeta: out.generation_meta || {},
         quality: out.quality || {},
       });
+      trackConversionEvent({ name: "sow_generate_completed", workspaceId: draft.workspaceId, submissionId: currentSubmissionId, source: fallbackUsed ? "fallback" : "llm", details: { valid: Boolean(out.valid), score: out.quality?.score } });
     } catch (e: any) {
       const msg = e?.message || "Generation failed.";
       setGenerationState({ running: false, message: msg.includes("403") ? "Upgrade required: active subscription needed for generation." : handleProtectedApiError(msg) });
@@ -779,7 +854,9 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       setSelectedSubmission(out.submission);
       setCurrentSubmissionId(out.submission.submission_id);
       setSelectedSubmissionStatus(String((out.submission as any).coach_review_status || out.submission.status || "submitted"));
-      setCoachNotes(String((out.submission as any).coach_notes || (out.latest_generation_run || {}).coach_notes || ""));
+      const loadedNotes = String((out.submission as any).coach_notes || (out.latest_generation_run || {}).coach_notes || "");
+      setCoachNotes(loadedNotes.replace(/\s*\[tags:[^\]]+\]\s*/gi, "").trim());
+      setCoachFeedbackTags(parseCoachTagsFromNotes(loadedNotes));
       setReviewSaveState({ saving: false });
       setSelectedSubmissionRuns(runsOut.runs || []);
       const recs = ((out.latest_generation_run || {}) as any).recommendations || {};
@@ -843,11 +920,13 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
     const safeName = (draft.candidateName || "candidate").toLowerCase().replace(/\s+/g, "-");
 
     try {
+      trackConversionEvent({ name: "export_clicked", workspaceId: draft.workspaceId, submissionId: currentSubmissionId || undefined, details: { format } });
       setExportStatus({ format, state: "exporting", message: `Preparing ${format.toUpperCase()} package...` });
 
       if (format === "json") {
         downloadText(JSON.stringify(scaffold, null, 2), `${safeName}-coaching-package-${timestamp}.json`, "application/json");
         setExportStatus({ format, state: "success", message: `JSON package exported (${timestamp}).` });
+        trackConversionEvent({ name: "export_completed", workspaceId: draft.workspaceId, submissionId: currentSubmissionId || undefined, details: { format } });
         return;
       }
 
@@ -896,6 +975,22 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
         "## Recommended Resources",
         ...scaffold.recommendedResources.map((r) => `- [${r.title}](${r.url}) — ${r.reason}`),
         "",
+        "## Interview Artifacts",
+        "### STAR Stories",
+        ...scaffold.interviewArtifacts.starStories.flatMap((s, idx) => [
+          `#### Story ${idx + 1}`,
+          `- Situation: ${s.situation}`,
+          `- Task: ${s.task}`,
+          `- Action: ${s.action}`,
+          `- Result: ${s.result}`,
+        ]),
+        "",
+        "### Portfolio Checklist",
+        ...scaffold.interviewArtifacts.portfolioChecklist.map((item) => `- ${item}`),
+        "",
+        "### Recruiter Mapping",
+        ...scaffold.interviewArtifacts.recruiterMapping.map((row) => `- ${row.requirement}: ${row.evidence}`),
+        "",
         "## Mentoring Offer",
         `- Offer: ${scaffold.mentoringCta.offer}`,
         `- Pricing: ${scaffold.mentoringCta.pricing}`,
@@ -905,6 +1000,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
 
       downloadText(markdown, `${safeName}-coaching-package-${timestamp}.md`, "text/markdown");
       setExportStatus({ format, state: "success", message: `Markdown package exported (${timestamp}).` });
+      trackConversionEvent({ name: "export_completed", workspaceId: draft.workspaceId, submissionId: currentSubmissionId || undefined, details: { format } });
     } catch (e: any) {
       setExportStatus({ format, state: "error", message: e?.message || "Export failed. Try again." });
     }
@@ -925,10 +1021,9 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
 
   function launchStep() {
     setMemberLaunchState((prev) => {
-      if (prev === "memberHome") return "launchRequested";
-      if (prev === "launchRequested") return "handoffPending";
-      if (prev === "handoffPending") return "landed";
-      return "landed";
+      const next = prev === "memberHome" ? "launchRequested" : prev === "launchRequested" ? "handoffPending" : "landed";
+      trackConversionEvent({ name: "launch_step_advanced", workspaceId: draft.workspaceId, planTier, details: { from: prev, to: next } });
+      return next;
     });
   }
 
@@ -950,6 +1045,19 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
         <span className="badge info">Coaching App</span>
       </div>
       {sessionBanner && <div className="card" style={{ border: "1px solid #f59e0b", background: "#fffbeb", color: "#92400e" }}>{sessionBanner}</div>}
+      {(reviewError || readinessState.error || (generationState.message && generationState.message.toLowerCase().includes("retry"))) && (
+        <div className="card" style={{ border: "1px solid #f59e0b", background: "#fff7ed", marginBottom: 10 }}>
+          <strong style={{ fontSize: 12 }}>Issue response guide</strong>
+          <div style={{ fontSize: 12, marginTop: 4 }}>
+            We hit a live issue. Retry first. If it persists, use fallback mode (local scaffold/export) and capture coach notes for follow-up.
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+            <button onClick={loadSubmissions}>Retry queue load</button>
+            <button onClick={loadReadiness}>Retry readiness check</button>
+            <button onClick={() => generateSow(false)} disabled={generationState.running}>Retry generation</button>
+          </div>
+        </div>
+      )}
 
       <div className="card" style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
         <Link href="/intake"><button className={mode === "intake" ? "btn-primary" : undefined}>Intake</button></Link>
@@ -1022,7 +1130,10 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
             <span className="badge warning">Subscription-required state</span>
             <div style={{ marginTop: 8, fontSize: 12, color: "var(--color-text-muted)" }}>{gateMessage()}</div>
             {subscriptionStatus !== "active" && (
-              <button style={{ marginTop: 8 }} onClick={() => { setSubscriptionStatus("active"); clearAuthStaleState(); }}>Simulate successful upgrade/renewal</button>
+              <>
+                <div style={{ fontSize: 12, marginTop: 8 }}><strong>Upgrade message:</strong> Upgrade to Pro/Elite to unlock generation, exports, and coach review workflow.</div>
+                <button style={{ marginTop: 8 }} onClick={() => { trackConversionEvent({ name: "upgrade_cta_clicked", workspaceId: draft.workspaceId, planTier }); setSubscriptionStatus("active"); clearAuthStaleState(); }}>Simulate successful upgrade/renewal</button>
+              </>
             )}
           </div>
         </>
@@ -1181,6 +1292,21 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                           <button className="btn-primary" onClick={approveAndSend} disabled={!selectedSubmissionId || quickActionState.running}>Approve + Send</button>
                           {reviewSaveState.message && <span className="badge success">{reviewSaveState.message}</span>}
                           {reviewSaveState.error && <span className="badge error">{reviewSaveState.error}</span>}
+                        </div>
+                        <div style={{ marginTop: 8, fontSize: 12 }}>
+                          <strong>Feedback tags</strong>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+                            {COACH_FEEDBACK_TAG_OPTIONS.map((tag) => (
+                              <label key={tag} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                                <input
+                                  type="checkbox"
+                                  checked={coachFeedbackTags.includes(tag)}
+                                  onChange={(e) => setCoachFeedbackTags((prev) => toggleOption(prev, tag, e.target.checked))}
+                                />
+                                {tag}
+                              </label>
+                            ))}
+                          </div>
                         </div>
                         <textarea
                           value={coachNotes}
@@ -1487,6 +1613,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                   <button onClick={() => setViewerTab("story")}>Story Narrative</button>
                   <button onClick={() => setViewerTab("roi")}>ROI Dashboard</button>
                   <button onClick={() => setViewerTab("resources")}>Resource Links by Step</button>
+                  <button onClick={() => setViewerTab("interview")}>Interview Artifacts</button>
                 </div>
 
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
@@ -1558,6 +1685,36 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                   </div>
                 )}
 
+                {viewerTab === "interview" && (
+                  <div style={{ display: "grid", gap: 8 }}>
+                    <div className="card" style={{ padding: 8 }}>
+                      <strong>STAR Stories</strong>
+                      <div style={{ display: "grid", gap: 6, marginTop: 6, fontSize: 12 }}>
+                        {scaffold.interviewArtifacts.starStories.map((s, idx) => (
+                          <div key={`star-${idx}`} style={{ borderLeft: "2px solid var(--color-border-strong)", paddingLeft: 8 }}>
+                            <div><strong>S:</strong> {s.situation}</div>
+                            <div><strong>T:</strong> {s.task}</div>
+                            <div><strong>A:</strong> {s.action}</div>
+                            <div><strong>R:</strong> {s.result}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="card" style={{ padding: 8 }}>
+                      <strong>Portfolio Checklist</strong>
+                      <ul style={{ margin: "6px 0 0 18px", padding: 0, fontSize: 12 }}>
+                        {scaffold.interviewArtifacts.portfolioChecklist.map((item) => <li key={item}>{item}</li>)}
+                      </ul>
+                    </div>
+                    <div className="card" style={{ padding: 8 }}>
+                      <strong>Recruiter Mapping</strong>
+                      <ul style={{ margin: "6px 0 0 18px", padding: 0, fontSize: 12 }}>
+                        {scaffold.interviewArtifacts.recruiterMapping.map((row, idx) => <li key={`map-${idx}`}><strong>{row.requirement}:</strong> {row.evidence}</li>)}
+                      </ul>
+                    </div>
+                  </div>
+                )}
+
                 {viewerTab === "resources" && (
                   <div style={{ display: "grid", gap: 8 }}>
                     {scaffold.resourceLinksByStep.map((step) => (
@@ -1586,7 +1743,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                         <div style={{ fontSize: 12 }}><strong>Timeline:</strong> {scaffold.mentoringCta.timeline}</div>
                         {scaffold.mentoringCta.rationale && <div style={{ fontSize: 12, marginTop: 4 }}><strong>Rationale:</strong> {scaffold.mentoringCta.rationale}</div>}
                         {!canBookMentoring && <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 6 }}>Upgrade to Elite to unlock live booking and 1:1 mentoring sessions.</div>}
-                        <button className="btn-primary" style={{ marginTop: 8 }} disabled={!canBookMentoring}>{canBookMentoring ? scaffold.mentoringCta.ctaText : "Elite required"}</button>
+                        <button className="btn-primary" style={{ marginTop: 8 }} disabled={!canBookMentoring} onClick={() => trackConversionEvent({ name: "mentoring_cta_clicked", workspaceId: draft.workspaceId, submissionId: currentSubmissionId || undefined, planTier })}>{canBookMentoring ? scaffold.mentoringCta.ctaText : "Elite required"}</button>
                       </div>
                     )}
                   </div>

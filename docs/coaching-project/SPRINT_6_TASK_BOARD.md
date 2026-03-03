@@ -3,6 +3,51 @@
 Last Updated: 2026-03-03
 Sprint Goal: Pilot launch + conversion instrumentation + post-launch learning loop.
 
+## Checkpoint Update (2026-03-03 - Sprint 6 Frontend Execution)
+
+### Done
+- Hardened pilot launch/member access UX in `CoachingProjectWorkbench`:
+  - clearer subscription-required upgrade messaging and CTA path.
+  - launch-step instrumentation and launch/access state view tracking.
+  - stale issue response panel with explicit retry + fallback guidance.
+- Implemented frontend conversion instrumentation wiring (`apps/web/src/lib/conversion.ts`) and event emits for:
+  - launch flow view + step advance
+  - upgrade CTA viewed/clicked
+  - intake submit
+  - generate/regenerate clicked + generation complete
+  - export clicked/completed
+  - mentoring CTA click
+- Finalized interview-ready artifact UX and export parity:
+  - added **Interview Artifacts** tab in output viewer.
+  - surfaced STAR stories, portfolio checklist, recruiter requirement mapping.
+  - included interview artifacts in Markdown export output.
+- Implemented coach feedback tagging UI for review workflow:
+  - added structured tag chips (`scope_clarity`, `business_alignment`, `architecture_depth`, `storytelling`, `portfolio_gap`, `execution_risk`).
+  - tags are serialized into `coach_notes` (`[tags: ...]`) for backend quality-loop ingestion compatibility.
+- Improved live issue response UX states:
+  - centralized issue response panel with retry actions (queue/readiness/generation) and fallback instructions.
+
+### Validation
+- `npm run typecheck` (apps/web) ❌
+  - fails in pre-existing `reactflow` type import surface (`TS2614` across `ModelCanvas.tsx`, `ErdEdge.tsx`, `TableNode.tsx`, and dependent libs).
+- `npm run build` (apps/web) ❌
+  - fails with `Cannot find module 'styled-jsx/package.json'` from Next require-hook (node_modules integrity issue).
+- `npm run build:clean` (apps/web) ❌
+  - rerun confirms same `styled-jsx` missing module failure after clean script.
+
+### Risks
+- Conversion instrumentation is currently client-local (localStorage + console) and not yet posted to backend analytics endpoint.
+- Coach tags are transported via tagged note serialization until backend adds first-class tag fields.
+
+### Needs from others
+- Backend analytics endpoint contract for durable conversion event ingestion.
+- Optional backend schema expansion for explicit `coach_feedback_tags` field.
+
+### Next
+1. Add backend ingestion endpoint for conversion telemetry snapshots.
+2. Promote coach feedback tags to typed backend field when API contract is available.
+3. Add frontend tests for interview artifacts rendering + export integrity.
+
 ## Epic A — Pilot Launch Execution (P0)
 
 ### A1. Launch runbook execution

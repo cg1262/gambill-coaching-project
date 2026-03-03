@@ -3,6 +3,33 @@
 Last Updated: 2026-03-03
 Owner: ERD Program Team
 
+## Checkpoint Update (2026-03-03 - Sprint 6 Frontend Execution: Pilot UX + Instrumentation + Interview Artifacts)
+
+### Done
+- Executed Sprint 6 frontend implementation pass in `apps/web/src/components/coaching/CoachingProjectWorkbench.tsx`:
+  - hardened pilot launch/member gate UX with clearer upgrade messaging and recovery prompts.
+  - added live issue response card with explicit retry actions and fallback instructions.
+- Added conversion instrumentation module:
+  - `apps/web/src/lib/conversion.ts`
+  - wired launch/intake/generate/regenerate/export/upgrade/mentoring CTA tracking events.
+- Finalized interview-ready artifact UX in project output viewer and exports:
+  - new Interview Artifacts tab (STAR stories, portfolio checklist, recruiter mapping).
+  - markdown export now includes interview artifact sections.
+- Added coach feedback tagging UI to review workflow:
+  - selectable feedback tags serialized into `coach_notes` for backend quality loop compatibility.
+
+### Validation
+- `npm run typecheck` (apps/web) ❌
+  - pre-existing `reactflow` typing import errors (`TS2614`) in model-canvas/editor files.
+- `npm run build` (apps/web) ❌
+  - `Cannot find module 'styled-jsx/package.json'` from Next runtime loader.
+- `npm run build:clean` (apps/web) ❌
+  - clean/retry path reproduces same `styled-jsx` missing-module failure.
+
+### Risks / Follow-ups
+- Event telemetry is currently local-first (console/localStorage) pending backend analytics ingestion endpoint.
+- Feedback tags are notes-serialized until backend contract provides dedicated tag field.
+
 ## Checkpoint Update (2026-03-03 - Sprint 5 Security Execution + Pilot D1 Evidence Draft)
 
 ### Done
