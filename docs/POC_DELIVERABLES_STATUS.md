@@ -3,6 +3,28 @@
 Last Updated: 2026-03-02
 Owner: ERD Program Team
 
+## Checkpoint Update (2026-03-02 - Sprint 3 Security Execution Kickoff)
+
+### Done
+- Verified and expanded auth/session generic denial contract coverage for new/updated routes:
+  - added 401 generic contract regression for protected coaching readiness route.
+  - added 403 generic contract regressions for role denial and inactive-subscription denial paths.
+  - validated denial responses do not leak raw parser/token/role/subscription internals.
+- Added defense-in-depth checks for frontend/backend URL policy consistency:
+  - frontend `safeExternalUrl` now blocks `::1`, `.local`, and RFC1918/link-local/loopback IPv4 literals in addition to scheme checks.
+  - backend URL safety regression now explicitly verifies private IPv4 and IPv6 loopback fetch blocking.
+- Expanded generated-output secret masking coverage in backend sanitization:
+  - now masks secret-like patterns in `project_title`, `project_story`, `business_outcome` narrative fields, and milestone execution/rationale fields (`execution_plan`, `expected_deliverable`, `business_why`, deliverables entries).
+- Updated security checklist with a CI-ready Sprint 3 regression command pack.
+
+### Validation
+- `python -m pytest -q tests/test_auth_contract_security.py tests/test_security_sprint2.py tests/test_llm_output_security.py` (from `apps/api`) ✅
+- `npm run typecheck` (from `apps/web`) ✅
+
+### Risks / Follow-ups
+- Frontend private-host detection remains literal-host based (no DNS resolution in browser); backend remains authoritative for SSRF protection.
+- Continue adding allowlist-backed outbound URL policy if production requires stricter domain controls.
+
 ## Checkpoint Update (2026-03-02 - Security Session/Diagnostics Hardening Pass)
 
 ### Done
@@ -1057,7 +1079,7 @@ _Status refresh: checkpoint finalized with tests + docs updates in this pass._
 
 ### Validation
 - Backend compile check (from `apps/api`):
-  - `.venv\\Scripts\\python -m py_compile main.py coaching.py models.py` � **success**
+  - `.venv\\Scripts\\python -m py_compile main.py coaching.py models.py` � **success**
 - Targeted backend tests attempted:
   - `.venv\\Scripts\\python -m pytest tests/test_coaching_generation_guardrails.py tests/test_coaching_llm_contract.py tests/test_coaching_pass2.py tests/test_coaching_sprint2_backend.py`
   - Blocked in environment due to missing dependency: `httpx` required by `starlette.testclient` during collection.

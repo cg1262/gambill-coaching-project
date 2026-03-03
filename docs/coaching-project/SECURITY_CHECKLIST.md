@@ -69,3 +69,20 @@ Reference: `docs/coaching-project/FORM_INPUT_VALIDATION_POLICY.md`
 2. Add centralized logging filter/middleware for secret masking.
 3. Add end-to-end test to prove uploaded resume never appears in logs/raw exports.
 4. Replace placeholder probabilistic engine with real LLM client + strict structured output schema validation.
+
+## 9) Sprint 3 Security Execution (Regression + Defense-in-Depth)
+- [x] Verified generic denial contract (`ok`, `code`, `auth_required`, `subscription_required`, `message`) across auth + coaching 401/403 routes.
+- [x] Added regression for role-based 403 and subscription-based 403 without leaking internal denial details.
+- [x] Tightened frontend link rendering policy for blocked private hosts (`localhost`, `::1`, RFC1918 IPv4 ranges, `.local`) to match backend unsafe URL policy intent.
+- [x] Expanded backend URL safety regression checks for private IPv4 and IPv6 loopback URL fetch blocking.
+- [x] Expanded generated-output sanitization to mask secret-like values in project title/story, business outcome narrative, milestone execution plan, expected deliverable, and business rationale fields.
+
+### CI-ready security regression command pack
+Run from `apps/api`:
+- `python -m pytest -q tests/test_auth_contract_security.py`
+- `python -m pytest -q tests/test_security_sprint2.py::test_e2_fetch_job_text_blocks_unsafe_urls`
+- `python -m pytest -q tests/test_llm_output_security.py`
+- `python -m pytest -q tests/test_coaching_security_access.py tests/test_coaching_generation_guardrails.py tests/test_coaching_llm_contract.py`
+
+Optional full pass:
+- `python -m pytest -q tests/test_auth_contract_security.py tests/test_security_sprint2.py tests/test_llm_output_security.py tests/test_coaching_security_access.py tests/test_coaching_generation_guardrails.py tests/test_coaching_llm_contract.py`

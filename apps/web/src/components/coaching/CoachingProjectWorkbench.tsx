@@ -238,6 +238,21 @@ function normalizeJobLinks(value?: unknown): string[] {
   return value.map((item) => String(item || "").trim()).filter(Boolean);
 }
 
+function isPrivateIpv4Host(host: string): boolean {
+  const m = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!m) return false;
+  const parts = m.slice(1).map((x) => Number(x));
+  if (parts.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return true;
+  const [a, b] = parts;
+  if (a === 10) return true;
+  if (a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 0) return true;
+  return false;
+}
+
 function safeExternalUrl(url?: string): { safe: boolean; reason?: string; normalized?: string } {
   const raw = String(url || "").trim();
   if (!raw) return { safe: false, reason: "empty" };
@@ -245,7 +260,7 @@ function safeExternalUrl(url?: string): { safe: boolean; reason?: string; normal
     const parsed = new URL(raw);
     if (!["http:", "https:"].includes(parsed.protocol)) return { safe: false, reason: "blocked_scheme" };
     const host = parsed.hostname.toLowerCase();
-    if (["localhost", "127.0.0.1", "0.0.0.0"].includes(host) || host.endsWith(".local")) {
+    if (["localhost", "127.0.0.1", "0.0.0.0", "::1"].includes(host) || host.endsWith(".local") || isPrivateIpv4Host(host)) {
       return { safe: false, reason: "blocked_private_host" };
     }
     const blocked = ["example.com", "placeholder", "your-link", "tbd"];

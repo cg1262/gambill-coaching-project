@@ -211,6 +211,14 @@ def test_e2_fetch_job_text_blocks_unsafe_urls():
     assert blocked_localhost["ok"] is False
     assert "Unsafe URL blocked" in blocked_localhost["error"]
 
+    blocked_private_ip = fetch_job_text("http://10.10.1.5/internal")
+    assert blocked_private_ip["ok"] is False
+    assert "Unsafe URL blocked" in blocked_private_ip["error"]
+
+    blocked_ipv6_loopback = fetch_job_text("http://[::1]/internal")
+    assert blocked_ipv6_loopback["ok"] is False
+    assert "Unsafe URL blocked" in blocked_ipv6_loopback["error"]
+
 
 def test_c1_premium_validate_loop_requires_active_subscription(monkeypatch):
     app.dependency_overrides[get_current_session] = _override_session("editor", "coach1")

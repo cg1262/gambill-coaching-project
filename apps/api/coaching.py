@@ -88,9 +88,17 @@ def _validate_safe_url(url: str) -> tuple[bool, str | None]:
     return True, None
 
 
+def _mask_if_str(value: Any) -> Any:
+    return mask_secrets_in_text(value) if isinstance(value, str) else value
+
+
 def sanitize_generated_sow(sow: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, str]]]:
     out = json.loads(json.dumps(sow or {}))
     findings: list[dict[str, str]] = []
+
+    for narrative_key in ["project_title", "project_story"]:
+        if narrative_key in out:
+            out[narrative_key] = _mask_if_str(out.get(narrative_key))
 
     resources = out.get("resource_plan") or {}
     for bucket in ["required", "recommended", "optional"]:
@@ -132,6 +140,21 @@ def sanitize_generated_sow(sow: dict[str, Any]) -> tuple[dict[str, Any], list[di
             mentoring["program_url"] = ""
             mentoring["safety_flag"] = "blocked_unsafe_url"
     out["mentoring_cta"] = mentoring
+
+    business_outcome = out.get("business_outcome") or {}
+    for text_key in ["problem_statement", "target_users", "success_metric", "constraints"]:
+        if text_key in business_outcome:
+            business_outcome[text_key] = _mask_if_str(business_outcome.get(text_key))
+    out["business_outcome"] = business_outcome
+
+    for ms in (out.get("milestones") or []):
+        if not isinstance(ms, dict):
+            continue
+        for text_key in ["name", "execution_plan", "expected_deliverable", "business_why"]:
+            if text_key in ms:
+                ms[text_key] = _mask_if_str(ms.get(text_key))
+        if isinstance(ms.get("deliverables"), list):
+            ms["deliverables"] = [_mask_if_str(x) for x in (ms.get("deliverables") or [])]
 
     return out, findings
 
@@ -350,6 +373,80 @@ def generate_sow_with_llm(
     }
 
 
+DATA_SOURCE_CANDIDATES: list[dict[str, Any]] = [
+    {
+        "name": "NYC TLC Trip Record Data",
+        "url": "https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page",
+        "ingestion_doc_url": "https://www.nyc.gov/assets/tlc/downloads/pdf/data_dictionary_trip_records_yellow.pdf",
+        "tags": {"transport", "analytics", "sql", "power bi"},
+        "selection_rationale": "Public trip-level facts are excellent for building medallion pipelines and KPI reporting exercises.",
+    },
+    {
+        "name": "Bureau of Labor Statistics Public Data API",
+        "url": "https://www.bls.gov/data/",
+        "ingestion_doc_url": "https://www.bls.gov/developers/home.htm",
+        "tags": {"economics", "api", "python", "time-series"},
+        "selection_rationale": "Provides real API ingestion practice plus documented schemas for incremental loads and trend dashboards.",
+    },
+    {
+        "name": "NYC Open Data (Socrata)",
+        "url": "https://opendata.cityofnewyork.us/",
+        "ingestion_doc_url": "https://dev.socrata.com/docs/",
+        "tags": {"api", "etl", "governance", "data quality"},
+        "selection_rationale": "Offers diverse public datasets with API docs suited for data quality checks and stakeholder-facing reporting.",
+    },
+    {
+        "name": "Chicago Data Portal",
+        "url": "https://data.cityofchicago.org/",
+        "ingestion_doc_url": "https://dev.socrata.com/foundry/data.cityofchicago.org",
+        "tags": {"city", "public", "dashboard", "bi"},
+        "selection_rationale": "Good source for reproducible city analytics projects with clear ingestion endpoints and metadata.",
+    },
+]
+
+
+def _select_data_sources(intake: dict[str, Any], parsed_jobs: list[dict[str, Any]], limit: int = 3) -> list[dict[str, str]]:
+    preference_terms = {
+        str(x).strip().lower()
+        for x in (
+            (intake.get("preferences") or {}).get("stack") or []
+        )
+        if str(x).strip()
+    }
+    for key in ["tool_preferences", "stack_preferences"]:
+        for term in ((intake.get("preferences") or {}).get(key) or []):
+            if str(term).strip():
+                preference_terms.add(str(term).strip().lower())
+
+    job_terms = {
+        str(x).strip().lower()
+        for p in (parsed_jobs or [])
+        for bucket in ["skills", "tools", "domains"]
+        for x in ((p.get("signals") or {}).get(bucket) or [])
+        if str(x).strip()
+    }
+    terms = preference_terms | job_terms
+
+    scored: list[tuple[int, dict[str, Any]]] = []
+    for candidate in DATA_SOURCE_CANDIDATES:
+        tags = {str(t).strip().lower() for t in (candidate.get("tags") or set()) if str(t).strip()}
+        score = len(tags & terms)
+        scored.append((score, candidate))
+
+    scored.sort(key=lambda row: (-row[0], str(row[1].get("name") or "")))
+    chosen: list[dict[str, str]] = []
+    for _, candidate in scored[: max(1, int(limit))]:
+        chosen.append(
+            {
+                "name": str(candidate.get("name") or ""),
+                "url": str(candidate.get("url") or ""),
+                "ingestion_doc_url": str(candidate.get("ingestion_doc_url") or ""),
+                "selection_rationale": str(candidate.get("selection_rationale") or "Selected for relevance to target project outcomes."),
+            }
+        )
+    return chosen
+
+
 def build_sow_skeleton(
     intake: dict[str, Any],
     parsed_jobs: list[dict[str, Any]],
@@ -374,13 +471,7 @@ def build_sow_skeleton(
                 {"metric": "dashboard_adoption_rate", "target": ">=60%"},
             ],
             "domain_focus": all_domains,
-            "data_sources": [
-                {
-                    "name": "NYC TLC Trip Record Data",
-                    "url": "https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page",
-                    "ingestion_doc_url": "https://www.nyc.gov/assets/tlc/downloads/pdf/data_dictionary_trip_records_yellow.pdf",
-                }
-            ],
+            "data_sources": _select_data_sources(intake=intake, parsed_jobs=parsed_jobs),
         },
         "solution_architecture": {
             "medallion_plan": {
@@ -501,6 +592,8 @@ def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
             ingestion_doc_links += 1
         else:
             findings.append({"code": "INGESTION_DOC_LINK_MISSING", "message": f"data_sources[{i}].ingestion_doc_url must be a real link."})
+        if not str(ds.get("selection_rationale") or "").strip():
+            findings.append({"code": "DATA_SOURCE_RATIONALE_MISSING", "message": f"data_sources[{i}].selection_rationale is required."})
     if concrete_source_links < 1:
         findings.append({"code": "DATA_SOURCE_PUBLIC_LINK_REQUIRED", "message": "At least one concrete public data source URL is required."})
     if ingestion_doc_links < 1:
@@ -603,8 +696,13 @@ def auto_revise_sow_once(sow: dict[str, Any], findings: list[dict[str, str]]) ->
                 "name": "US Bureau of Labor Statistics",
                 "url": "https://www.bls.gov/data/",
                 "ingestion_doc_url": "https://www.bls.gov/developers/home.htm",
+                "selection_rationale": "Public API-backed labor data supports robust ingestion and KPI storytelling without private data dependencies.",
             }
         ]
+
+    for ds in (out.get("business_outcome") or {}).get("data_sources") or []:
+        if isinstance(ds, dict) and not str(ds.get("selection_rationale") or "").strip():
+            ds["selection_rationale"] = "Selected as a public, documentation-backed source aligned to the target business outcome and delivery timeline."
 
     if not out.get("milestones"):
         out["milestones"] = [

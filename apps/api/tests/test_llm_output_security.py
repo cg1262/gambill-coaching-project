@@ -174,18 +174,27 @@ def test_generated_sow_blocks_unsafe_urls_and_secret_text(monkeypatch):
     def _unsafe_skeleton(intake, parsed_jobs):
         return {
             "schema_version": "0.2",
-            "project_title": "x",
+            "project_title": "x api_key=title-secret",
+            "project_story": "project story bearer aaaa.bbbb.cccc",
             "candidate_profile": {},
-            "business_outcome": {"problem_statement": "ok"},
+            "business_outcome": {"problem_statement": "ok token=problem-secret"},
             "solution_architecture": {"medallion_plan": {"bronze": "b", "silver": "s", "gold": "g"}},
             "milestones": [
-                {"name": "M1", "duration_weeks": 1, "deliverables": ["d1"], "milestone_tags": ["discovery"]},
+                {
+                    "name": "M1 token=ms1",
+                    "duration_weeks": 1,
+                    "deliverables": ["d1", "api_key=deliverable-secret"],
+                    "milestone_tags": ["discovery"],
+                    "execution_plan": "execute with token=plan-secret",
+                    "expected_deliverable": "deliver with password=hunter2",
+                    "business_why": "why bearer aaa.bbb.ccc",
+                },
                 {"name": "M2", "duration_weeks": 1, "deliverables": ["d2"], "milestone_tags": ["bronze"]},
                 {"name": "M3", "duration_weeks": 1, "deliverables": ["d3"], "milestone_tags": ["gold"]},
             ],
             "roi_dashboard_requirements": {"required_dimensions": ["time"], "required_measures": ["cost_savings"]},
             "resource_plan": {
-                "required": [{"title": "token=supersecret", "url": "javascript:alert(1)", "reason": "api_key=hunter2"}],
+                "required": [{"title": "token=supersecret", "url": "http://127.0.0.1/private", "reason": "api_key=hunter2"}],
                 "recommended": [],
                 "optional": [],
                 "affiliate_disclosure": "Bearer abc.def.ghi",
@@ -211,10 +220,14 @@ def test_generated_sow_blocks_unsafe_urls_and_secret_text(monkeypatch):
         body = res.json()
 
         serialized = str(body).lower()
-        assert "javascript:" not in serialized
+        assert "127.0.0.1/private" not in serialized
         assert "data:text/html" not in serialized
         assert "supersecret" not in serialized
         assert "hunter2" not in serialized
+        assert "title-secret" not in serialized
+        assert "problem-secret" not in serialized
+        assert "plan-secret" not in serialized
+        assert "deliverable-secret" not in serialized
 
         urls = []
         for bucket in ("required", "recommended", "optional"):
