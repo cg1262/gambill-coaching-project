@@ -1,9 +1,16 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type CoachingIntakeSubmission, type CoachingIntakeSubmissionDetail } from "../../lib/api";
+import { ApiError, api, type CoachingIntakeSubmission, type CoachingIntakeSubmissionDetail } from "../../lib/api";
 import { trackConversionEvent } from "../../lib/conversion";
+import {
+  DEFAULT_RATE_LIMIT_UI_CONFIG,
+  type RateLimitUiConfig,
+  loadRateLimitUiConfig,
+  saveRateLimitUiConfig,
+} from "../../lib/rateLimitConfig";
 
 type TimelineEvent = { id: string; at?: string; label: string; detail?: string; tone?: "info" | "success" | "warning" | "error" };
 
@@ -310,8 +317,24 @@ function isUnauthorizedError(message?: string): boolean {
   return text.includes("401") || text.includes("unauthorized") || text.includes("invalid token") || text.includes("expired");
 }
 
-function uiErrorMessage(message?: string): string {
+function formatRetryWindow(seconds?: number): string {
+  if (!seconds || seconds <= 0) return "about 30 seconds";
+  if (seconds < 60) return `${seconds} seconds`;
+  const mins = Math.ceil(seconds / 60);
+  return mins === 1 ? "about 1 minute" : `about ${mins} minutes`;
+}
+
+function isRateLimitError(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.status === 429;
+}
+
+function uiErrorMessage(error: unknown, rateLimitConfig: RateLimitUiConfig): string {
+  const message = error instanceof Error ? error.message : String(error || "");
   if (isUnauthorizedError(message)) return "Your session expired. Please sign in again.";
+  if (isRateLimitError(error)) {
+    const waitFor = error.retryAfterSeconds ?? rateLimitConfig.defaultRetrySeconds;
+    return `You have hit a temporary request limit. Wait ${formatRetryWindow(waitFor)}, then retry.`;
+  }
   return "We hit a request issue. Please retry.";
 }
 
@@ -373,6 +396,9 @@ type CoachingProjectWorkbenchProps = {
 };
 
 export default function CoachingProjectWorkbench({ mode = "all", projectId }: CoachingProjectWorkbenchProps) {
+  const searchParams = useSearchParams();
+  const showInternalAdminPanel = searchParams.get("internal") === "1" || searchParams.get("admin") === "1";
+
   const [authState, setAuthState] = useState<CoachingAuthState>("signedOut");
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus>("unknown");
   const [planTier] = useState<PlanTier>("starter");
@@ -411,10 +437,16 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
     state: "idle",
   });
   const [sessionBanner, setSessionBanner] = useState<string | null>(null);
+  const [rateLimitConfig, setRateLimitConfig] = useState<RateLimitUiConfig>(DEFAULT_RATE_LIMIT_UI_CONFIG);
+  const [rateLimitConfigSaved, setRateLimitConfigSaved] = useState<string>("");
 
   const submissionsLoadRef = useRef(0);
   const submissionDetailReqRef = useRef(0);
   const readinessReqRef = useRef(0);
+
+  useEffect(() => {
+    setRateLimitConfig(loadRateLimitUiConfig());
+  }, []);
 
   const completion = useMemo(() => ({
     resume: Boolean(draft.resumeFileName.trim()),
@@ -445,12 +477,16 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
     clearAuthStaleState();
   }
 
-  function handleProtectedApiError(message?: string): string {
-    const msg = message || "Request failed";
+  function handleProtectedApiError(error: unknown): string {
+    const msg = error instanceof Error ? error.message : "Request failed";
     if (isUnauthorizedError(msg)) {
       setSessionBanner("Session expired. Please sign back in to continue.");
     }
-    return uiErrorMessage(msg);
+    if (isRateLimitError(error)) {
+      const waitFor = error.retryAfterSeconds ?? rateLimitConfig.defaultRetrySeconds;
+      setSessionBanner(`Rate limit reached. Please wait ${formatRetryWindow(waitFor)} before retrying.`);
+    }
+    return uiErrorMessage(error, rateLimitConfig);
   }
 
   useEffect(() => {
@@ -541,8 +577,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       markAuthenticatedApiSuccess();
     } catch (e: any) {
       if (reqId !== submissionsLoadRef.current) return;
-      const msg = e?.message || "Failed to load submissions";
-      setReviewError(handleProtectedApiError(msg));
+      setReviewError(handleProtectedApiError(e));
     } finally {
       if (reqId === submissionsLoadRef.current) {
         setReviewLoading(false);
@@ -567,8 +602,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       markAuthenticatedApiSuccess();
     } catch (e: any) {
       if (reqId !== readinessReqRef.current) return;
-      const msg = e?.message || "Readiness check failed.";
-      setReadinessState({ loading: false, error: handleProtectedApiError(msg) });
+      setReadinessState({ loading: false, error: handleProtectedApiError(e) });
     }
   }
 
@@ -605,8 +639,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       }
       await loadSubmissions();
     } catch (e: any) {
-      const msg = e?.message || "Failed to save review.";
-      setReviewSaveState({ saving: false, error: handleProtectedApiError(msg) });
+      setReviewSaveState({ saving: false, error: handleProtectedApiError(e) });
     }
   }
 
@@ -634,8 +667,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       setQuickActionState({ running: false, message: `Status updated to ${action}.` });
       await loadSubmissions();
     } catch (e: any) {
-      const msg = e?.message || "Quick action failed.";
-      setQuickActionState({ running: false, error: handleProtectedApiError(msg) });
+      setQuickActionState({ running: false, error: handleProtectedApiError(e) });
     }
   }
 
@@ -662,8 +694,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       await openSubmission(selectedSubmissionId);
       await loadSubmissions();
     } catch (e: any) {
-      const msg = e?.message || "Approve/send failed.";
-      setQuickActionState({ running: false, error: handleProtectedApiError(msg) });
+      setQuickActionState({ running: false, error: handleProtectedApiError(e) });
     }
   }
 
@@ -789,8 +820,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       setStageState((prev) => ({ ...prev, intakeParsed: true }));
       await loadSubmissions();
     } catch (e: any) {
-      const msg = e?.message || "Unable to submit intake.";
-      setGenerationState({ running: false, message: handleProtectedApiError(msg) });
+      setGenerationState({ running: false, message: handleProtectedApiError(e) });
     }
   }
 
@@ -826,7 +856,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       trackConversionEvent({ name: "sow_generate_completed", workspaceId: draft.workspaceId, submissionId: currentSubmissionId, source: fallbackUsed ? "fallback" : "llm", details: { valid: Boolean(out.valid), score: out.quality?.score } });
     } catch (e: any) {
       const msg = e?.message || "Generation failed.";
-      setGenerationState({ running: false, message: msg.includes("403") ? "Upgrade required: active subscription needed for generation." : handleProtectedApiError(msg) });
+      setGenerationState({ running: false, message: msg.includes("403") ? "Upgrade required: active subscription needed for generation." : handleProtectedApiError(e) });
     }
   }
 
@@ -881,9 +911,8 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       }
     } catch (e: any) {
       if (reqId !== submissionDetailReqRef.current) return;
-      const msg = e?.message || "Unable to load submission details.";
       setSelectedSubmission(null);
-      setSubmissionDetailError(handleProtectedApiError(msg));
+      setSubmissionDetailError(handleProtectedApiError(e));
     } finally {
       if (reqId === submissionDetailReqRef.current) {
         setSubmissionDetailLoading(false);
@@ -1055,6 +1084,58 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
             <button onClick={loadSubmissions}>Retry queue load</button>
             <button onClick={loadReadiness}>Retry readiness check</button>
             <button onClick={() => generateSow(false)} disabled={generationState.running}>Retry generation</button>
+          </div>
+          <div style={{ fontSize: 12, marginTop: 8 }}>
+            Rate-limit fallback: wait <strong>{rateLimitConfig.defaultRetrySeconds}s</strong> when no Retry-After header is returned.
+          </div>
+          <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 4 }}>{rateLimitConfig.helperMessage}</div>
+        </div>
+      )}
+
+      {showInternalAdminPanel && (
+        <div className="card" style={{ border: "1px dashed #94a3b8", marginBottom: 10 }}>
+          <strong style={{ fontSize: 12 }}>Internal Admin: Rate-Limit UX Config (local scaffold)</strong>
+          <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 4 }}>
+            This panel is intentionally hidden behind <code>?internal=1</code> or <code>?admin=1</code>.
+          </div>
+          <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+            <label style={{ fontSize: 12 }}>
+              Default retry seconds
+              <input
+                type="number"
+                min={1}
+                value={rateLimitConfig.defaultRetrySeconds}
+                onChange={(e) => setRateLimitConfig((prev) => ({ ...prev, defaultRetrySeconds: Math.max(1, Number(e.target.value || 1)) }))}
+              />
+            </label>
+            <label style={{ fontSize: 12 }}>
+              Helper message
+              <textarea
+                style={{ width: "100%", minHeight: 60 }}
+                value={rateLimitConfig.helperMessage}
+                onChange={(e) => setRateLimitConfig((prev) => ({ ...prev, helperMessage: e.target.value }))}
+              />
+            </label>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                onClick={() => {
+                  saveRateLimitUiConfig(rateLimitConfig);
+                  setRateLimitConfigSaved("Saved locally for this browser.");
+                }}
+              >
+                Save local config
+              </button>
+              <button
+                onClick={() => {
+                  setRateLimitConfig(DEFAULT_RATE_LIMIT_UI_CONFIG);
+                  saveRateLimitUiConfig(DEFAULT_RATE_LIMIT_UI_CONFIG);
+                  setRateLimitConfigSaved("Reset to defaults.");
+                }}
+              >
+                Reset defaults
+              </button>
+              {rateLimitConfigSaved && <span className="badge success">{rateLimitConfigSaved}</span>}
+            </div>
           </div>
         </div>
       )}

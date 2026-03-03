@@ -247,6 +247,39 @@ export interface CoachingOpenSubmissionsResult {
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
 let AUTH_TOKEN = "";
 
+export class ApiError extends Error {
+  status?: number;
+  path: string;
+  retryAfterSeconds?: number;
+
+  constructor(message: string, path: string, opts?: { status?: number; retryAfterSeconds?: number }) {
+    super(message);
+    this.name = "ApiError";
+    this.path = path;
+    this.status = opts?.status;
+    this.retryAfterSeconds = opts?.retryAfterSeconds;
+  }
+}
+
+function parseRetryAfterSeconds(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const asNumber = Number(value);
+  if (Number.isFinite(asNumber) && asNumber > 0) return Math.ceil(asNumber);
+
+  const asDateMs = Date.parse(value);
+  if (Number.isNaN(asDateMs)) return undefined;
+  const seconds = Math.ceil((asDateMs - Date.now()) / 1000);
+  return seconds > 0 ? seconds : undefined;
+}
+
+async function parseErrorPayload(res: Response): Promise<any | null> {
+  try {
+    return await res.clone().json();
+  } catch {
+    return null;
+  }
+}
+
 export function setAuthToken(token: string) {
   AUTH_TOKEN = token;
 }
@@ -290,12 +323,20 @@ async function getJson<T>(path: string): Promise<T> {
       headers: AUTH_TOKEN ? { Authorization: `Bearer ${AUTH_TOKEN}` } : undefined,
     });
   } catch {
-    throw new Error(`Failed to reach API at ${API_BASE}. Start backend (uvicorn) and retry.`);
+    throw new ApiError(`Failed to reach API at ${API_BASE}. Start backend (uvicorn) and retry.`, path);
   }
 
   if (!res.ok) {
-    if (res.status === 401) throw new Error("Session expired (401)");
-    throw new Error(`${path} failed (${res.status})`);
+    const payload = await parseErrorPayload(res);
+    const payloadMessage = String(payload?.detail || payload?.message || "").trim();
+    if (res.status === 401) throw new ApiError(payloadMessage || "Session expired (401)", path, { status: 401 });
+    if (res.status === 429) {
+      throw new ApiError(payloadMessage || "You are doing that too quickly. Please wait and retry.", path, {
+        status: 429,
+        retryAfterSeconds: parseRetryAfterSeconds(res.headers.get("retry-after")),
+      });
+    }
+    throw new ApiError(payloadMessage || `${path} failed (${res.status})`, path, { status: res.status });
   }
   return (await res.json()) as T;
 }
@@ -312,12 +353,20 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
       body: JSON.stringify(body),
     });
   } catch {
-    throw new Error(`Failed to reach API at ${API_BASE}. Start backend (uvicorn) and retry.`);
+    throw new ApiError(`Failed to reach API at ${API_BASE}. Start backend (uvicorn) and retry.`, path);
   }
 
   if (!res.ok) {
-    if (res.status === 401) throw new Error("Session expired (401)");
-    throw new Error(`${path} failed (${res.status})`);
+    const payload = await parseErrorPayload(res);
+    const payloadMessage = String(payload?.detail || payload?.message || "").trim();
+    if (res.status === 401) throw new ApiError(payloadMessage || "Session expired (401)", path, { status: 401 });
+    if (res.status === 429) {
+      throw new ApiError(payloadMessage || "You are doing that too quickly. Please wait and retry.", path, {
+        status: 429,
+        retryAfterSeconds: parseRetryAfterSeconds(res.headers.get("retry-after")),
+      });
+    }
+    throw new ApiError(payloadMessage || `${path} failed (${res.status})`, path, { status: res.status });
   }
   return (await res.json()) as T;
 }

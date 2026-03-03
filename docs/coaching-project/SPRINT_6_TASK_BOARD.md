@@ -45,34 +45,21 @@ Sprint Goal: Pilot launch + conversion instrumentation + post-launch learning lo
 ## Checkpoint Update (2026-03-03 - Sprint 6 Frontend Execution)
 
 ### Done
-- Hardened pilot launch/member access UX in `CoachingProjectWorkbench`:
-  - clearer subscription-required upgrade messaging and CTA path.
-  - launch-step instrumentation and launch/access state view tracking.
-  - stale issue response panel with explicit retry + fallback guidance.
-- Implemented frontend conversion instrumentation wiring (`apps/web/src/lib/conversion.ts`) and event emits for:
-  - launch flow view + step advance
-  - upgrade CTA viewed/clicked
-  - intake submit
-  - generate/regenerate clicked + generation complete
-  - export clicked/completed
-  - mentoring CTA click
-- Finalized interview-ready artifact UX and export parity:
-  - added **Interview Artifacts** tab in output viewer.
-  - surfaced STAR stories, portfolio checklist, recruiter requirement mapping.
-  - included interview artifacts in Markdown export output.
-- Implemented coach feedback tagging UI for review workflow:
-  - added structured tag chips (`scope_clarity`, `business_alignment`, `architecture_depth`, `storytelling`, `portfolio_gap`, `execution_risk`).
-  - tags are serialized into `coach_notes` (`[tags: ...]`) for backend quality-loop ingestion compatibility.
-- Improved live issue response UX states:
-  - centralized issue response panel with retry actions (queue/readiness/generation) and fallback instructions.
+- Standardized web runtime contract to Node 20 LTS (pinned 20.11.1) with docs/runtime alignment:
+  - `.nvmrc`, `package.json engines`, and `apps/web/README.md` now explicitly aligned to Node 20 LTS + npm 10.
+- Added admin-ready rate-limit UX scaffolding in `CoachingProjectWorkbench`:
+  - hidden internal panel (`?internal=1` / `?admin=1`) for editable fallback retry seconds + helper messaging.
+  - local persistence via `localStorage` (`src/lib/rateLimitConfig.ts`) as bridge until API-backed admin settings exist.
+- Added 429-aware API error handling (`src/lib/api.ts`):
+  - structured `ApiError` with status + parsed `Retry-After` support.
+  - surfaced actionable retry guidance in UI with wait-window messaging and explicit retry actions.
 
 ### Validation
-- `npm run typecheck` (apps/web) ❌
-  - fails in pre-existing `reactflow` type import surface (`TS2614` across `ModelCanvas.tsx`, `ErdEdge.tsx`, `TableNode.tsx`, and dependent libs).
+- `npm run typecheck` (apps/web) ✅ pass.
 - `npm run build` (apps/web) ❌
-  - fails with `Cannot find module 'styled-jsx/package.json'` from Next require-hook (node_modules integrity issue).
+  - fails with persistent filesystem issue: `EISDIR ... node_modules/next/dist/pages/_app.js`.
 - `npm run build:clean` (apps/web) ❌
-  - rerun confirms same `styled-jsx` missing module failure after clean script.
+  - clean flow runs module recovery (`npm ci`) and retries once, but still fails with `EISDIR ... src/app/project/[id]/page.tsx`.
 
 ### Risks
 - Conversion instrumentation is currently client-local (localStorage + console) and not yet posted to backend analytics endpoint.
