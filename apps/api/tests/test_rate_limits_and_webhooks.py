@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 import main
 from auth import Session, get_current_session
 from main import app
-from rate_limits import RATE_LIMIT_STORE
+from rate_limits import RATE_LIMIT_POLICIES_DEFAULT, RATE_LIMIT_STORE
 
 
 def _override_session(role: str = "editor", username: str = "tester"):
@@ -19,7 +19,27 @@ def _override_session(role: str = "editor", username: str = "tester"):
     return _inner
 
 
+def _reset_policies_to_defaults():
+    payload = {
+        "policies": {
+            name: {
+                "rules": [
+                    {
+                        "limit": rule.limit,
+                        "window_seconds": rule.window_seconds,
+                        "burst": rule.burst,
+                    }
+                    for rule in policy.rules
+                ]
+            }
+            for name, policy in RATE_LIMIT_POLICIES_DEFAULT.items()
+        }
+    }
+    main.rate_limit_policy_update(payload)
+
+
 def setup_function():
+    _reset_policies_to_defaults()
     RATE_LIMIT_STORE.reset()
     app.dependency_overrides = {}
 

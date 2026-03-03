@@ -4,7 +4,7 @@ Use this as a go/no-go gate before enabling pilot users.
 
 ## Current Gate Status (2026-03-03)
 - **Security pilot gate:** CONDITIONAL GO
-- **Why conditional:** Sprint 6 security pass confirms auth/session denial contract stability, instrumentation/event payload sanitization, generated-output URL safety, diagnostics secrecy, subscription replay safety, and new webhook signature + route rate-limit regression coverage; pilot still blocked by unresolved deterministic web clean-build failure (`EISDIR` on `node_modules/next/dist/pages/_app.js`) and pending production alerting/ops hardening.
+- **Why conditional:** Sprint 7 security pass confirms auth/session denial contract stability, instrumentation/event payload sanitization, generated-output URL safety, diagnostics secrecy, subscription replay safety, webhook signature/timestamp rejection behavior, and route-level throttling now covering auth + subscription status/sync/webhook surfaces; pilot remains blocked by unresolved deterministic web clean-build failure (`EISDIR` on `node_modules/next/dist/pages/_app.js`) and pending production alerting for repeated invalid webhook signatures.
 
 ## 1) Auth + Subscription Enforcement
 - [x] Verify all coaching generation routes require authenticated session + allowed role (`admin`/`editor`).
@@ -22,9 +22,10 @@ Use this as a go/no-go gate before enabling pilot users.
 - [ ] Alert on repeated invalid signature attempts.
 
 ## 4) Abuse + Reliability Controls
-- [~] Apply route-level rate limits for `/auth/*` and subscription sync/status endpoints. *(Implemented for `/auth/*`, generation, review actions, and exports; subscription status endpoint-specific policy remains follow-up.)*
+- [x] Apply route-level rate limits for `/auth/*` and subscription sync/status/webhook endpoints. *(Enforced via `subscription` policy and generic 429 contract regressions.)*
 - [ ] Confirm token/session revocation works immediately for protected routes.
 - [ ] Confirm safe failure behavior when Lakebase/provider dependencies are unavailable.
+- [x] Validate override model auditability for throttling policy changes. *(Admin snapshot/update endpoints: `GET|PUT /admin/security/rate-limits`; env override knobs documented in `apps/api/rate_limits.py`.)*
 
 ## 5) LLM Integration + Output Safety
 - [x] Ensure LLM API key is loaded only from env/secret manager and never returned in API responses.
@@ -39,7 +40,7 @@ Use this as a go/no-go gate before enabling pilot users.
 
 ### Evidence Commands (2026-03-03 Security Pilot Gate)
 - `python -m pytest tests/test_auth_contract_security.py tests/test_llm_output_security.py tests/test_security_sprint2.py tests/test_coaching_security_access.py tests/test_coaching_generation_guardrails.py tests/test_coaching_subscription.py` → **52 passed, 1 warning**
-- `python -m pytest -q tests/test_security_rate_limit_webhook.py tests/test_coaching_subscription.py` → **8 passed, 1 warning**
+- `python -m pytest -q tests/test_security_rate_limit_webhook.py tests/test_rate_limits_and_webhooks.py tests/test_coaching_subscription.py` → **13 passed, 1 warning**
 - `python -m compileall -q .` → **pass**
 - `npm run typecheck` → **pass**
 - `npm run build:clean` → **blocked**: persistent `EISDIR` on `node_modules/next/dist/pages/_app.js` after scripted `npm ci` retry path in `build-clean.ps1`

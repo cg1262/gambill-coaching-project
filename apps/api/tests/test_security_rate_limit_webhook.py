@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 import main
 from auth import Session, get_current_session
 from main import app
+from rate_limits import RATE_LIMIT_POLICIES_DEFAULT, RATE_LIMIT_STORE
 
 
 def _override_session(role: str = "editor", username: str = "security-tester"):
@@ -39,6 +40,35 @@ def _sign_sync_payload(payload: dict, ts: int, secret: str) -> str:
     return main.hmac.new(secret.encode("utf-8"), f"{ts}.".encode("utf-8") + body_bytes, main.hashlib.sha256).hexdigest()
 
 
+def _webhook_sig(secret: str, body: bytes, ts: int) -> str:
+    return main.hmac.new(secret.encode("utf-8"), f"{ts}.".encode("utf-8") + body, main.hashlib.sha256).hexdigest()
+
+
+def _reset_policies_to_defaults():
+    payload = {
+        "policies": {
+            name: {
+                "rules": [
+                    {
+                        "limit": rule.limit,
+                        "window_seconds": rule.window_seconds,
+                        "burst": rule.burst,
+                    }
+                    for rule in policy.rules
+                ]
+            }
+            for name, policy in RATE_LIMIT_POLICIES_DEFAULT.items()
+        }
+    }
+    main.rate_limit_policy_update(payload)
+
+
+def setup_function():
+    _reset_policies_to_defaults()
+    RATE_LIMIT_STORE.reset()
+    app.dependency_overrides = {}
+
+
 def test_auth_login_rate_limit_returns_generic_payload(monkeypatch):
     _set_limit("auth", limit=1)
     monkeypatch.setattr(main, "lakebase_is_configured", lambda: True)
@@ -62,6 +92,7 @@ def test_generate_review_export_rate_limits_are_generic(monkeypatch):
     monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: {"submission_id": submission_id, "workspace_id": "ws-1", "applicant_email": "member@example.com", "applicant_name": "User", "preferences_json": {}, "resume_text": "", "self_assessment_text": ""})
     monkeypatch.setattr(main, "generate_sow_with_llm", lambda intake, parsed_jobs: {"ok": True, "sow": main.build_sow_skeleton(intake, parsed_jobs), "meta": {}})
     monkeypatch.setattr(main, "save_coaching_generation_run", lambda **kwargs: None)
+    monkeypatch.setattr(main, "list_coaching_generation_runs", lambda submission_id, limit=1: [])
     monkeypatch.setattr(main, "save_coaching_conversion_event", lambda **kwargs: None)
     monkeypatch.setattr(main, "list_recent_coaching_feedback_events", lambda submission_id, limit=3: [])
     monkeypatch.setattr(main, "save_coaching_feedback_event", lambda **kwargs: None)
@@ -135,6 +166,102 @@ def test_subscription_webhook_signature_valid_invalid_missing_replay_and_window(
     assert calls["event"] == 1
     assert calls["account"] == 1
     app.dependency_overrides = {}
+
+
+def test_subscription_status_and_sync_rate_limits_are_generic(monkeypatch):
+    app.dependency_overrides[get_current_session] = _override_session("editor", "coach-admin")
+    monkeypatch.setattr(main, "get_coaching_account_subscription", lambda **kwargs: None)
+
+    _set_limit("subscription", limit=1)
+    client = TestClient(app)
+
+    ok_status = client.get("/coaching/subscription/status", params={"workspace_id": "ws-1", "email": "member@example.com"})
+    assert ok_status.status_code == 200
+
+    denied_status = client.get("/coaching/subscription/status", params={"workspace_id": "ws-1", "email": "member@example.com"})
+    assert denied_status.status_code == 429
+    denied_status_body = denied_status.json()
+    assert denied_status_body["code"] == "rate_limited"
+    assert denied_status_body["subscription_required"] is False
+    assert "policy" not in denied_status_body
+    assert "rule" not in denied_status_body
+    assert "retry_after_seconds" not in denied_status_body
+
+    RATE_LIMIT_STORE.reset()
+    _set_limit("subscription", limit=1)
+    monkeypatch.setenv("COACHING_WEBHOOK_SECRET", "whsec_test_secret")
+    monkeypatch.setattr(main, "save_coaching_subscription_event", lambda **kwargs: None)
+    monkeypatch.setattr(main, "upsert_coaching_account_subscription", lambda **kwargs: None)
+    monkeypatch.setattr(main, "get_coaching_subscription_event", lambda event_id: None)
+
+    ts = int(time.time())
+    sync_payload = {
+        "workspace_id": "ws-1",
+        "provider": "stripe",
+        "event_type": "customer.subscription.updated",
+        "email": "test@example.com",
+        "plan_tier": "core",
+        "subscription_status": "active",
+        "raw_event": {"id": "evt_sync_rl_1"},
+    }
+    sig = _sign_sync_payload(sync_payload, ts, "whsec_test_secret")
+
+    ok_sync = client.post("/coaching/subscription/sync", json={**sync_payload, "webhook_timestamp": ts, "webhook_signature": sig})
+    assert ok_sync.status_code == 200
+
+    denied_sync = client.post("/coaching/subscription/sync", json={**sync_payload, "raw_event": {"id": "evt_sync_rl_2"}, "webhook_timestamp": ts, "webhook_signature": _sign_sync_payload({**sync_payload, "raw_event": {"id": "evt_sync_rl_2"}}, ts, "whsec_test_secret")})
+    assert denied_sync.status_code == 429
+    denied_sync_body = denied_sync.json()
+    assert denied_sync_body["code"] == "rate_limited"
+    assert denied_sync_body["subscription_required"] is False
+    assert "policy" not in denied_sync_body
+    assert "rule" not in denied_sync_body
+    assert "retry_after_seconds" not in denied_sync_body
+
+    app.dependency_overrides = {}
+
+
+def test_subscription_webhook_timestamp_and_signature_checks(monkeypatch):
+    monkeypatch.setenv("COACHING_WEBHOOK_SECRET", "whsec_test")
+    monkeypatch.setattr(main, "save_coaching_subscription_event", lambda **kwargs: None)
+    monkeypatch.setattr(main, "upsert_coaching_account_subscription", lambda **kwargs: None)
+    monkeypatch.setattr(main, "get_coaching_subscription_event", lambda event_id: None)
+
+    client = TestClient(app)
+    payload = {
+        "id": "evt_wh_1",
+        "workspace_id": "ws-1",
+        "provider": "squarespace",
+        "event_type": "subscription.updated",
+        "email": "member@example.com",
+        "plan_tier": "core",
+        "subscription_status": "active",
+    }
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    now_ts = int(time.time())
+
+    stale_ts = now_ts - 3600
+    stale_headers = {
+        "x-webhook-provider": "squarespace",
+        "x-webhook-timestamp": str(stale_ts),
+        "x-webhook-signature": _webhook_sig("whsec_test", body, stale_ts),
+        "content-type": "application/json",
+    }
+    stale = client.post("/coaching/subscription/webhook", content=body, headers=stale_headers)
+    assert stale.status_code == 403
+    assert stale.json()["code"] == "forbidden"
+
+    RATE_LIMIT_STORE.reset()
+
+    bad_headers = {
+        "x-webhook-provider": "squarespace",
+        "x-webhook-timestamp": str(now_ts),
+        "x-webhook-signature": "bad",
+        "content-type": "application/json",
+    }
+    bad = client.post("/coaching/subscription/webhook", content=body, headers=bad_headers)
+    assert bad.status_code == 403
+    assert bad.json()["code"] == "forbidden"
 
 
 def test_no_sensitive_leak_in_webhook_rejection_logs(monkeypatch, caplog):
