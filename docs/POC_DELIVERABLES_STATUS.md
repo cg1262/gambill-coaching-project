@@ -3,6 +3,35 @@
 Last Updated: 2026-03-02
 Owner: ERD Program Team
 
+## Checkpoint Update (2026-03-02 - Frontend Urgent UX Fix: Session + Readiness + Assessment Redesign)
+
+### Done
+- Fixed sticky session-expired UX state in `CoachingProjectWorkbench`:
+  - introduced centralized stale-state clear helper (`clearAuthStaleState`) to clear session banner + readiness auth error.
+  - now clears auth error state after successful authenticated API calls (submissions, readiness, intake submit, generation success, submission detail load, review save).
+  - now also clears state immediately after successful simulated login/subscription activation paths.
+- Fixed readiness panel stale-expired behavior:
+  - readiness success path now explicitly resets prior error state.
+  - successful authenticated calls elsewhere also clear stale readiness auth errors.
+- Simplified visible plan/tier clutter while preserving backend feature-gating logic:
+  - removed verbose tier pricing/inclusion card and intake tier badges.
+  - retained hidden gating behavior (`planTier` state + `canAccessReviewQueue`/`canBookMentoring`) so coach-review/mentoring entitlements still behave correctly.
+- Redesigned self-assessment intake into a robust multi-section form aligned to coaching assessment style:
+  - Career goals
+  - Background + delivery examples
+  - Skills confidence (SQL/modeling/orchestration/stakeholder)
+  - Tools/platform exposure
+  - Portfolio/interview readiness
+  - Constraints/support
+  - updated structured serialization (`buildStructuredAssessment`) to preserve sectioned output in `self_assessment_text`.
+
+### Validation
+- `npm run typecheck` (apps/web) ✅
+
+### Risks / Follow-ups
+- `planTier` remains scaffolded local state (default starter); if product wants visible tier management again, reintroduce as compact controls tied to real subscription backend payload.
+- Structured assessment is still persisted as formatted text for compatibility; can migrate to backend-native object payload once schema contract is finalized.
+
 ## Checkpoint Update (2026-03-02 - Frontend Feedback Pass: Intake UX + Session Handling)
 
 ### Done

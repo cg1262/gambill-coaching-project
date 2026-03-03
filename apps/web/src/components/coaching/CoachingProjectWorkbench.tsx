@@ -22,11 +22,20 @@ type IntakeDraft = {
   selfAssessment: string;
   questionnaire: {
     careerGoal: string;
-    strengths: string;
-    growthAreas: string;
-    confidenceLevel: string;
+    roleTimeline: string;
+    currentBackground: string;
+    deliveryExamples: string;
+    confidenceSql: string;
+    confidenceModeling: string;
+    confidenceOrchestration: string;
+    confidenceStakeholder: string;
+    primaryPlatforms: string;
+    primaryTools: string;
+    portfolioReadiness: string;
+    interviewReadiness: string;
+    constraints: string;
+    supportNeeded: string;
     weeklyHours: string;
-    portfolioStatus: string;
   };
   jobLinks: string[];
   selectedPlatforms: string[];
@@ -88,11 +97,20 @@ const DEFAULT_DRAFT: IntakeDraft = {
   selfAssessment: "",
   questionnaire: {
     careerGoal: "",
-    strengths: "",
-    growthAreas: "",
-    confidenceLevel: "Intermediate",
+    roleTimeline: "",
+    currentBackground: "",
+    deliveryExamples: "",
+    confidenceSql: "Intermediate",
+    confidenceModeling: "Intermediate",
+    confidenceOrchestration: "Intermediate",
+    confidenceStakeholder: "Intermediate",
+    primaryPlatforms: "",
+    primaryTools: "",
+    portfolioReadiness: "In progress",
+    interviewReadiness: "Practicing",
+    constraints: "",
+    supportNeeded: "",
     weeklyHours: "5-8",
-    portfolioStatus: "In progress",
   },
   jobLinks: Array.from({ length: 8 }, () => ""),
   selectedPlatforms: ["Databricks"],
@@ -100,26 +118,6 @@ const DEFAULT_DRAFT: IntakeDraft = {
   timelineWeeks: "8",
 };
 
-const PLAN_DETAILS: Record<PlanTier, { label: string; monthly: string; upgradeCta: string; includes: string[] }> = {
-  starter: {
-    label: "Starter",
-    monthly: "$49/mo",
-    upgradeCta: "Upgrade to Pro",
-    includes: ["Intake + scaffold", "Resource package export"],
-  },
-  pro: {
-    label: "Pro",
-    monthly: "$149/mo",
-    upgradeCta: "Upgrade to Elite Mentoring",
-    includes: ["Everything in Starter", "Coach review queue", "Priority feedback"],
-  },
-  elite: {
-    label: "Elite Mentoring",
-    monthly: "$399/mo",
-    upgradeCta: "Top tier active",
-    includes: ["Everything in Pro", "1:1 mentoring sessions", "Interview narrative support"],
-  },
-};
 
 function buildProjectScaffold(draft: IntakeDraft): ProjectScaffold {
   const parsedJobLinks = draft.jobLinks.map((line) => line.trim()).filter(Boolean);
@@ -271,19 +269,39 @@ function uiErrorMessage(message?: string): string {
 function buildStructuredAssessment(draft: IntakeDraft): string {
   const q = draft.questionnaire;
   return [
-    `Career Goal: ${q.careerGoal || ""}`,
-    `Current Strengths: ${q.strengths || ""}`,
-    `Growth Areas: ${q.growthAreas || ""}`,
-    `Confidence Level: ${q.confidenceLevel || ""}`,
-    `Weekly Commitment: ${q.weeklyHours || ""}`,
-    `Portfolio Status: ${q.portfolioStatus || ""}`,
+    "Career Goals",
+    `- Goal: ${q.careerGoal || ""}`,
+    `- Target timeline: ${q.roleTimeline || ""}`,
+    "",
+    "Background + Experience",
+    `- Current background: ${q.currentBackground || ""}`,
+    `- Delivery examples: ${q.deliveryExamples || ""}`,
+    "",
+    "Skills Confidence",
+    `- SQL: ${q.confidenceSql || ""}`,
+    `- Data modeling: ${q.confidenceModeling || ""}`,
+    `- Orchestration: ${q.confidenceOrchestration || ""}`,
+    `- Stakeholder communication: ${q.confidenceStakeholder || ""}`,
+    "",
+    "Tools + Platform Exposure",
+    `- Platforms used: ${q.primaryPlatforms || ""}`,
+    `- Tools used: ${q.primaryTools || ""}`,
+    "",
+    "Portfolio + Interview Readiness",
+    `- Portfolio: ${q.portfolioReadiness || ""}`,
+    `- Interview readiness: ${q.interviewReadiness || ""}`,
+    "",
+    "Constraints + Support",
+    `- Weekly commitment: ${q.weeklyHours || ""}`,
+    `- Constraints: ${q.constraints || ""}`,
+    `- Support needed: ${q.supportNeeded || ""}`,
   ].join("\n");
 }
 
 export default function CoachingProjectWorkbench() {
   const [authState, setAuthState] = useState<CoachingAuthState>("signedOut");
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus>("unknown");
-  const [planTier, setPlanTier] = useState<PlanTier>("starter");
+  const [planTier] = useState<PlanTier>("starter");
   const [memberLaunchState, setMemberLaunchState] = useState<MemberLaunchState>("memberHome");
   const [acceptedLaunchTerms, setAcceptedLaunchTerms] = useState(false);
 
@@ -320,7 +338,7 @@ export default function CoachingProjectWorkbench() {
 
   const completion = useMemo(() => ({
     resume: Boolean(draft.resumeFileName.trim()),
-    selfAssessment: Boolean(draft.questionnaire.careerGoal.trim()) && Boolean(draft.questionnaire.growthAreas.trim()),
+    selfAssessment: Boolean(draft.questionnaire.careerGoal.trim()) && Boolean(draft.questionnaire.currentBackground.trim()) && Boolean(draft.questionnaire.supportNeeded.trim()),
     jobLinks: draft.jobLinks.some((link) => link.trim().length > 0),
     preferences: (draft.selectedPlatforms.length + draft.selectedTools.length) > 0 && Boolean(draft.timelineWeeks.trim()),
   }), [draft]);
@@ -331,7 +349,21 @@ export default function CoachingProjectWorkbench() {
   const canAccessReviewQueue = hasActiveSubscription && planTier !== "starter";
   const canAccessMentoringRecommendation = hasActiveSubscription;
   const canBookMentoring = hasActiveSubscription && planTier === "elite";
-  const currentPlan = PLAN_DETAILS[planTier];
+
+  function clearAuthStaleState() {
+    setSessionBanner(null);
+    setReadinessState((prev) => ({ ...prev, error: undefined }));
+  }
+
+  function markAuthenticatedApiSuccess() {
+    clearAuthStaleState();
+  }
+
+  useEffect(() => {
+    if (authState === "authenticated" || subscriptionStatus === "active") {
+      clearAuthStaleState();
+    }
+  }, [authState, subscriptionStatus]);
 
   const qualityBadges = useMemo(() => {
     if (!scaffold) return [] as { label: string; pass: boolean }[];
@@ -377,6 +409,7 @@ export default function CoachingProjectWorkbench() {
         const out = await api.listCoachingIntakeSubmissions(draft.workspaceId || "demo-workspace", 50);
         setSubmissions(out.submissions || []);
       }
+      markAuthenticatedApiSuccess();
     } catch (e: any) {
       const msg = e?.message || "Failed to load submissions";
       if (isUnauthorizedError(msg)) setSessionBanner("Session expired. Please sign back in to continue.");
@@ -397,7 +430,8 @@ export default function CoachingProjectWorkbench() {
     try {
       setReadinessState({ loading: true });
       const out = await api.coachingHealthReadiness(draft.workspaceId || "demo-workspace");
-      setReadinessState({ loading: false, readiness: out.readiness });
+      setReadinessState({ loading: false, readiness: out.readiness, error: undefined });
+      markAuthenticatedApiSuccess();
     } catch (e: any) {
       const msg = e?.message || "Readiness check failed.";
       if (isUnauthorizedError(msg)) setSessionBanner("Session expired. Please sign back in to continue.");
@@ -425,6 +459,7 @@ export default function CoachingProjectWorkbench() {
         setReviewSaveState({ saving: false, error: out.message || "Failed to save review." });
         return;
       }
+      markAuthenticatedApiSuccess();
       setReviewSaveState({ saving: false, message: "Review status + notes saved." });
       if (out.submission) {
         setSelectedSubmission(out.submission);
@@ -531,6 +566,7 @@ export default function CoachingProjectWorkbench() {
         },
       });
 
+      markAuthenticatedApiSuccess();
       setDraft((prev) => ({ ...prev, selfAssessment: structuredAssessment }));
       setCurrentSubmissionId(intakeResult.submission_id || null);
       setStageState((prev) => ({ ...prev, intakeParsed: true }));
@@ -558,6 +594,7 @@ export default function CoachingProjectWorkbench() {
         setGenerationState({ running: false, message: out.message || "Generation failed." });
         return;
       }
+      markAuthenticatedApiSuccess();
       setScaffold(mapSowToScaffold(out.sow));
       setStageState((prev) => ({ ...prev, sowGenerated: true, validated: Boolean(out.valid) }));
       const fallbackUsed = Boolean(out.quality_flags?.fallback_used);
@@ -593,6 +630,7 @@ export default function CoachingProjectWorkbench() {
         setSubmissionDetailError(out.message || "Unable to load submission details.");
         return;
       }
+      markAuthenticatedApiSuccess();
       setSelectedSubmission(out.submission);
       setCurrentSubmissionId(out.submission.submission_id);
       setSelectedSubmissionStatus(String((out.submission as any).coach_review_status || out.submission.status || "submitted"));
@@ -747,10 +785,6 @@ export default function CoachingProjectWorkbench() {
     setMemberLaunchState("memberHome");
   }
 
-  function upgradeTier() {
-    if (planTier === "starter") setPlanTier("pro");
-    if (planTier === "pro") setPlanTier("elite");
-  }
 
   return (
     <div className="coaching-shell">
@@ -778,9 +812,9 @@ export default function CoachingProjectWorkbench() {
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 8 }}>
           <button onClick={() => setAuthState("signedOut")}>Set Signed Out</button>
-          <button onClick={() => setAuthState("authenticated")}>Set Authenticated</button>
+          <button onClick={() => { setAuthState("authenticated"); clearAuthStaleState(); }}>Set Authenticated</button>
           <button onClick={() => setSubscriptionStatus("inactive")}>Set Inactive Sub</button>
-          <button onClick={() => setSubscriptionStatus("active")}>Set Active Sub</button>
+          <button onClick={() => { setSubscriptionStatus("active"); clearAuthStaleState(); }}>Set Active Sub</button>
           <button onClick={() => setSubscriptionStatus("unknown")}>Set Unknown Sub</button>
           <button onClick={resetLaunchFlow}>Reset Launch</button>
         </div>
@@ -813,29 +847,11 @@ export default function CoachingProjectWorkbench() {
         </div>
       </div>
 
-      <h4>Plan + Tier</h4>
       <div className="card" style={{ marginBottom: 10 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-          <strong>{currentPlan.label}</strong>
-          <span className={planTier === "starter" ? "badge warning" : planTier === "pro" ? "badge info" : "badge success"}>{currentPlan.monthly}</span>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <span className={canAccessReviewQueue ? "badge success" : "badge warning"}>Coach review: {canAccessReviewQueue ? "enabled" : "locked"}</span>
+          <span className={canBookMentoring ? "badge success" : "badge info"}>Live mentoring: {canBookMentoring ? "enabled" : "locked"}</span>
         </div>
-        <ul style={{ margin: "0 0 8px 18px", padding: 0, fontSize: 12 }}>
-          {currentPlan.includes.map((item) => <li key={item}>{item}</li>)}
-        </ul>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-          <span className={canAccessReviewQueue ? "badge success" : "badge warning"}>Coach review queue: {canAccessReviewQueue ? "unlocked" : "Pro+ required"}</span>
-          <span className={canBookMentoring ? "badge success" : "badge info"}>Live mentoring booking: {canBookMentoring ? "included" : "Elite required"}</span>
-        </div>
-        {planTier !== "elite" && (
-          <div className="card" style={{ padding: 8, border: "1px solid var(--color-border-strong)" }}>
-            <div style={{ fontSize: 12, marginBottom: 6 }}>
-              {planTier === "starter"
-                ? "Pro unlocks coach review visibility and faster feedback cycles."
-                : "Elite adds 1:1 mentoring sessions and interview narrative support."}
-            </div>
-            <button className="btn-primary" onClick={upgradeTier}>{currentPlan.upgradeCta}</button>
-          </div>
-        )}
       </div>
 
       {!canAccessWorkbench && (
@@ -845,7 +861,7 @@ export default function CoachingProjectWorkbench() {
             <span className="badge warning">Subscription-required state</span>
             <div style={{ marginTop: 8, fontSize: 12, color: "var(--color-text-muted)" }}>{gateMessage()}</div>
             {subscriptionStatus !== "active" && (
-              <button style={{ marginTop: 8 }} onClick={() => setSubscriptionStatus("active")}>Simulate successful upgrade/renewal</button>
+              <button style={{ marginTop: 8 }} onClick={() => { setSubscriptionStatus("active"); clearAuthStaleState(); }}>Simulate successful upgrade/renewal</button>
             )}
           </div>
         </>
@@ -1024,11 +1040,8 @@ export default function CoachingProjectWorkbench() {
 
           <h4>Coaching Project Intake</h4>
           <div className="card" style={{ marginBottom: 10 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-              <div style={{ fontSize: 12 }}>
-                Active tier: <strong>{currentPlan.label}</strong>
-              </div>
-              <span className={planTier === "starter" ? "badge warning" : planTier === "pro" ? "badge info" : "badge success"}>{currentPlan.monthly}</span>
+            <div style={{ marginBottom: 8, fontSize: 12, color: "var(--color-text-muted)" }}>
+              Complete each section to generate a coaching-ready project package.
             </div>
 
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
@@ -1098,13 +1111,57 @@ export default function CoachingProjectWorkbench() {
             )}
 
             {activeStep === "selfAssessment" && (
-              <div className="coaching-input-grid">
-                <input value={draft.questionnaire.careerGoal} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, careerGoal: e.target.value } }))} placeholder="Career goal" />
-                <input value={draft.questionnaire.strengths} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, strengths: e.target.value } }))} placeholder="Current strengths" />
-                <input value={draft.questionnaire.growthAreas} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, growthAreas: e.target.value } }))} placeholder="Growth areas" />
-                <select value={draft.questionnaire.confidenceLevel} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, confidenceLevel: e.target.value } }))}><option>Beginner</option><option>Intermediate</option><option>Advanced</option></select>
-                <select value={draft.questionnaire.weeklyHours} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, weeklyHours: e.target.value } }))}><option>1-4</option><option>5-8</option><option>9-12</option><option>12+</option></select>
-                <select value={draft.questionnaire.portfolioStatus} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, portfolioStatus: e.target.value } }))}><option>Not started</option><option>In progress</option><option>Ready to showcase</option></select>
+              <div style={{ display: "grid", gap: 10 }}>
+                <div className="card" style={{ padding: 8 }}>
+                  <strong style={{ fontSize: 12 }}>Career Goals</strong>
+                  <div className="coaching-input-grid" style={{ marginTop: 6 }}>
+                    <input value={draft.questionnaire.careerGoal} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, careerGoal: e.target.value } }))} placeholder="Target role and outcome in the next 6-12 months" />
+                    <input value={draft.questionnaire.roleTimeline} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, roleTimeline: e.target.value } }))} placeholder="Promotion/job-switch timeline" />
+                  </div>
+                </div>
+
+                <div className="card" style={{ padding: 8 }}>
+                  <strong style={{ fontSize: 12 }}>Background</strong>
+                  <div className="coaching-input-grid" style={{ marginTop: 6 }}>
+                    <input value={draft.questionnaire.currentBackground} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, currentBackground: e.target.value } }))} placeholder="Current role + years of experience" />
+                    <input value={draft.questionnaire.deliveryExamples} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, deliveryExamples: e.target.value } }))} placeholder="Recent projects you shipped" />
+                  </div>
+                </div>
+
+                <div className="card" style={{ padding: 8 }}>
+                  <strong style={{ fontSize: 12 }}>Skills Confidence</strong>
+                  <div className="coaching-input-grid" style={{ marginTop: 6 }}>
+                    <select value={draft.questionnaire.confidenceSql} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, confidenceSql: e.target.value } }))}><option>Beginner</option><option>Intermediate</option><option>Advanced</option></select>
+                    <select value={draft.questionnaire.confidenceModeling} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, confidenceModeling: e.target.value } }))}><option>Beginner</option><option>Intermediate</option><option>Advanced</option></select>
+                    <select value={draft.questionnaire.confidenceOrchestration} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, confidenceOrchestration: e.target.value } }))}><option>Beginner</option><option>Intermediate</option><option>Advanced</option></select>
+                    <select value={draft.questionnaire.confidenceStakeholder} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, confidenceStakeholder: e.target.value } }))}><option>Beginner</option><option>Intermediate</option><option>Advanced</option></select>
+                  </div>
+                </div>
+
+                <div className="card" style={{ padding: 8 }}>
+                  <strong style={{ fontSize: 12 }}>Tools + Platform Exposure</strong>
+                  <div className="coaching-input-grid" style={{ marginTop: 6 }}>
+                    <input value={draft.questionnaire.primaryPlatforms} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, primaryPlatforms: e.target.value } }))} placeholder="Platforms you've used (Databricks, Snowflake...)" />
+                    <input value={draft.questionnaire.primaryTools} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, primaryTools: e.target.value } }))} placeholder="Tools you've used (dbt, Airflow, BI...)" />
+                  </div>
+                </div>
+
+                <div className="card" style={{ padding: 8 }}>
+                  <strong style={{ fontSize: 12 }}>Portfolio + Interview Readiness</strong>
+                  <div className="coaching-input-grid" style={{ marginTop: 6 }}>
+                    <select value={draft.questionnaire.portfolioReadiness} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, portfolioReadiness: e.target.value } }))}><option>Not started</option><option>In progress</option><option>Ready to showcase</option></select>
+                    <select value={draft.questionnaire.interviewReadiness} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, interviewReadiness: e.target.value } }))}><option>Not started</option><option>Practicing</option><option>Interview ready</option></select>
+                  </div>
+                </div>
+
+                <div className="card" style={{ padding: 8 }}>
+                  <strong style={{ fontSize: 12 }}>Constraints + Support</strong>
+                  <div className="coaching-input-grid" style={{ marginTop: 6 }}>
+                    <select value={draft.questionnaire.weeklyHours} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, weeklyHours: e.target.value } }))}><option>1-4</option><option>5-8</option><option>9-12</option><option>12+</option></select>
+                    <input value={draft.questionnaire.constraints} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, constraints: e.target.value } }))} placeholder="Constraints (time, environment, blockers)" />
+                    <input value={draft.questionnaire.supportNeeded} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, supportNeeded: e.target.value } }))} placeholder="Support needed from coach" />
+                  </div>
+                </div>
               </div>
             )}
 
