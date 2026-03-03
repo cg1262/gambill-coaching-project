@@ -2,6 +2,11 @@
   "name": "ai-data-modeling-web",
   "private": true,
   "version": "0.1.0",
+  "engines": {
+    "node": ">=20.11.1 <21",
+    "npm": ">=10 <11"
+  },
+  "packageManager": "npm@10.8.2",
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",

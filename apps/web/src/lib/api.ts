@@ -204,6 +204,19 @@ export interface CoachingReviewStatusUpdateResult {
   submission?: CoachingIntakeSubmissionDetail;
 }
 
+export interface CoachingApproveSendResult {
+  ok: boolean;
+  message?: string;
+  workspace_id?: string;
+  submission_id?: string;
+  coach_review_status?: string;
+  latest_run_status?: string;
+  handoff?: {
+    launch_token?: string;
+    latest_run_id?: string;
+  };
+}
+
 export interface CoachingHealthReadinessResult {
   ok: boolean;
   workspace_id: string;
@@ -489,6 +502,11 @@ export const api = {
     coach_review_status: string;
     coach_notes?: string;
   }) => postJson<CoachingReviewStatusUpdateResult>("/coaching/review/status", payload),
+  coachingReviewApproveSend: (payload: {
+    workspace_id: string;
+    submission_id: string;
+    coach_notes?: string;
+  }) => postJson<CoachingApproveSendResult>("/coaching/review/approve-send", payload),
   coachingHealthReadiness: (workspaceId: string) =>
     getJson<CoachingHealthReadinessResult>(`/coaching/health/readiness?workspace_id=${encodeURIComponent(workspaceId)}`),
 };

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type CoachingIntakeSubmission, type CoachingIntakeSubmissionDetail } from "../../lib/api";
 
 type TimelineEvent = { id: string; at?: string; label: string; detail?: string; tone?: "info" | "success" | "warning" | "error" };
@@ -361,6 +361,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   const [coachNotes, setCoachNotes] = useState<string>("");
   const [queueStatusFilter, setQueueStatusFilter] = useState<string>("all");
   const [reviewSaveState, setReviewSaveState] = useState<{ saving: boolean; message?: string; error?: string }>({ saving: false });
+  const [quickActionState, setQuickActionState] = useState<{ running: boolean; message?: string; error?: string; launchToken?: string }>({ running: false });
   const [currentSubmissionId, setCurrentSubmissionId] = useState<string | null>(null);
   const [generationState, setGenerationState] = useState<{ running: boolean; message?: string; sourceMode?: "llm" | "fallback"; qualityFlags?: Record<string, any>; generationMeta?: Record<string, any>; quality?: Record<string, any> }>({ running: false });
   const [readinessState, setReadinessState] = useState<{ loading: boolean; error?: string; readiness?: Record<string, any> }>({ loading: false });
@@ -369,6 +370,10 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
     state: "idle",
   });
   const [sessionBanner, setSessionBanner] = useState<string | null>(null);
+
+  const submissionsLoadRef = useRef(0);
+  const submissionDetailReqRef = useRef(0);
+  const readinessReqRef = useRef(0);
 
   const completion = useMemo(() => ({
     resume: Boolean(draft.resumeFileName.trim()),
@@ -469,22 +474,28 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
 
   async function loadSubmissions() {
     if (!canAccessWorkbench) return;
+    const reqId = ++submissionsLoadRef.current;
     try {
       setReviewLoading(true);
       setReviewError(null);
       if (queueStatusFilter !== "all") {
         const out = await api.coachingReviewOpenSubmissions(draft.workspaceId || "demo-workspace", 50, queueStatusFilter);
+        if (reqId !== submissionsLoadRef.current) return;
         setSubmissions((out.open_submissions || []).map((row) => ({ ...row.submission, status: row.coach_review_status || row.submission.status })));
       } else {
         const out = await api.listCoachingIntakeSubmissions(draft.workspaceId || "demo-workspace", 50);
+        if (reqId !== submissionsLoadRef.current) return;
         setSubmissions(out.submissions || []);
       }
       markAuthenticatedApiSuccess();
     } catch (e: any) {
+      if (reqId !== submissionsLoadRef.current) return;
       const msg = e?.message || "Failed to load submissions";
       setReviewError(handleProtectedApiError(msg));
     } finally {
-      setReviewLoading(false);
+      if (reqId === submissionsLoadRef.current) {
+        setReviewLoading(false);
+      }
     }
   }
 
@@ -496,12 +507,15 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
 
   async function loadReadiness() {
     if (!canAccessWorkbench) return;
+    const reqId = ++readinessReqRef.current;
     try {
       setReadinessState({ loading: true });
       const out = await api.coachingHealthReadiness(draft.workspaceId || "demo-workspace");
+      if (reqId !== readinessReqRef.current) return;
       setReadinessState({ loading: false, readiness: out.readiness, error: undefined });
       markAuthenticatedApiSuccess();
     } catch (e: any) {
+      if (reqId !== readinessReqRef.current) return;
       const msg = e?.message || "Readiness check failed.";
       setReadinessState({ loading: false, error: handleProtectedApiError(msg) });
     }
@@ -542,6 +556,63 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
     } catch (e: any) {
       const msg = e?.message || "Failed to save review.";
       setReviewSaveState({ saving: false, error: handleProtectedApiError(msg) });
+    }
+  }
+
+  async function runQuickReviewAction(action: "in_review" | "needs_revision" | "ready") {
+    if (!selectedSubmissionId || quickActionState.running) return;
+    try {
+      setQuickActionState({ running: true });
+      const out = await api.coachingReviewStatusUpdate({
+        workspace_id: draft.workspaceId || "demo-workspace",
+        submission_id: selectedSubmissionId,
+        coach_review_status: action,
+        coach_notes: coachNotes,
+      });
+      markAuthenticatedApiSuccess();
+      if (!out.ok) {
+        setQuickActionState({ running: false, error: out.message || "Quick action failed." });
+        return;
+      }
+      if (out.submission) {
+        setSelectedSubmission(out.submission);
+        setSelectedSubmissionStatus(String((out.submission as any).coach_review_status || out.submission.status || action));
+      } else {
+        setSelectedSubmissionStatus(action);
+      }
+      setQuickActionState({ running: false, message: `Status updated to ${action}.` });
+      await loadSubmissions();
+    } catch (e: any) {
+      const msg = e?.message || "Quick action failed.";
+      setQuickActionState({ running: false, error: handleProtectedApiError(msg) });
+    }
+  }
+
+  async function approveAndSend() {
+    if (!selectedSubmissionId || quickActionState.running) return;
+    try {
+      setQuickActionState({ running: true, message: "Approving and preparing handoff token..." });
+      const out = await api.coachingReviewApproveSend({
+        workspace_id: draft.workspaceId || "demo-workspace",
+        submission_id: selectedSubmissionId,
+        coach_notes: coachNotes,
+      });
+      markAuthenticatedApiSuccess();
+      if (!out.ok) {
+        setQuickActionState({ running: false, error: out.message || "Approve/send failed." });
+        return;
+      }
+      setSelectedSubmissionStatus("approved_sent");
+      setQuickActionState({
+        running: false,
+        message: "Approved and marked sent. Launch handoff token is ready.",
+        launchToken: out.handoff?.launch_token,
+      });
+      await openSubmission(selectedSubmissionId);
+      await loadSubmissions();
+    } catch (e: any) {
+      const msg = e?.message || "Approve/send failed.";
+      setQuickActionState({ running: false, error: handleProtectedApiError(msg) });
     }
   }
 
@@ -689,13 +760,16 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   }
 
   async function openSubmission(submissionId: string) {
+    const reqId = ++submissionDetailReqRef.current;
     setSelectedSubmissionId(submissionId);
     setSubmissionDetailError(null);
     setSubmissionDetailLoading(true);
+    setQuickActionState({ running: false });
 
     try {
       const out = await api.coachingIntakeSubmissionDetail(submissionId);
       const runsOut = await api.coachingReviewSubmissionRuns(submissionId, 20);
+      if (reqId !== submissionDetailReqRef.current) return;
       markAuthenticatedApiSuccess();
       if (!out.ok || !out.submission) {
         setSelectedSubmission(null);
@@ -729,11 +803,14 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
         });
       }
     } catch (e: any) {
+      if (reqId !== submissionDetailReqRef.current) return;
       const msg = e?.message || "Unable to load submission details.";
       setSelectedSubmission(null);
       setSubmissionDetailError(handleProtectedApiError(msg));
     } finally {
-      setSubmissionDetailLoading(false);
+      if (reqId === submissionDetailReqRef.current) {
+        setSubmissionDetailLoading(false);
+      }
     }
   }
 
@@ -1095,8 +1172,13 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                             <option value="in_review">in_review</option>
                             <option value="needs_revision">needs_revision</option>
                             <option value="ready">ready</option>
+                            <option value="approved_sent">approved_sent</option>
                           </select>
-                          <button onClick={saveCoachReview} disabled={reviewSaveState.saving || !selectedSubmissionId}>{reviewSaveState.saving ? "Saving..." : "Save review"}</button>
+                          <button onClick={saveCoachReview} disabled={reviewSaveState.saving || !selectedSubmissionId || quickActionState.running}>{reviewSaveState.saving ? "Saving..." : "Save review"}</button>
+                          <button onClick={() => runQuickReviewAction("in_review")} disabled={!selectedSubmissionId || quickActionState.running}>Quick: Mark in review</button>
+                          <button onClick={() => runQuickReviewAction("needs_revision")} disabled={!selectedSubmissionId || quickActionState.running}>Quick: Needs revision</button>
+                          <button className="btn-success" onClick={() => runQuickReviewAction("ready")} disabled={!selectedSubmissionId || quickActionState.running}>Quick: Mark ready</button>
+                          <button className="btn-primary" onClick={approveAndSend} disabled={!selectedSubmissionId || quickActionState.running}>Approve + Send</button>
                           {reviewSaveState.message && <span className="badge success">{reviewSaveState.message}</span>}
                           {reviewSaveState.error && <span className="badge error">{reviewSaveState.error}</span>}
                         </div>
@@ -1106,6 +1188,14 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                           placeholder="Add coaching notes, feedback highlights, and next actions..."
                           style={{ width: "100%", minHeight: 80, marginTop: 6 }}
                         />
+                        {quickActionState.running && <div style={{ marginTop: 6 }}><span className="badge info">Running quick action…</span></div>}
+                        {quickActionState.message && <div style={{ marginTop: 6 }}><span className="badge success">{quickActionState.message}</span></div>}
+                        {quickActionState.error && <div style={{ marginTop: 6 }}><span className="badge error">{quickActionState.error}</span></div>}
+                        {quickActionState.launchToken && (
+                          <div style={{ marginTop: 6, fontSize: 11, color: "var(--color-text-muted)" }}>
+                            Launch token (preview): <code>{quickActionState.launchToken.slice(0, 24)}…</code>
+                          </div>
+                        )}
                       </div>
 
                       <div className="card" style={{ padding: 8 }}>
@@ -1199,6 +1289,13 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                                 <li key={`missing-section-${idx}`}>{section}</li>
                               ))}
                             </ul>
+                          </div>
+                        )}
+                        {Array.isArray(generationState.quality.quality_diagnostics.deficiency_codes) && generationState.quality.quality_diagnostics.deficiency_codes.length > 0 && (
+                          <div>
+                            Deficiency codes: {generationState.quality.quality_diagnostics.deficiency_codes.slice(0, 6).map((code: string) => (
+                              <span key={code} className="badge warning" style={{ marginLeft: 6 }}>{code}</span>
+                            ))}
                           </div>
                         )}
                         {Array.isArray(generationState.quality.quality_diagnostics.top_deficiencies) && generationState.quality.quality_diagnostics.top_deficiencies.length > 0 && (
