@@ -488,6 +488,37 @@ def _select_data_sources(intake: dict[str, Any], parsed_jobs: list[dict[str, Any
     return chosen
 
 
+def _build_interview_ready_package(project_title: str, story: dict[str, Any], milestones: list[dict[str, Any]], tools: list[str]) -> dict[str, Any]:
+    challenge = str((story or {}).get("challenge") or "Translate ambiguous business requirements into reliable data outcomes.")
+    approach = str((story or {}).get("approach") or "Use iterative delivery with measurable acceptance criteria and stakeholder demos.")
+    impact = str((story or {}).get("impact_story") or "Deliver KPI improvements with reproducible implementation evidence.")
+
+    milestone_names = [str(m.get("name") or "Milestone") for m in (milestones or []) if isinstance(m, dict)]
+    star_bullets = [
+        f"Situation: {challenge}",
+        f"Task: Own delivery of {project_title} milestones with clear KPI targets.",
+        f"Action: {approach}",
+        f"Result: {impact}",
+    ]
+    portfolio_checklist = [
+        "Architecture diagram exported and narrated in README",
+        "Pipeline tests + data quality checks committed with run evidence",
+        "Executive KPI dashboard with metric dictionary and assumptions",
+        "Demo script + retrospective including trade-offs and next steps",
+    ]
+    recruiter_mapping = {
+        "technical_depth": milestone_names[:3],
+        "business_impact": [impact],
+        "communication": ["Executive summary", "STAR narrative", "Demo walkthrough"],
+        "tooling_keywords": sorted({str(t) for t in (tools or []) if str(t).strip()}),
+    }
+    return {
+        "star_bullets": star_bullets,
+        "portfolio_checklist": portfolio_checklist,
+        "recruiter_mapping": recruiter_mapping,
+    }
+
+
 def build_sow_skeleton(
     intake: dict[str, Any],
     parsed_jobs: list[dict[str, Any]],
@@ -587,6 +618,16 @@ def build_sow_skeleton(
             "reason": "Finalize after validation and skill-gap scoring.",
             "trust_language": "Mentoring recommendations are guidance-only and should align with the candidate's goals and budget.",
         },
+        "interview_ready_package": _build_interview_ready_package(
+            project_title=project_title,
+            story={
+                "challenge": "Translate fragmented source data into trusted KPI reporting under tight delivery timelines.",
+                "approach": "Implement bronze/silver/gold pipelines, data quality checks, and executive-friendly ROI dashboards.",
+                "impact_story": "Demonstrate end-to-end ownership from ingestion through business narrative and stakeholder-ready metrics.",
+            },
+            milestones=[],
+            tools=all_tools,
+        ),
     }
 
 
@@ -619,8 +660,27 @@ def evaluate_sow_structure(sow: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def ensure_interview_ready_package(sow: dict[str, Any]) -> dict[str, Any]:
+    out = dict(sow or {})
+    package = out.get("interview_ready_package")
+    if not isinstance(package, dict):
+        package = {}
+    if not package.get("star_bullets") or not isinstance(package.get("star_bullets"), list):
+        built = _build_interview_ready_package(
+            project_title=str(out.get("project_title") or "Project"),
+            story=out.get("project_story") or {},
+            milestones=out.get("milestones") or [],
+            tools=((out.get("solution_architecture") or {}).get("primary_tools") or []),
+        )
+        for k, v in built.items():
+            package.setdefault(k, v)
+    out["interview_ready_package"] = package
+    return out
+
+
 def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
     sow, safety_findings = sanitize_generated_sow(sow)
+    sow = ensure_interview_ready_package(sow)
     findings: list[dict[str, str]] = list(safety_findings)
 
     structure = evaluate_sow_structure(sow)
@@ -704,6 +764,16 @@ def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
     mentoring_cta = sow.get("mentoring_cta") or {}
     if not str(mentoring_cta.get("trust_language") or "").strip():
         findings.append({"code": "TRUST_LANGUAGE_MISSING", "message": "mentoring_cta.trust_language is required."})
+
+    interview = sow.get("interview_ready_package") or {}
+    if not isinstance(interview.get("star_bullets"), list) or len(interview.get("star_bullets") or []) < 4:
+        findings.append({"code": "INTERVIEW_STAR_BULLETS_INCOMPLETE", "message": "interview_ready_package.star_bullets must include at least 4 STAR bullets."})
+    if not isinstance(interview.get("portfolio_checklist"), list) or len(interview.get("portfolio_checklist") or []) < 3:
+        findings.append({"code": "INTERVIEW_PORTFOLIO_CHECKLIST_INCOMPLETE", "message": "interview_ready_package.portfolio_checklist must include at least 3 checklist items."})
+    recruiter_mapping = interview.get("recruiter_mapping") or {}
+    for key in ["technical_depth", "business_impact", "communication"]:
+        if not isinstance(recruiter_mapping.get(key), list) or len(recruiter_mapping.get(key) or []) == 0:
+            findings.append({"code": "INTERVIEW_RECRUITER_MAPPING_INCOMPLETE", "message": f"interview_ready_package.recruiter_mapping.{key} must be non-empty."})
 
     return findings
 

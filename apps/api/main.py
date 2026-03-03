@@ -36,6 +36,7 @@ from coaching import (
     sanitize_generated_sow,
     compute_sow_quality_score,
     build_quality_diagnostics,
+    ensure_interview_ready_package,
 )
 from db_lakebase import (
     healthcheck as lakebase_health,
@@ -70,6 +71,10 @@ from db_lakebase import (
     save_coaching_subscription_event,
     get_coaching_subscription_event,
     list_recent_coaching_subscription_events,
+    save_coaching_conversion_event,
+    list_recent_coaching_conversion_events,
+    save_coaching_feedback_event,
+    list_recent_coaching_feedback_events,
 )
 from uc_client import healthcheck as uc_health, fetch_information_schema, fetch_schemas
 from git_ops import git_status, save_and_push_ast, set_git_config
@@ -159,6 +164,43 @@ def _safe_generation_meta(meta: dict[str, Any] | None) -> dict[str, Any]:
     if safe_usage:
         out["usage"] = safe_usage
     return out
+
+
+def _latency_band(latency_ms: int) -> str:
+    if latency_ms < 1500:
+        return "fast"
+    if latency_ms < 5000:
+        return "moderate"
+    return "slow"
+
+
+def _cost_band(total_tokens: int) -> str:
+    if total_tokens < 2500:
+        return "low"
+    if total_tokens < 8000:
+        return "medium"
+    return "high"
+
+
+def _track_conversion_event(
+    *,
+    workspace_id: str,
+    submission_id: str | None,
+    event_name: str,
+    actor_user: str,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    try:
+        save_coaching_conversion_event(
+            event_id=str(uuid4()),
+            workspace_id=workspace_id,
+            submission_id=submission_id,
+            event_name=event_name,
+            actor_user=actor_user,
+            event_payload=payload or {},
+        )
+    except Exception:
+        pass
 
 
 def _to_canvas_data_type(databricks_type: str) -> str:
@@ -543,6 +585,22 @@ class CoachingLaunchTokenVerifyRequest(BaseModel):
     launch_token: str
 
 
+class CoachingFeedbackCaptureRequest(BaseModel):
+    workspace_id: str
+    submission_id: str
+    run_id: str | None = None
+    review_tags: list[str] = Field(default_factory=list, max_length=25)
+    coach_notes: str | None = Field(default=None, max_length=2000)
+    regeneration_hints: list[str] = Field(default_factory=list, max_length=20)
+
+
+class CoachingMentoringIntentRequest(BaseModel):
+    workspace_id: str
+    submission_id: str
+    intent_type: str = "mentoring_intent"  # mentoring_intent | cta_click
+    cta_context: str | None = None
+
+
 def _require_active_coaching_subscription(workspace_id: str, session: Session, email: str | None = None) -> dict:
     account = get_coaching_account_subscription(
         workspace_id=workspace_id,
@@ -641,6 +699,10 @@ def _check_llm_provider_reachability(base_url: str, api_key: str, timeout_sec: i
 def _render_sow_markdown(sow: dict[str, Any]) -> str:
     milestones = sow.get("milestones") or []
     milestone_lines = "\n".join([f"- **{m.get('name', 'Milestone')}** ({m.get('duration_weeks', '?')}w): {', '.join(m.get('deliverables') or [])}" for m in milestones])
+    interview = sow.get("interview_ready_package") or {}
+    star_lines = "\n".join([f"- {x}" for x in (interview.get("star_bullets") or [])])
+    checklist_lines = "\n".join([f"- [ ] {x}" for x in (interview.get("portfolio_checklist") or [])])
+    recruiter_mapping = json.dumps(interview.get("recruiter_mapping") or {}, indent=2)
     return "\n".join(
         [
             f"# {sow.get('project_title', 'Coaching SOW')}",
@@ -650,6 +712,15 @@ def _render_sow_markdown(sow: dict[str, Any]) -> str:
             "",
             "## Milestones",
             milestone_lines or "- None",
+            "",
+            "## Interview-ready STAR Bullets",
+            star_lines or "- None",
+            "",
+            "## Portfolio Checklist",
+            checklist_lines or "- [ ] None",
+            "",
+            "## Recruiter Mapping",
+            recruiter_mapping,
             "",
             "## Architecture",
             json.dumps((sow.get("solution_architecture") or {}).get("medallion_plan") or {}, indent=2),
@@ -1633,6 +1704,13 @@ def coaching_intake(req: CoachingIntakeRequest, session=Depends(get_current_sess
         status="submitted",
         submitted_by=session.username,
     )
+    _track_conversion_event(
+        workspace_id=req.workspace_id,
+        submission_id=submission_id,
+        event_name="intake_completed",
+        actor_user=session.username,
+        payload={"job_links_count": len(normalized_job_links)},
+    )
     return {"ok": True, "submission_id": submission_id, "workspace_id": req.workspace_id}
 
 
@@ -1736,13 +1814,51 @@ def coaching_subscription_lifecycle_readiness(workspace_id: str, email: str | No
         "event_stream_present": len(events) > 0,
         "status_consistent_with_last_event": (last_event_status is None) or (last_event_status == normalized_status),
     }
+    sanitized_events: list[dict[str, Any]] = []
+    for evt in events:
+        payload = evt.get("payload_json") if isinstance(evt, dict) else None
+        payload_status = _normalize_subscription_status(str((payload or {}).get("subscription_status") or "")) if isinstance(payload, dict) else "unknown"
+        sanitized_events.append(
+            {
+                "event_id": evt.get("event_id"),
+                "event_type": evt.get("event_type"),
+                "provider": evt.get("provider"),
+                "received_at": evt.get("received_at"),
+                "status": payload_status,
+            }
+        )
     return {
         "ok": True,
         "workspace_id": workspace_id,
         "email": email,
         "status": normalized_status,
         "checks": checks,
-        "recent_events": events,
+        "recent_events": sanitized_events,
+    }
+
+
+@app.get("/coaching/pilot/launch-readiness")
+def coaching_pilot_launch_readiness(workspace_id: str, submission_id: str | None = None, email: str | None = None, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor", "viewer"})
+    account = get_coaching_account_subscription(workspace_id=workspace_id, username=session.username, email=email)
+    status = _normalize_subscription_status(str((account or {}).get("subscription_status") or "not_found"))
+    events = list_recent_coaching_subscription_events(workspace_id=workspace_id, email=email, limit=10)
+    conversion_events = list_recent_coaching_conversion_events(workspace_id=workspace_id, submission_id=submission_id, limit=20)
+
+    checks = {
+        "subscription_active": _is_active_subscription(status),
+        "subscription_event_stream_present": len(events) > 0,
+        "launch_verification_present": any(str(e.get("event_name") or "") == "member_launch_verified" for e in conversion_events),
+        "intake_completed_present": any(str(e.get("event_name") or "") == "intake_completed" for e in conversion_events),
+    }
+    return {
+        "ok": True,
+        "workspace_id": workspace_id,
+        "submission_id": submission_id,
+        "status": status,
+        "checks": checks,
+        "ready": all(checks.values()),
+        "recent_conversion_events": conversion_events[:10],
     }
 
 
@@ -1755,13 +1871,14 @@ def coaching_subscription_sync(req: CoachingSubscriptionSyncRequest, session=Dep
 
     existing = get_coaching_subscription_event(event_id) if incoming_event_id else None
     if existing:
+        replay_status = _normalize_subscription_status(str((existing.get("payload_json") or {}).get("subscription_status") or normalized_status))
         return {
             "ok": True,
             "workspace_id": req.workspace_id,
             "event_id": event_id,
             "provider": req.provider,
-            "status": _normalize_subscription_status(str((existing.get("payload_json") or {}).get("subscription_status") or normalized_status)),
-            "active": _is_active_subscription(normalized_status),
+            "status": replay_status,
+            "active": _is_active_subscription(replay_status),
             "idempotent_replay": True,
             "message": "Subscription event already processed.",
         }
@@ -1975,6 +2092,15 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
     )
 
     parsed_jobs = req.parsed_jobs or []
+    generation_started_at = time.perf_counter()
+    feedback_events = list_recent_coaching_feedback_events(req.submission_id, limit=3)
+    feedback_hints = [
+        str(h).strip()
+        for event in feedback_events
+        for h in (event.get("regeneration_hints_json") or [])
+        if str(h).strip()
+    ][:8]
+
     llm_result = generate_sow_with_llm(
         intake={
             "applicant_name": intake.get("applicant_name"),
@@ -2002,15 +2128,17 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
         auto_revised = True
         retried_after_validation = True
 
-    strict_sow = CoachingSowDraft.model_validate(sow).model_dump(mode="json", by_alias=True)
+    strict_sow = CoachingSowDraft.model_validate(ensure_interview_ready_package(sow)).model_dump(mode="json", by_alias=True)
     strict_sow, sanitize_findings = sanitize_generated_sow(strict_sow)
+    strict_sow = ensure_interview_ready_package(strict_sow)
     final_findings = validate_sow_payload(strict_sow)
     quality = compute_sow_quality_score(strict_sow, final_findings)
 
     if int(quality.get("score") or 0) < quality_floor_score:
         strict_sow = auto_revise_sow_once(strict_sow, final_findings)
-        strict_sow = CoachingSowDraft.model_validate(strict_sow).model_dump(mode="json", by_alias=True)
+        strict_sow = CoachingSowDraft.model_validate(ensure_interview_ready_package(strict_sow)).model_dump(mode="json", by_alias=True)
         strict_sow, extra_sanitize_findings = sanitize_generated_sow(strict_sow)
+        strict_sow = ensure_interview_ready_package(strict_sow)
         if extra_sanitize_findings:
             sanitize_findings = [*sanitize_findings, *extra_sanitize_findings]
         final_findings = validate_sow_payload(strict_sow)
@@ -2024,6 +2152,9 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
         floor_score=quality_floor_score,
         auto_regenerated=auto_regenerated_for_quality_floor,
     )
+    if feedback_hints:
+        existing = quality_diagnostics.get("targeted_regeneration_hints") or []
+        quality_diagnostics["targeted_regeneration_hints"] = list(dict.fromkeys([*feedback_hints, *existing]))[:10]
 
     prior_runs = list_coaching_generation_runs(req.submission_id, limit=1)
     prior_score = None
@@ -2047,6 +2178,14 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
         "findings_delta": (len(final_findings) - int(prior_findings_count)) if prior_findings_count is not None else None,
     }
     generation_meta = _safe_generation_meta(llm_result.get("meta") or {})
+    generation_latency_ms = int((time.perf_counter() - generation_started_at) * 1000)
+    total_tokens = int(((generation_meta.get("usage") or {}).get("total_tokens") or 0))
+    observability = {
+        "latency_ms": generation_latency_ms,
+        "latency_band": _latency_band(generation_latency_ms),
+        "token_usage": total_tokens,
+        "cost_band": _cost_band(total_tokens),
+    }
 
     run_id = str(uuid4())
     save_coaching_generation_run(
@@ -2064,6 +2203,11 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
             "retried_after_validation": retried_after_validation,
             "guardrails": {"strict_schema": True, "auto_revise_once": True},
             "generation_meta": generation_meta,
+            "observability": observability,
+            "feedback_loop": {
+                "feedback_event_count": len(feedback_events),
+                "regeneration_hints_used": feedback_hints,
+            },
             "quality_flags": {
                 "has_required_contract_fields": len(final_findings) == 0,
                 "used_llm_provider": generation_meta.get("provider") == "openai-compatible",
@@ -2080,6 +2224,19 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
         },
         error_message=None,
         created_by=session.username,
+    )
+
+    _track_conversion_event(
+        workspace_id=req.workspace_id,
+        submission_id=req.submission_id,
+        event_name="sow_regenerated" if req.regenerate_with_improvements else "sow_generated",
+        actor_user=session.username,
+        payload={
+            "run_id": run_id,
+            "quality_score": int(quality.get("score") or 0),
+            "latency_band": observability.get("latency_band"),
+            "cost_band": observability.get("cost_band"),
+        },
     )
 
     logger.info(
@@ -2109,6 +2266,7 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
         "auto_revised": auto_revised,
         "findings": final_findings,
         "generation_meta": generation_meta,
+        "observability": observability,
         "quality_flags": {
             "has_required_contract_fields": len(final_findings) == 0,
             "used_llm_provider": generation_meta.get("provider") == "openai-compatible",
@@ -2251,7 +2409,15 @@ def coaching_sow_export(req: CoachingSowExportRequest, session=Depends(get_curre
 
     sow_payload = req.sow.model_dump(mode="json", by_alias=True)
     sow_payload, _ = sanitize_generated_sow(sow_payload)
+    sow_payload = ensure_interview_ready_package(sow_payload)
     fmt = str(req.format or "markdown").strip().lower()
+    _track_conversion_event(
+        workspace_id=req.workspace_id,
+        submission_id=req.submission_id,
+        event_name="sow_exported",
+        actor_user=session.username,
+        payload={"format": fmt},
+    )
     if fmt == "json":
         return {
             "ok": True,
@@ -2377,6 +2543,14 @@ def coaching_member_launch_token_verify(req: CoachingLaunchTokenVerifyRequest, s
         submission_id=req.submission_id,
         token=req.launch_token,
     )
+    if bool(result.get("valid")):
+        _track_conversion_event(
+            workspace_id=req.workspace_id,
+            submission_id=req.submission_id,
+            event_name="member_launch_verified",
+            actor_user=session.username,
+            payload={"source": "launch_token_verify"},
+        )
     return {
         "ok": True,
         "workspace_id": req.workspace_id,
@@ -2415,6 +2589,74 @@ def coaching_review_status_update(req: CoachingReviewStatusUpdateRequest, sessio
         "submission": persist.get("submission"),
         "consistency": {"persist_attempts": persist.get("attempts"), "persist_ok": True},
     }
+
+
+@app.post("/coaching/review/feedback")
+def coaching_review_feedback(req: CoachingFeedbackCaptureRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    submission = get_coaching_intake_submission(req.submission_id)
+    if not submission:
+        return {"ok": False, "message": "submission not found", "submission_id": req.submission_id}
+
+    _require_active_coaching_subscription(
+        workspace_id=req.workspace_id,
+        session=session,
+        email=str(submission.get("applicant_email") or "").strip().lower() or None,
+    )
+
+    save_coaching_feedback_event(
+        feedback_id=str(uuid4()),
+        workspace_id=req.workspace_id,
+        submission_id=req.submission_id,
+        run_id=req.run_id,
+        review_tags=req.review_tags,
+        coach_notes=req.coach_notes,
+        regeneration_hints=req.regeneration_hints,
+        created_by=session.username,
+    )
+    _track_conversion_event(
+        workspace_id=req.workspace_id,
+        submission_id=req.submission_id,
+        event_name="coach_feedback_captured",
+        actor_user=session.username,
+        payload={"review_tags": req.review_tags, "hint_count": len(req.regeneration_hints or [])},
+    )
+    return {"ok": True, "workspace_id": req.workspace_id, "submission_id": req.submission_id, "tag_count": len(req.review_tags or [])}
+
+
+@app.post("/coaching/mentoring/intent")
+def coaching_mentoring_intent(req: CoachingMentoringIntentRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor", "viewer"})
+    _track_conversion_event(
+        workspace_id=req.workspace_id,
+        submission_id=req.submission_id,
+        event_name="mentoring_intent" if req.intent_type != "cta_click" else "cta_click",
+        actor_user=session.username,
+        payload={"cta_context": req.cta_context or ""},
+    )
+    return {"ok": True, "workspace_id": req.workspace_id, "submission_id": req.submission_id, "intent_type": req.intent_type}
+
+
+@app.get("/coaching/conversion/funnel")
+def coaching_conversion_funnel(workspace_id: str, submission_id: str | None = None, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor", "viewer"})
+    events = list_recent_coaching_conversion_events(workspace_id=workspace_id, submission_id=submission_id, limit=500)
+    counts: dict[str, int] = {}
+    for event in events:
+        name = str(event.get("event_name") or "unknown")
+        counts[name] = counts.get(name, 0) + 1
+    ordered = [
+        "member_launch_verified",
+        "intake_completed",
+        "sow_generated",
+        "sow_regenerated",
+        "sow_exported",
+        "cta_click",
+        "mentoring_intent",
+        "coach_feedback_captured",
+    ]
+    funnel = [{"event": name, "count": counts.get(name, 0)} for name in ordered]
+    return {"ok": True, "workspace_id": workspace_id, "submission_id": submission_id, "funnel": funnel, "total_events": len(events)}
 
 
 @app.get("/coaching/health/readiness")

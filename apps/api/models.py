@@ -127,3 +127,4 @@ class CoachingSowDraft(BaseModel):
     roi_dashboard_requirements: dict = Field(validation_alias=AliasChoices("roi_dashboard_requirements", "roiDashboardRequirements"))
     resource_plan: dict = Field(validation_alias=AliasChoices("resource_plan", "resourcePlan"))
     mentoring_cta: dict = Field(validation_alias=AliasChoices("mentoring_cta", "mentoringCta"))
+    interview_ready_package: dict = Field(default_factory=dict, validation_alias=AliasChoices("interview_ready_package", "interviewReadyPackage"))

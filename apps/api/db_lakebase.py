@@ -330,6 +330,36 @@ def _ensure_duckdb_bootstrap(conn) -> None:
 
     conn.execute(
         """
+        CREATE TABLE IF NOT EXISTS coaching_conversion_events (
+            event_id VARCHAR PRIMARY KEY,
+            workspace_id VARCHAR,
+            submission_id VARCHAR,
+            event_name VARCHAR,
+            actor_user VARCHAR,
+            event_payload_json JSON,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS coaching_feedback_events (
+            feedback_id VARCHAR PRIMARY KEY,
+            workspace_id VARCHAR,
+            submission_id VARCHAR,
+            run_id VARCHAR,
+            review_tags_json JSON,
+            coach_notes VARCHAR,
+            regeneration_hints_json JSON,
+            created_by VARCHAR,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+    conn.execute(
+        """
         CREATE TABLE IF NOT EXISTS dependency_mappings (
             workspace_id VARCHAR,
             source_object VARCHAR,
@@ -561,6 +591,8 @@ def bootstrap_status() -> dict[str, Any]:
         "coaching_job_parse_cache",
         "coaching_accounts",
         "coaching_subscription_events",
+        "coaching_conversion_events",
+        "coaching_feedback_events",
     ]
 
     try:
@@ -2127,3 +2159,158 @@ def save_coaching_subscription_event(
                 (event_id, workspace_id, provider, event_type, email, provider_customer_id, provider_subscription_id, payload_json, received_by),
             )
             conn.commit()
+
+
+def save_coaching_conversion_event(
+    event_id: str,
+    workspace_id: str,
+    submission_id: str | None,
+    event_name: str,
+    actor_user: str,
+    event_payload: dict[str, Any] | None = None,
+) -> None:
+    if not is_configured():
+        return
+
+    payload_json = json.dumps(event_payload or {})
+    if _using_duckdb():
+        with lakebase_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO coaching_conversion_events
+                (event_id, workspace_id, submission_id, event_name, actor_user, event_payload_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                [event_id, workspace_id, submission_id, event_name, actor_user, payload_json],
+            )
+        return
+
+    with lakebase_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO coaching_conversion_events
+                (event_id, workspace_id, submission_id, event_name, actor_user, event_payload_json, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s::jsonb, CURRENT_TIMESTAMP)
+                """,
+                (event_id, workspace_id, submission_id, event_name, actor_user, payload_json),
+            )
+            conn.commit()
+
+
+def list_recent_coaching_conversion_events(workspace_id: str, submission_id: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+    if not is_configured():
+        return []
+    lim = max(1, min(int(limit or 50), 200))
+
+    if _using_duckdb():
+        with lakebase_connection() as conn:
+            if submission_id:
+                rows = conn.execute(
+                    "SELECT * FROM coaching_conversion_events WHERE workspace_id = ? AND submission_id = ? ORDER BY created_at DESC LIMIT ?",
+                    [workspace_id, submission_id, lim],
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM coaching_conversion_events WHERE workspace_id = ? ORDER BY created_at DESC LIMIT ?",
+                    [workspace_id, lim],
+                ).fetchall()
+            cols = [c[0] for c in conn.description]
+            out = [dict(zip(cols, raw)) for raw in rows]
+    else:
+        import psycopg
+        with lakebase_connection() as conn:
+            with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+                if submission_id:
+                    cur.execute(
+                        "SELECT * FROM coaching_conversion_events WHERE workspace_id = %s AND submission_id = %s ORDER BY created_at DESC LIMIT %s",
+                        (workspace_id, submission_id, lim),
+                    )
+                else:
+                    cur.execute(
+                        "SELECT * FROM coaching_conversion_events WHERE workspace_id = %s ORDER BY created_at DESC LIMIT %s",
+                        (workspace_id, lim),
+                    )
+                out = [dict(r) for r in (cur.fetchall() or [])]
+
+    for row in out:
+        if isinstance(row.get("event_payload_json"), str):
+            try:
+                row["event_payload_json"] = json.loads(row.get("event_payload_json") or "{}")
+            except Exception:
+                row["event_payload_json"] = {}
+    return out
+
+
+def save_coaching_feedback_event(
+    feedback_id: str,
+    workspace_id: str,
+    submission_id: str,
+    run_id: str | None,
+    review_tags: list[str],
+    coach_notes: str | None,
+    regeneration_hints: list[str],
+    created_by: str,
+) -> None:
+    if not is_configured():
+        return
+
+    tags_json = json.dumps(review_tags or [])
+    hints_json = json.dumps(regeneration_hints or [])
+
+    if _using_duckdb():
+        with lakebase_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO coaching_feedback_events
+                (feedback_id, workspace_id, submission_id, run_id, review_tags_json, coach_notes, regeneration_hints_json, created_by, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                [feedback_id, workspace_id, submission_id, run_id, tags_json, coach_notes or "", hints_json, created_by],
+            )
+        return
+
+    with lakebase_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO coaching_feedback_events
+                (feedback_id, workspace_id, submission_id, run_id, review_tags_json, coach_notes, regeneration_hints_json, created_by, created_at)
+                VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s::jsonb, %s, CURRENT_TIMESTAMP)
+                """,
+                (feedback_id, workspace_id, submission_id, run_id, tags_json, coach_notes or "", hints_json, created_by),
+            )
+            conn.commit()
+
+
+def list_recent_coaching_feedback_events(submission_id: str, limit: int = 5) -> list[dict[str, Any]]:
+    if not is_configured():
+        return []
+    lim = max(1, min(int(limit or 5), 50))
+
+    if _using_duckdb():
+        with lakebase_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM coaching_feedback_events WHERE submission_id = ? ORDER BY created_at DESC LIMIT ?",
+                [submission_id, lim],
+            ).fetchall()
+            cols = [c[0] for c in conn.description]
+            out = [dict(zip(cols, raw)) for raw in rows]
+    else:
+        import psycopg
+        with lakebase_connection() as conn:
+            with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+                cur.execute(
+                    "SELECT * FROM coaching_feedback_events WHERE submission_id = %s ORDER BY created_at DESC LIMIT %s",
+                    (submission_id, lim),
+                )
+                out = [dict(r) for r in (cur.fetchall() or [])]
+
+    for row in out:
+        for key in ["review_tags_json", "regeneration_hints_json"]:
+            if isinstance(row.get(key), str):
+                try:
+                    row[key] = json.loads(row.get(key) or "[]")
+                except Exception:
+                    row[key] = []
+    return out

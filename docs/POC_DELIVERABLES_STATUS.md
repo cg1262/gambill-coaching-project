@@ -30,6 +30,35 @@ Owner: ERD Program Team
 - Event telemetry is currently local-first (console/localStorage) pending backend analytics ingestion endpoint.
 - Feedback tags are notes-serialized until backend contract provides dedicated tag field.
 
+## Checkpoint Update (2026-03-03 - Sprint 6 Backend Execution)
+
+### Done
+- Delivered Sprint 6 backend pilot/learning-loop package in coaching APIs.
+- Added pilot launch readiness contract endpoint:
+  - `GET /coaching/pilot/launch-readiness` (subscription + lifecycle + launch/intake signal checks).
+- Added conversion instrumentation persistence and API rollup:
+  - new DB table: `coaching_conversion_events`
+  - new endpoints: `POST /coaching/mentoring/intent`, `GET /coaching/conversion/funnel`
+  - event capture wired into intake, launch-token verify, generate/regenerate, and export paths.
+- Added interview-ready package consistency in SOW contract/export:
+  - new `interview_ready_package` in `CoachingSowDraft`
+  - STAR bullets, portfolio checklist, recruiter mapping consistency checks in validator
+  - markdown export now includes interview-ready sections.
+- Added coach feedback capture loop:
+  - new DB table: `coaching_feedback_events`
+  - new endpoint: `POST /coaching/review/feedback`
+  - generation pipeline ingests recent coach regeneration hints and merges into diagnostics hints.
+- Added observability baseline for generation runs:
+  - response/persisted metadata now includes `latency_ms`, `latency_band`, token usage-derived `cost_band`.
+
+### Validation
+- Added focused test suite:
+  - `apps/api/tests/test_coaching_sprint6_backend.py`
+
+### Risks / Follow-ups
+- Conversion metrics are operationally useful but still event-level; weekly aggregation/report job is pending.
+- Cost band is estimate proxy (token usage) and should be replaced/augmented with provider billing telemetry for finance-grade tracking.
+
 ## Checkpoint Update (2026-03-03 - Sprint 5 Security Execution + Pilot D1 Evidence Draft)
 
 ### Done

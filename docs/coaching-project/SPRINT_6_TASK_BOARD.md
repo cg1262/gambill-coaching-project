@@ -3,6 +3,45 @@
 Last Updated: 2026-03-03
 Sprint Goal: Pilot launch + conversion instrumentation + post-launch learning loop.
 
+## Checkpoint Update (2026-03-03 - Sprint 6 Backend Execution)
+
+### Done
+- Added pilot launch readiness backend endpoint:
+  - `GET /coaching/pilot/launch-readiness`
+  - validates subscription-active state, subscription-event stream presence, launch verification event, and intake completion signal.
+- Implemented conversion instrumentation event capture for core backend touchpoints:
+  - launch verification, intake completion, generate/regenerate, export, CTA click/mentoring intent, coach feedback capture.
+  - new endpoints:
+    - `POST /coaching/mentoring/intent`
+    - `GET /coaching/conversion/funnel`
+- Added interview-ready output package consistency layer:
+  - `interview_ready_package` added to SOW contract/model with STAR bullets, portfolio checklist, recruiter mapping.
+  - validation checks enforce completeness; markdown export includes interview package sections.
+- Added coach feedback loop capture path and hint reuse:
+  - new endpoint `POST /coaching/review/feedback`.
+  - regeneration hints from recent coach feedback are merged into targeted regeneration hints during SOW generation.
+- Added observability basics for generation runs:
+  - generation `latency_ms` + `latency_band` and token-based `cost_band` surfaced in response/persisted validation metadata.
+- Added DB schema/persistence for Sprint 6 telemetry:
+  - `coaching_conversion_events`
+  - `coaching_feedback_events`
+
+### Validation
+- Added focused tests:
+  - `apps/api/tests/test_coaching_sprint6_backend.py`
+
+### Risks
+- Conversion/feedback event persistence is append-only and intentionally lightweight; no retention/aggregation jobs yet.
+- Cost band is token-based heuristic, not billing-invoice exact spend.
+
+### Needs from others
+- Frontend wiring to call `POST /coaching/mentoring/intent` on CTA interactions.
+- Product decision for final funnel reporting cadence/output destination.
+
+### Next
+- Add rolling weekly conversion summary endpoint/export artifact.
+- Add tag taxonomy constraints for coach feedback tags and analytics-ready dimensions.
+
 ## Checkpoint Update (2026-03-03 - Sprint 6 Frontend Execution)
 
 ### Done
