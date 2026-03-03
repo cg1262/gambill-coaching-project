@@ -3,6 +3,35 @@
 Last Updated: 2026-03-03
 Owner: ERD Program Team
 
+## Checkpoint Update (2026-03-03 - Sprint 7 Backend Execution: Webhook/Idempotency Hardening + Subscription Ops Readiness)
+
+### Done
+- Tightened subscription event idempotency in integrated pilot paths (`/coaching/subscription/sync`, `/coaching/subscription/webhook`) by deriving deterministic event IDs when provider IDs are absent.
+- Added explicit replay trace field in sync/webhook responses: `idempotency_key_source` (`provider_event_id` vs `derived`).
+- Verified and enforced subscription throttling across operationally critical endpoints:
+  - `POST|GET /coaching/subscription/status`
+  - `GET /coaching/subscription/lifecycle-readiness`
+  - `GET /coaching/pilot/launch-readiness`
+  - `POST /coaching/subscription/sync`
+  - `POST /coaching/subscription/webhook`
+- Extended parameterized rate-limit config support for subscription traffic with `RATE_LIMIT_SUBSCRIPTION_USER_BURST`.
+- Added Sprint 7 backend evidence tests in `apps/api/tests/test_coaching_sprint7_backend.py`:
+  - derived-id idempotent replay,
+  - admin override endpoint operational verification (`GET|PUT /admin/security/rate-limits`),
+  - controlled backend pilot trace (intake→generate→regenerate→export→review feedback) with conversion + feedback integrity assertions.
+
+### Validation
+- Focused command (`apps/api`):
+  - `python -m pytest -q tests/test_coaching_sprint7_backend.py tests/test_security_rate_limit_webhook.py tests/test_rate_limits_and_webhooks.py tests/test_coaching_subscription.py`
+  - Result: **17 passed, 1 warning**.
+- Full backend suite (`apps/api`):
+  - `python -m pytest -q`
+  - Result: **131 passed, 4 skipped, 1 warning**.
+
+### Risks / Follow-ups
+- Derived idempotency keying intentionally dedupes payload-equivalent no-provider-ID events; confirm desired semantics for provider edge cases.
+- Invalid webhook signature alerting remains an ops control follow-up (rejection path is enforced; alert pipeline still pending).
+
 ## Checkpoint Update (2026-03-03 - Sprint 7 Frontend Execution: Runtime Parity Gate + Quality-Loop Prompt Tightening)
 
 ### Done

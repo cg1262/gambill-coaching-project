@@ -102,6 +102,13 @@ RATE_LIMIT_POLICIES_DEFAULT: dict[str, RateLimitPolicy] = {
             RateLimitRule(name="exports_user_1h", limit=20, window_seconds=3600, key_scope="user"),
         ],
     ),
+    "subscription": RateLimitPolicy(
+        name="subscription",
+        rules=[
+            RateLimitRule(name="subscription_user_1m", limit=30, window_seconds=60, key_scope="user", burst=45),
+            RateLimitRule(name="subscription_ip_1m", limit=60, window_seconds=60, key_scope="ip", burst=80),
+        ],
+    ),
 }
 
 
@@ -130,6 +137,11 @@ def _apply_env_overrides(base: dict[str, RateLimitPolicy]) -> dict[str, RateLimi
     out["review_actions"].rules[0].limit = _env_int("RATE_LIMIT_REVIEW_ACTIONS_USER_LIMIT_PER_MIN", out["review_actions"].rules[0].limit)
 
     out["exports"].rules[0].limit = _env_int("RATE_LIMIT_EXPORTS_USER_LIMIT_PER_HOUR", out["exports"].rules[0].limit)
+
+    out["subscription"].rules[0].limit = _env_int("RATE_LIMIT_SUBSCRIPTION_USER_LIMIT_PER_MIN", out["subscription"].rules[0].limit)
+    out["subscription"].rules[0].burst = _env_int("RATE_LIMIT_SUBSCRIPTION_USER_BURST", int(out["subscription"].rules[0].burst or out["subscription"].rules[0].limit))
+    out["subscription"].rules[1].limit = _env_int("RATE_LIMIT_SUBSCRIPTION_IP_LIMIT_PER_MIN", out["subscription"].rules[1].limit)
+    out["subscription"].rules[1].burst = _env_int("RATE_LIMIT_SUBSCRIPTION_IP_BURST", int(out["subscription"].rules[1].burst or out["subscription"].rules[1].limit))
 
     return out
 

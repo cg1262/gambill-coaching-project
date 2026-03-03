@@ -132,8 +132,8 @@ async def http_exception_handler(request: Request, exc: HTTPException):
     is_coaching_or_auth_route = request.url.path.startswith("/coaching") or request.url.path.startswith("/auth")
     if is_coaching_or_auth_route and exc.status_code in {401, 403, 429}:
         detail = exc.detail if isinstance(exc.detail, dict) else None
-        is_subscription = bool(detail and detail.get("subscription_required")) or "subscription" in str(exc.detail).lower()
         is_rate_limited = exc.status_code == 429
+        is_subscription = (not is_rate_limited) and (bool(detail and detail.get("subscription_required")) or "subscription" in str(exc.detail).lower())
         message = (
             "Too many requests. Please wait and retry."
             if is_rate_limited
@@ -559,6 +559,23 @@ def _verify_subscription_webhook_signature(req: CoachingSubscriptionSyncRequest)
     return verify_webhook_signature(provider=provider, body_bytes=body_bytes, headers=headers)
 
 
+def _derive_subscription_event_id(*, raw_event: dict[str, Any] | None, provider: str, workspace_id: str, email: str, event_type: str, status: str) -> tuple[str, bool]:
+    incoming_event_id = str((raw_event or {}).get("id") or "").strip()
+    if incoming_event_id:
+        return incoming_event_id, False
+
+    digest_payload = {
+        "provider": str(provider or "").strip().lower(),
+        "workspace_id": str(workspace_id or "").strip(),
+        "email": str(email or "").strip().lower(),
+        "event_type": str(event_type or "").strip(),
+        "status": _normalize_subscription_status(status),
+        "raw_event": raw_event or {},
+    }
+    digest = hashlib.sha256(json.dumps(digest_payload, separators=(",", ":"), sort_keys=True).encode("utf-8")).hexdigest()[:24]
+    return f"derived_{digest}", True
+
+
 def _normalize_subscription_status(status: str) -> str:
     s = (status or "").strip().lower()
     if s in {"active", "trialing", "paid", "current"}:
@@ -938,8 +955,9 @@ def auth_session_stats(session=Depends(get_current_session)) -> dict:
 
 
 @app.post("/coaching/subscription/status")
-def coaching_subscription_status(req: CoachingSubscriptionStatusRequest, session=Depends(get_current_session)) -> dict:
+def coaching_subscription_status(req: CoachingSubscriptionStatusRequest, request: Request, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor"})
+    _apply_rate_limit(policy_name="subscription", request=request, session=session, workspace_id=req.workspace_id)
     normalized_status = str(req.subscription_status or "").strip().lower()
     can_access = normalized_status in {"active", "trialing"}
     logger.info(
@@ -1800,8 +1818,9 @@ def coaching_intake_submission_detail(submission_id: str, session=Depends(get_cu
 
 
 @app.get("/coaching/subscription/status")
-def coaching_subscription_status(workspace_id: str, email: str | None = None, session=Depends(get_current_session)) -> dict:
+def coaching_subscription_status(workspace_id: str, request: Request, email: str | None = None, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor", "viewer"})
+    _apply_rate_limit(policy_name="subscription", request=request, session=session, workspace_id=workspace_id)
     account = get_coaching_account_subscription(
         workspace_id=workspace_id,
         username=session.username,
@@ -1859,8 +1878,9 @@ def coaching_subscription_status(workspace_id: str, email: str | None = None, se
 
 
 @app.get("/coaching/subscription/lifecycle-readiness")
-def coaching_subscription_lifecycle_readiness(workspace_id: str, email: str | None = None, session=Depends(get_current_session)) -> dict:
+def coaching_subscription_lifecycle_readiness(workspace_id: str, request: Request, email: str | None = None, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor", "viewer"})
+    _apply_rate_limit(policy_name="subscription", request=request, session=session, workspace_id=workspace_id)
     account = get_coaching_account_subscription(workspace_id=workspace_id, username=session.username, email=email)
     events = list_recent_coaching_subscription_events(workspace_id=workspace_id, email=email, limit=10)
     normalized_status = _normalize_subscription_status(str((account or {}).get("subscription_status") or "not_found"))
@@ -1899,8 +1919,9 @@ def coaching_subscription_lifecycle_readiness(workspace_id: str, email: str | No
 
 
 @app.get("/coaching/pilot/launch-readiness")
-def coaching_pilot_launch_readiness(workspace_id: str, submission_id: str | None = None, email: str | None = None, session=Depends(get_current_session)) -> dict:
+def coaching_pilot_launch_readiness(workspace_id: str, request: Request, submission_id: str | None = None, email: str | None = None, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor", "viewer"})
+    _apply_rate_limit(policy_name="subscription", request=request, session=session, workspace_id=workspace_id)
     account = get_coaching_account_subscription(workspace_id=workspace_id, username=session.username, email=email)
     status = _normalize_subscription_status(str((account or {}).get("subscription_status") or "not_found"))
     events = list_recent_coaching_subscription_events(workspace_id=workspace_id, email=email, limit=10)
@@ -1926,6 +1947,7 @@ def coaching_pilot_launch_readiness(workspace_id: str, submission_id: str | None
 @app.post("/coaching/subscription/sync")
 def coaching_subscription_sync(req: CoachingSubscriptionSyncRequest, request: Request, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor"})
+    _apply_rate_limit(policy_name="subscription", request=request, session=session, workspace_id=req.workspace_id)
     verification = _verify_subscription_webhook_signature(req)
     if not verification.valid:
         logger.warning(
@@ -1948,11 +1970,17 @@ def coaching_subscription_sync(req: CoachingSubscriptionSyncRequest, request: Re
         )
         raise HTTPException(status_code=403, detail="Invalid webhook authentication")
 
-    incoming_event_id = str((req.raw_event or {}).get("id") or "").strip()
-    event_id = incoming_event_id or str(uuid4())
     normalized_status = _normalize_subscription_status(req.subscription_status)
+    event_id, derived_event_id = _derive_subscription_event_id(
+        raw_event=req.raw_event,
+        provider=req.provider,
+        workspace_id=req.workspace_id,
+        email=req.email,
+        event_type=req.event_type,
+        status=normalized_status,
+    )
 
-    existing = get_coaching_subscription_event(event_id) if incoming_event_id else None
+    existing = get_coaching_subscription_event(event_id)
     if existing:
         replay_status = _normalize_subscription_status(str((existing.get("payload_json") or {}).get("subscription_status") or normalized_status))
         return {
@@ -1963,6 +1991,7 @@ def coaching_subscription_sync(req: CoachingSubscriptionSyncRequest, request: Re
             "status": replay_status,
             "active": _is_active_subscription(replay_status),
             "idempotent_replay": True,
+            "idempotency_key_source": "derived" if derived_event_id else "provider_event_id",
             "message": "Subscription event already processed.",
         }
 
@@ -2014,12 +2043,14 @@ def coaching_subscription_sync(req: CoachingSubscriptionSyncRequest, request: Re
         "status": normalized_status,
         "active": _is_active_subscription(normalized_status),
         "idempotent_replay": False,
+        "idempotency_key_source": "derived" if derived_event_id else "provider_event_id",
         "message": "Subscription sync stub accepted and stored.",
     }
 
 
 @app.post("/coaching/subscription/webhook")
 async def coaching_subscription_webhook(request: Request) -> dict:
+    _apply_rate_limit(policy_name="subscription", request=request)
     raw_body = await request.body()
     payload = parse_webhook_body(raw_body)
     provider = str(request.headers.get("x-webhook-provider") or payload.get("provider") or "squarespace").strip().lower()
@@ -2046,10 +2077,16 @@ async def coaching_subscription_webhook(request: Request) -> dict:
     except ValidationError as exc:
         raise HTTPException(status_code=400, detail={"code": "invalid_webhook_payload", "errors": exc.errors()})
 
-    incoming_event_id = str((req.raw_event or {}).get("id") or "").strip()
-    event_id = incoming_event_id or str(uuid4())
     normalized_status = _normalize_subscription_status(req.subscription_status)
-    existing = get_coaching_subscription_event(event_id) if incoming_event_id else None
+    event_id, derived_event_id = _derive_subscription_event_id(
+        raw_event=req.raw_event,
+        provider=req.provider,
+        workspace_id=req.workspace_id,
+        email=req.email,
+        event_type=req.event_type,
+        status=normalized_status,
+    )
+    existing = get_coaching_subscription_event(event_id)
     if existing:
         replay_status = _normalize_subscription_status(str((existing.get("payload_json") or {}).get("subscription_status") or normalized_status))
         return {
@@ -2060,6 +2097,7 @@ async def coaching_subscription_webhook(request: Request) -> dict:
             "status": replay_status,
             "active": _is_active_subscription(replay_status),
             "idempotent_replay": True,
+            "idempotency_key_source": "derived" if derived_event_id else "provider_event_id",
             "message": "Subscription event already processed.",
         }
 
@@ -2094,6 +2132,7 @@ async def coaching_subscription_webhook(request: Request) -> dict:
         "status": normalized_status,
         "active": _is_active_subscription(normalized_status),
         "idempotent_replay": False,
+        "idempotency_key_source": "derived" if derived_event_id else "provider_event_id",
         "message": "Subscription sync stub accepted and stored.",
     }
 

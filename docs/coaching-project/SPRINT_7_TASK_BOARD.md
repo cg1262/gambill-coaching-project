@@ -45,3 +45,45 @@ Sprint Goal: Close remaining launch blockers (web deterministic build + runtime 
    - `npm run build:clean`
 2. Attach clean logs + commit SHA to Sprint 7 evidence packet.
 3. If any residual `EISDIR` appears under compliant runtime, capture exact path and add targeted integrity repair (preinstall sanitation) before release gate.
+
+---
+
+## Checkpoint Update (2026-03-03 — Sprint 7 Backend Execution)
+
+## Done
+- Tightened webhook/sync idempotency in `apps/api/main.py` by adding `_derive_subscription_event_id(...)`.
+- Both `POST /coaching/subscription/sync` and `POST /coaching/subscription/webhook` now:
+  - dedupe replay events even when provider `raw_event.id` is missing,
+  - return `idempotency_key_source` (`provider_event_id` or `derived`) for pilot observability.
+- Verified route-level throttling coverage for operational subscription paths:
+  - `POST|GET /coaching/subscription/status`
+  - `GET /coaching/subscription/lifecycle-readiness`
+  - `GET /coaching/pilot/launch-readiness`
+  - `POST /coaching/subscription/sync`
+  - `POST /coaching/subscription/webhook`
+- Extended parameterized rate-limit tuning in `apps/api/rate_limits.py` with `RATE_LIMIT_SUBSCRIPTION_USER_BURST`.
+- Added Sprint 7 backend regression suite `apps/api/tests/test_coaching_sprint7_backend.py` covering:
+  - derived idempotency replay behavior,
+  - admin override path for subscription rate-limit policy,
+  - controlled pilot trace (intake → generate → regenerate → export → review feedback) and conversion/feedback integrity.
+
+## Validation
+- Focused security + Sprint 7 backend checks (`apps/api`):
+  - `python -m pytest -q tests/test_coaching_sprint7_backend.py tests/test_security_rate_limit_webhook.py tests/test_rate_limits_and_webhooks.py tests/test_coaching_subscription.py`
+  - Result: **17 passed, 1 warning**.
+- Full API regression (`apps/api`):
+  - `python -m pytest -q`
+  - Result: **131 passed, 4 skipped, 1 warning**.
+
+## Risks
+- Derived idempotency keys intentionally collapse payload-equivalent no-ID events; if providers emit distinct no-ID events with identical payloads, they will be treated as replay.
+- Alerting/automation for repeated invalid webhook signatures is still an operational follow-up (enforcement exists; alert pipeline is not added in this pass).
+
+## Needs from others
+- Ops/SRE sign-off on invalid-signature alert thresholds and routing.
+- Product decision confirmation on strict no-ID dedupe semantics.
+
+## Next
+1. Optionally add windowed/TTL-aware dedupe keying if looser no-ID semantics are desired.
+2. Wire repeated invalid-signature detection into production alerting and close checklist item.
+3. Include these backend evidence commands/results in pilot launch notes alongside web runtime-parity proof.
