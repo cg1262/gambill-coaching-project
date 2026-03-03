@@ -3,6 +3,28 @@
 Last Updated: 2026-03-02
 Owner: ERD Program Team
 
+## Checkpoint Update (2026-03-02 - Frontend Hotfix: Session Banner + Self-Assessment UX)
+
+### Done
+- Hardened session-expired banner behavior in `CoachingProjectWorkbench` with a single auth-error handler:
+  - added centralized protected-call error mapper (`handleProtectedApiError`) as the single source of auth error truth.
+  - all protected API catch paths now route through this helper.
+  - session banner + readiness auth residue are cleared on authenticated 2xx responses via `markAuthenticatedApiSuccess()` (including generation/review/detail paths before business-level `ok` checks).
+- Updated self-assessment skills confidence controls to include explicit adjacent labels per dropdown (SQL, data modeling, orchestration, stakeholder comms).
+- Reworked tools/platform exposure in self-assessment to checkbox lists with `Other` checkbox + conditional free-text input for both platforms and tools.
+- Replaced ambiguous constraints/support numeric dropdown with labeled fields + helper copy:
+  - hours available per week
+  - target timeline in weeks
+  - support needed from coach
+- Added tighter section spacing and clearer inline labels in the self-assessment cards for faster scanning.
+
+### Validation
+- `npm run typecheck` (from `apps/web`) ✅
+
+### Risks / Follow-ups
+- "Other" values are currently serialized into formatted self-assessment text for compatibility; move to first-class structured backend fields if downstream analytics/reporting needs object-level parsing.
+- Preferences timeline selector still exists in the stack/timeline step; alignment between that selector and self-assessment timeline should be finalized in product UX decisions.
+
 ## Checkpoint Update (2026-03-02 - Frontend Sprint 3 Kickoff: Route Split + Build Resilience)
 
 ### Done
@@ -1057,6 +1079,30 @@ _Status refresh: checkpoint finalized with tests + docs updates in this pass._
 1. Add prompt versioning + experiment IDs in persisted generation metadata.
 2. Add second-stage revision prompt path (LLM-guided fix-up) behind a feature flag for higher pass rates.
 3. Add end-to-end API tests with mocked provider error/status branches.
+
+## Checkpoint 2026-03-02 (Backend output template structure pass)
+
+### Done
+- Updated LLM generation contract/prompt in `apps/api/coaching.py` to enforce exemplar-like section flow while preserving personalization:
+  - Added `REQUIRED_SECTION_FLOW` and injected explicit `top_level_order_required` + `section_flow` guidance into `required_contract`.
+  - Strengthened hard rules to require exact section-order mirroring plus candidate-personalized narrative.
+  - Updated system prompt to explicitly require exemplar order + personalized content.
+- Added explicit structure validation and rejection behavior:
+  - New `evaluate_sow_structure(...)` diagnostics helper returns expected/actual sequence, order validity, missing sections, and `structure_score`.
+  - `validate_sow_payload(...)` now emits `SECTION_ORDER_INVALID` and `MISSING_SECTION` based on structural analysis.
+  - `generate_sow_with_llm(...)` now rejects/retries LLM outputs that violate required structure contract before accepting output.
+- Added structure diagnostics to API responses/persistence in `apps/api/main.py`:
+  - `quality` now includes `structure_score` and `missing_sections`.
+  - Added `quality.structure_diagnostics` payload for full section-order diagnostics.
+  - `schema.required_sections` now reflects full ordered contract (`REQUIRED_SECTION_FLOW`).
+- Added tests for structure completeness/order + diagnostics:
+  - `apps/api/tests/test_coaching_llm_contract.py`
+    - new coverage for missing sections + order mismatch in structure evaluator,
+    - validator emits `SECTION_ORDER_INVALID` for reordered top-level blocks,
+    - generate response now asserts structure diagnostics fields.
+
+### Validation
+- `python -m pytest tests/test_coaching_llm_contract.py tests/test_coaching_pass2.py tests/test_coaching_generation_guardrails.py -q` (from `apps/api`)
 
 ## Checkpoint Update (2026-03-02 - Sprint 2 Security Tasks A2/C1/E1/E2)
 
