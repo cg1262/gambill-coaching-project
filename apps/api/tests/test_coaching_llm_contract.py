@@ -94,6 +94,10 @@ def test_generate_sow_uses_llm_meta_and_quality_flags(monkeypatch):
     assert body["generation_meta"]["model"] == "gpt-test"
     assert body["sow"]["project_story"]["executive_summary"]
     assert body["sow"]["milestones"][0]["resources"]
+    assert body["sow"]["milestones"][0]["execution_plan"]
+    assert body["sow"]["milestones"][0]["expected_deliverable"]
+    assert body["sow"]["milestones"][0]["business_why"]
+    assert body["quality"]["quality_diagnostics"]["floor_score"] == 80
     assert captured["validation"]["generation_meta"]["provider"] == "openai-compatible"
     assert "quality_flags" in captured["validation"]
 

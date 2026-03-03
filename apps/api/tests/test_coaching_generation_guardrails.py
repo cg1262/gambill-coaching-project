@@ -87,6 +87,9 @@ def test_generate_sow_applies_guardrails_and_persists_run(monkeypatch):
     assert captured["validation"]["guardrails"]["strict_schema"] is True
     assert isinstance(body["sow"]["milestones"], list)
     assert body["sow"]["resource_plan"]["required"]
+    assert body["quality"]["quality_diagnostics"]["floor_score"] == 80
+    assert "auto_regenerated_for_quality_floor" in body["quality_flags"]
+    assert "quality_diagnostics" in captured["validation"]["quality"]
     app.dependency_overrides = {}
 
 

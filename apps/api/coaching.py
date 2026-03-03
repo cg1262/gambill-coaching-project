@@ -252,6 +252,7 @@ def generate_sow_with_llm(
             "data_source_shape": {"name": "string", "url": "https://real-link", "ingestion_doc_url": "https://real-doc-link"},
             "milestone_shape": {
                 "name": "string", "duration_weeks": "int>=1", "deliverables": ["string"],
+                "execution_plan": "string", "expected_deliverable": "string", "business_why": "string",
                 "milestone_tags": ["string"], "resources": [{"title": "string", "url": "https://real-link"}],
             },
             "project_story_required": ["executive_summary", "challenge", "approach", "impact_story"],
@@ -261,7 +262,10 @@ def generate_sow_with_llm(
                 "Return JSON only, no markdown",
                 "Use real non-placeholder URLs",
                 "At least 3 milestones",
+                "Each milestone must include execution_plan, expected_deliverable, and business_why",
                 "Each milestone must include at least one resource link",
+                "Include at least one concrete public data source URL",
+                "Include at least one ingestion documentation URL",
                 "Every data source must include ingestion_doc_url",
             ],
         },
@@ -273,7 +277,7 @@ def generate_sow_with_llm(
         "messages": [
             {
                 "role": "system",
-                "content": "You are a senior data engineering consulting partner. Produce production-grade SOW JSON following the required contract exactly.",
+                "content": "You are a senior data engineering consulting partner. Produce production-grade SOW JSON following the required contract exactly. For each milestone, provide concrete execution details (what to do), explicit expected deliverable quality, and business rationale that ties work to measurable outcomes.",
             },
             {"role": "user", "content": json.dumps(prompt_payload)},
         ],
@@ -398,6 +402,9 @@ def build_sow_skeleton(
                 "name": "Discovery + Business framing",
                 "duration_weeks": 1,
                 "deliverables": ["scope brief", "KPI definitions"],
+                "execution_plan": "Interview stakeholders, map source systems, and define KPI ownership with acceptance criteria.",
+                "expected_deliverable": "Signed project charter with KPI dictionary, source inventory, and scope boundaries approved by sponsor.",
+                "business_why": "Aligning scope and KPI definitions early prevents rework and accelerates measurable ROI delivery.",
                 "milestone_tags": ["discovery", "architecture", "roi"],
                 "resources": [{"title": "Kimball Dimensional Modeling", "url": "https://www.kimballgroup.com/data-warehouse-business-intelligence-resources/"}],
             },
@@ -405,6 +412,9 @@ def build_sow_skeleton(
                 "name": "Bronze/Silver implementation",
                 "duration_weeks": 2,
                 "deliverables": ["ingestion jobs", "DQ checks"],
+                "execution_plan": "Build incremental ingestion pipelines, apply schema evolution handling, and implement automated data quality gates.",
+                "expected_deliverable": "Production-ready bronze/silver DAGs with tests, monitoring, and documented failure handling.",
+                "business_why": "Reliable ingestion and conformance reduce reporting defects and improve trust in downstream analytics.",
                 "milestone_tags": ["bronze", "silver", "pipeline"],
                 "resources": [{"title": "Delta Lake Medallion Architecture", "url": "https://docs.databricks.com/en/lakehouse/medallion.html"}],
             },
@@ -412,6 +422,9 @@ def build_sow_skeleton(
                 "name": "Gold + ROI dashboard",
                 "duration_weeks": 1,
                 "deliverables": ["semantic model", "executive dashboard"],
+                "execution_plan": "Model gold marts for executive questions, define semantic layer metrics, and build ROI dashboard narratives.",
+                "expected_deliverable": "Validated KPI dashboard with traceable metric definitions and stakeholder walkthrough recording.",
+                "business_why": "Clear KPI visibility enables faster decisions and proves business impact of the data platform investment.",
                 "milestone_tags": ["gold", "roi", "bi"],
                 "resources": [{"title": "Power BI Design Guidance", "url": "https://learn.microsoft.com/en-us/power-bi/guidance/"}],
             },
@@ -419,6 +432,9 @@ def build_sow_skeleton(
                 "name": "Final review + portfolio assets",
                 "duration_weeks": 1,
                 "deliverables": ["architecture narrative", "repo walkthrough"],
+                "execution_plan": "Package architecture decisions, demo script, and retrospective into a portfolio-quality delivery artifact set.",
+                "expected_deliverable": "Publish-ready repo and presentation assets that communicate technical depth and business outcomes.",
+                "business_why": "Strong communication artifacts increase hiring signal and stakeholder confidence in project value.",
                 "milestone_tags": ["communication", "career"],
                 "resources": [{"title": "GitHub Portfolio Guide", "url": "https://docs.github.com/en/get-started/showcase-your-work/about-your-profile"}],
             },
@@ -474,17 +490,33 @@ def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
     data_sources = business.get("data_sources") or []
     if not isinstance(data_sources, list) or len(data_sources) == 0:
         findings.append({"code": "DATA_SOURCES_MISSING", "message": "business_outcome.data_sources must include at least one source."})
+    concrete_source_links = 0
+    ingestion_doc_links = 0
     for i, ds in enumerate(data_sources):
-        if not _is_valid_non_placeholder_url(str(ds.get("url") or "")):
+        if _is_valid_non_placeholder_url(str(ds.get("url") or "")):
+            concrete_source_links += 1
+        else:
             findings.append({"code": "DATA_SOURCE_LINK_INVALID", "message": f"data_sources[{i}].url must be a real link."})
-        if not _is_valid_non_placeholder_url(str(ds.get("ingestion_doc_url") or "")):
+        if _is_valid_non_placeholder_url(str(ds.get("ingestion_doc_url") or "")):
+            ingestion_doc_links += 1
+        else:
             findings.append({"code": "INGESTION_DOC_LINK_MISSING", "message": f"data_sources[{i}].ingestion_doc_url must be a real link."})
+    if concrete_source_links < 1:
+        findings.append({"code": "DATA_SOURCE_PUBLIC_LINK_REQUIRED", "message": "At least one concrete public data source URL is required."})
+    if ingestion_doc_links < 1:
+        findings.append({"code": "DATA_SOURCE_INGESTION_DOC_REQUIRED", "message": "At least one ingestion documentation URL is required."})
 
     milestones = sow.get("milestones") or []
     if not isinstance(milestones, list) or len(milestones) < 3:
         findings.append({"code": "MILESTONE_MINIMUM", "message": "At least 3 milestones are required."})
     else:
         for i, ms in enumerate(milestones):
+            if not str(ms.get("execution_plan") or "").strip():
+                findings.append({"code": "MILESTONE_EXECUTION_PLAN_MISSING", "message": f"milestones[{i}].execution_plan is required."})
+            if not str(ms.get("expected_deliverable") or "").strip():
+                findings.append({"code": "MILESTONE_EXPECTED_DELIVERABLE_MISSING", "message": f"milestones[{i}].expected_deliverable is required."})
+            if not str(ms.get("business_why") or "").strip():
+                findings.append({"code": "MILESTONE_BUSINESS_WHY_MISSING", "message": f"milestones[{i}].business_why is required."})
             ms_resources = ms.get("resources") or []
             if not isinstance(ms_resources, list) or len(ms_resources) == 0:
                 findings.append({"code": "MILESTONE_RESOURCES_MISSING", "message": f"milestones[{i}] must include resources."})
@@ -535,6 +567,20 @@ def compute_sow_quality_score(sow: dict[str, Any], findings: list[dict[str, str]
     return {"score": score, "threshold_passed": score >= 70, "finding_count": len(issues)}
 
 
+def build_quality_diagnostics(quality: dict[str, Any], findings: list[dict[str, str]], floor_score: int = 80, auto_regenerated: bool = False) -> dict[str, Any]:
+    score = int(quality.get("score") or 0)
+    codes = [str(f.get("code") or "") for f in findings if str(f.get("code") or "")]
+    return {
+        "floor_score": floor_score,
+        "score": score,
+        "below_floor": score < int(floor_score),
+        "auto_regenerated": bool(auto_regenerated),
+        "deficiency_codes": sorted(set(codes)),
+        "deficiency_count": len(findings),
+        "top_deficiencies": [f.get("message") for f in findings[:5]],
+    }
+
+
 def auto_revise_sow_once(sow: dict[str, Any], findings: list[dict[str, str]]) -> dict[str, Any]:
     _ = findings
     out = dict(sow)
@@ -567,6 +613,12 @@ def auto_revise_sow_once(sow: dict[str, Any], findings: list[dict[str, str]]) ->
             {"name": "Report", "duration_weeks": 1, "deliverables": ["dashboard"], "milestone_tags": ["gold", "roi"], "resources": [{"title": "Looker modeling", "url": "https://cloud.google.com/looker/docs"}]},
         ]
     for ms in (out.get("milestones") or []):
+        if not str(ms.get("execution_plan") or "").strip():
+            ms["execution_plan"] = "Break work into implementation tasks, owners, and checkpoints with explicit acceptance criteria."
+        if not str(ms.get("expected_deliverable") or "").strip():
+            ms["expected_deliverable"] = "Deliverable is complete, validated, and demo-ready with reproducible evidence."
+        if not str(ms.get("business_why") or "").strip():
+            ms["business_why"] = "Milestone output should improve delivery speed, trust, or measurable business value."
         if not (ms.get("resources") or []):
             ms["resources"] = [{"title": "Project delivery best practices", "url": "https://www.pmi.org/learning/library"}]
 

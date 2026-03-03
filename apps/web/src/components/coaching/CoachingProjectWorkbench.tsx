@@ -1089,6 +1089,23 @@ export default function CoachingProjectWorkbench() {
                         <span> (before {generationState.quality.score - generationState.quality.quality_delta} → after {generationState.quality.score})</span>
                       )}
                     </div>
+                    {generationState.quality?.quality_diagnostics && (
+                      <>
+                        <div>Quality floor: <strong>{String(generationState.quality.quality_diagnostics.floor_score ?? "n/a")}</strong></div>
+                        <div>Auto-regenerated for floor: <strong>{generationState.quality.quality_diagnostics.auto_regenerated ? "yes" : "no"}</strong></div>
+                        <div>Deficiency count: <strong>{String(generationState.quality.quality_diagnostics.deficiency_count ?? 0)}</strong></div>
+                        {Array.isArray(generationState.quality.quality_diagnostics.top_deficiencies) && generationState.quality.quality_diagnostics.top_deficiencies.length > 0 && (
+                          <div>
+                            Top deficiencies:
+                            <ul style={{ margin: "4px 0 0 18px" }}>
+                              {generationState.quality.quality_diagnostics.top_deficiencies.slice(0, 3).map((msg: string, idx: number) => (
+                                <li key={`quality-def-${idx}`}>{msg}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
                 )}
               </div>
