@@ -2017,6 +2017,77 @@ def get_coaching_account_subscription(workspace_id: str, username: str | None = 
             return dict(row) if row else None
 
 
+def get_coaching_subscription_event(event_id: str) -> dict[str, Any] | None:
+    if not is_configured():
+        return None
+
+    if _using_duckdb():
+        with lakebase_connection() as conn:
+            rows = conn.execute("SELECT * FROM coaching_subscription_events WHERE event_id = ? LIMIT 1", [event_id]).fetchall()
+            if not rows:
+                return None
+            cols = [c[0] for c in conn.description]
+            row = dict(zip(cols, rows[0]))
+            try:
+                if isinstance(row.get("payload_json"), str):
+                    row["payload_json"] = json.loads(row.get("payload_json") or "{}")
+            except Exception:
+                pass
+            return row
+
+    import psycopg
+    with lakebase_connection() as conn:
+        with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+            cur.execute("SELECT * FROM coaching_subscription_events WHERE event_id = %s LIMIT 1", (event_id,))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+
+def list_recent_coaching_subscription_events(workspace_id: str, email: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+    if not is_configured():
+        return []
+    lim = max(1, min(int(limit or 20), 100))
+
+    if _using_duckdb():
+        with lakebase_connection() as conn:
+            if email:
+                rows = conn.execute(
+                    "SELECT * FROM coaching_subscription_events WHERE workspace_id = ? AND lower(coalesce(email, '')) = ? ORDER BY received_at DESC LIMIT ?",
+                    [workspace_id, email.strip().lower(), lim],
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM coaching_subscription_events WHERE workspace_id = ? ORDER BY received_at DESC LIMIT ?",
+                    [workspace_id, lim],
+                ).fetchall()
+            cols = [c[0] for c in conn.description]
+            out: list[dict[str, Any]] = []
+            for raw in rows:
+                row = dict(zip(cols, raw))
+                try:
+                    if isinstance(row.get("payload_json"), str):
+                        row["payload_json"] = json.loads(row.get("payload_json") or "{}")
+                except Exception:
+                    pass
+                out.append(row)
+            return out
+
+    import psycopg
+    with lakebase_connection() as conn:
+        with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+            if email:
+                cur.execute(
+                    "SELECT * FROM coaching_subscription_events WHERE workspace_id = %s AND lower(coalesce(email, '')) = %s ORDER BY received_at DESC LIMIT %s",
+                    (workspace_id, email.strip().lower(), lim),
+                )
+            else:
+                cur.execute(
+                    "SELECT * FROM coaching_subscription_events WHERE workspace_id = %s ORDER BY received_at DESC LIMIT %s",
+                    (workspace_id, lim),
+                )
+            return [dict(r) for r in (cur.fetchall() or [])]
+
+
 def save_coaching_subscription_event(
     event_id: str,
     workspace_id: str,

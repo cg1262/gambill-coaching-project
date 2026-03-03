@@ -42,6 +42,36 @@ def test_open_submissions_returns_non_completed_items(monkeypatch):
     app.dependency_overrides = {}
 
 
+def test_review_approve_send_generates_launch_token(monkeypatch):
+    app.dependency_overrides[get_current_session] = _override_session("editor")
+    monkeypatch.setattr(main, "_require_active_coaching_subscription", lambda **kwargs: {"subscription_status": "active", "plan_tier": "pro"})
+    monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: {"submission_id": submission_id, "workspace_id": "ws-1", "applicant_email": "candidate@example.com"})
+    monkeypatch.setattr(main, "get_latest_coaching_generation_run", lambda submission_id: {"run_id": "run-1", "run_status": "completed"})
+
+    updated = {}
+    monkeypatch.setattr(main, "update_coaching_review_status", lambda **kwargs: updated.update(kwargs))
+
+    client = TestClient(app)
+    res = client.post(
+        "/coaching/review/approve-send",
+        json={"workspace_id": "ws-1", "submission_id": "sub-1", "coach_notes": "approved"},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert body["coach_review_status"] == "approved_sent"
+    assert body["handoff"]["launch_token"]
+    assert updated["coach_review_status"] == "approved_sent"
+
+    verify = client.post(
+        "/coaching/member/launch-token/verify",
+        json={"workspace_id": "ws-1", "submission_id": "sub-1", "launch_token": body["handoff"]["launch_token"]},
+    )
+    assert verify.status_code == 200
+    assert verify.json()["valid"] is True
+    app.dependency_overrides = {}
+
+
 def test_review_submission_runs_returns_runs(monkeypatch):
     app.dependency_overrides[get_current_session] = _override_session("editor")
     monkeypatch.setattr(main, "_require_active_coaching_subscription", lambda **kwargs: {"subscription_status": "active"})

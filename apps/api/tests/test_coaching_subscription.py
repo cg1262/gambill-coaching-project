@@ -28,6 +28,29 @@ def test_subscription_status_not_found(monkeypatch):
     app.dependency_overrides = {}
 
 
+def test_subscription_lifecycle_readiness(monkeypatch):
+    app.dependency_overrides[get_current_session] = _override_session("viewer", "viewer1")
+    monkeypatch.setattr(
+        main,
+        "get_coaching_account_subscription",
+        lambda workspace_id, username=None, email=None: {"subscription_status": "active", "renewal_date": "2026-04-01", "plan_tier": "core"},
+    )
+    monkeypatch.setattr(
+        main,
+        "list_recent_coaching_subscription_events",
+        lambda workspace_id, email=None, limit=10: [{"event_id": "evt_1", "event_type": "subscription.updated", "provider": "stripe", "received_at": "2026-03-01T00:00:00Z", "payload_json": {"subscription_status": "active"}}],
+    )
+
+    client = TestClient(app)
+    res = client.get("/coaching/subscription/lifecycle-readiness", params={"workspace_id": "ws-1", "email": "test@example.com"})
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert body["checks"]["status_consistent_with_last_event"] is True
+    assert body["checks"]["event_stream_present"] is True
+    app.dependency_overrides = {}
+
+
 def test_subscription_sync_stub(monkeypatch):
     app.dependency_overrides[get_current_session] = _override_session("editor", "coach-admin")
 
@@ -66,4 +89,40 @@ def test_subscription_sync_stub(monkeypatch):
     assert body["status"] == "active"
     assert calls["event"] == 1
     assert calls["account"] == 1
+    assert body["idempotent_replay"] is False
+    app.dependency_overrides = {}
+
+
+def test_subscription_sync_is_idempotent_on_replay(monkeypatch):
+    app.dependency_overrides[get_current_session] = _override_session("editor", "coach-admin")
+
+    monkeypatch.setattr(
+        main,
+        "get_coaching_subscription_event",
+        lambda event_id: {"event_id": event_id, "payload_json": {"subscription_status": "active"}},
+    )
+
+    calls = {"event": 0, "account": 0}
+    monkeypatch.setattr(main, "save_coaching_subscription_event", lambda **kwargs: calls.__setitem__("event", calls["event"] + 1))
+    monkeypatch.setattr(main, "upsert_coaching_account_subscription", lambda **kwargs: calls.__setitem__("account", calls["account"] + 1))
+
+    client = TestClient(app)
+    res = client.post(
+        "/coaching/subscription/sync",
+        json={
+            "workspace_id": "ws-1",
+            "provider": "stripe",
+            "event_type": "customer.subscription.updated",
+            "email": "test@example.com",
+            "plan_tier": "core",
+            "subscription_status": "trialing",
+            "raw_event": {"id": "evt_dupe"},
+        },
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert body["idempotent_replay"] is True
+    assert calls["event"] == 0
+    assert calls["account"] == 0
     app.dependency_overrides = {}
