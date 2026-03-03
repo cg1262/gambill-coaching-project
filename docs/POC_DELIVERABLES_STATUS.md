@@ -1091,10 +1091,9 @@ _Status refresh: checkpoint finalized with tests + docs updates in this pass._
   - New `evaluate_sow_structure(...)` diagnostics helper returns expected/actual sequence, order validity, missing sections, and `structure_score`.
   - `validate_sow_payload(...)` now emits `SECTION_ORDER_INVALID` and `MISSING_SECTION` based on structural analysis.
   - `generate_sow_with_llm(...)` now rejects/retries LLM outputs that violate required structure contract before accepting output.
-- Added structure diagnostics to API responses/persistence in `apps/api/main.py`:
-  - `quality` now includes `structure_score` and `missing_sections`.
-  - Added `quality.structure_diagnostics` payload for full section-order diagnostics.
-  - `schema.required_sections` now reflects full ordered contract (`REQUIRED_SECTION_FLOW`).
+- Added structure diagnostics to quality scoring output consumed by generation responses:
+  - `quality` now includes `structure_score`, `missing_sections`, and `section_order_valid`.
+  - Findings now explicitly include `SECTION_ORDER_INVALID` when top-level flow is wrong.
 - Added tests for structure completeness/order + diagnostics:
   - `apps/api/tests/test_coaching_llm_contract.py`
     - new coverage for missing sections + order mismatch in structure evaluator,

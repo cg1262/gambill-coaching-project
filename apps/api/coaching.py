@@ -40,6 +40,19 @@ TAG_TOPIC_MAP = {
     "architecture": ["architecture", "distributed-systems", "data-platform"],
 }
 
+REQUIRED_SECTION_FLOW = [
+    "schema_version",
+    "project_title",
+    "candidate_profile",
+    "business_outcome",
+    "solution_architecture",
+    "project_story",
+    "milestones",
+    "roi_dashboard_requirements",
+    "resource_plan",
+    "mentoring_cta",
+]
+
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -266,10 +279,17 @@ def generate_sow_with_llm(
         },
         "parsed_jobs": parsed_jobs[:8],
         "required_contract": {
-            "top_level_required": [
-                "schema_version", "project_title", "candidate_profile", "business_outcome",
-                "solution_architecture", "project_story", "milestones", "roi_dashboard_requirements",
-                "resource_plan", "mentoring_cta",
+            "top_level_required": list(REQUIRED_SECTION_FLOW),
+            "top_level_order_required": list(REQUIRED_SECTION_FLOW),
+            "section_flow": [
+                "project_title -> candidate profile context",
+                "business_outcome -> measurable KPI targets + public data sources",
+                "solution_architecture -> medallion implementation plan",
+                "project_story -> executive narrative (summary, challenge, approach, impact)",
+                "milestones -> execution_plan + expected_deliverable + business_why",
+                "roi_dashboard_requirements -> dimensions + measures",
+                "resource_plan -> required/recommended/optional links + trust language",
+                "mentoring_cta -> optional personalized recommendation language",
             ],
             "business_outcome_required": ["problem_statement", "target_metrics", "domain_focus", "data_sources"],
             "data_source_shape": {"name": "string", "url": "https://real-link", "ingestion_doc_url": "https://real-doc-link"},
@@ -283,6 +303,8 @@ def generate_sow_with_llm(
             "resources_required": ["required", "recommended", "optional", "affiliate_disclosure", "trust_language"],
             "hard_rules": [
                 "Return JSON only, no markdown",
+                "Mirror exemplar section sequence and flow exactly using top_level_order_required",
+                "Keep content personalized to candidate resume/preferences/target roles (no generic placeholder narrative)",
                 "Use real non-placeholder URLs",
                 "At least 3 milestones",
                 "Each milestone must include execution_plan, expected_deliverable, and business_why",
@@ -300,7 +322,7 @@ def generate_sow_with_llm(
         "messages": [
             {
                 "role": "system",
-                "content": "You are a senior data engineering consulting partner. Produce production-grade SOW JSON following the required contract exactly. For each milestone, provide concrete execution details (what to do), explicit expected deliverable quality, and business rationale that ties work to measurable outcomes.",
+                "content": "You are a senior data engineering consulting partner. Produce production-grade SOW JSON following the required contract exactly. The top-level section order must mirror the exemplar flow exactly, while all narrative content remains personalized to the candidate context. For each milestone, provide concrete execution details (what to do), explicit expected deliverable quality, and business rationale that ties work to measurable outcomes.",
             },
             {"role": "user", "content": json.dumps(prompt_payload)},
         ],
@@ -325,6 +347,13 @@ def generate_sow_with_llm(
                 payload = json.loads(resp.read().decode("utf-8", errors="ignore"))
             content = (((payload.get("choices") or [{}])[0].get("message") or {}).get("content") or "{}")
             sow = _safe_json_loads(content)
+            structure = evaluate_sow_structure(sow)
+            if structure.get("missing_sections") or not structure.get("order_valid"):
+                last_error = "LLM output failed required structure contract"
+                error_type = "schema"
+                if attempts <= max_retries:
+                    continue
+                break
             return {
                 "ok": True,
                 "sow": sow,
@@ -549,23 +578,49 @@ def build_sow_skeleton(
     }
 
 
+def evaluate_sow_structure(sow: dict[str, Any]) -> dict[str, Any]:
+    payload = sow or {}
+    expected = list(REQUIRED_SECTION_FLOW)
+    missing_sections = [section for section in expected if section not in payload]
+    actual_sequence = [key for key in payload.keys() if key in expected]
+    expected_sequence = [section for section in expected if section in payload]
+
+    order_valid = actual_sequence == expected_sequence
+    out_of_order_sections: list[str] = []
+    if not order_valid:
+        for index, section in enumerate(actual_sequence):
+            if index >= len(expected_sequence) or section != expected_sequence[index]:
+                out_of_order_sections.append(section)
+
+    structure_score = int(((len(expected) - len(missing_sections)) / len(expected)) * 100)
+    if not order_valid:
+        structure_score = max(0, structure_score - (10 * max(1, len(out_of_order_sections))))
+
+    return {
+        "expected_sequence": expected,
+        "actual_sequence": actual_sequence,
+        "order_valid": order_valid,
+        "missing_sections": missing_sections,
+        "out_of_order_sections": out_of_order_sections,
+        "structure_score": max(0, min(100, structure_score)),
+        "structure_valid": (len(missing_sections) == 0 and order_valid),
+    }
+
+
 def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
     sow, safety_findings = sanitize_generated_sow(sow)
     findings: list[dict[str, str]] = list(safety_findings)
 
-    required_top_keys = [
-        "project_title",
-        "business_outcome",
-        "solution_architecture",
-        "project_story",
-        "milestones",
-        "roi_dashboard_requirements",
-        "resource_plan",
-        "mentoring_cta",
-    ]
-    for key in required_top_keys:
-        if key not in sow:
-            findings.append({"code": "MISSING_SECTION", "message": f"Missing required section: {key}"})
+    structure = evaluate_sow_structure(sow)
+    for key in structure.get("missing_sections") or []:
+        findings.append({"code": "MISSING_SECTION", "message": f"Missing required section: {key}"})
+    if not structure.get("order_valid"):
+        findings.append(
+            {
+                "code": "SECTION_ORDER_INVALID",
+                "message": "Top-level sections are out of order. Follow REQUIRED_SECTION_FLOW.",
+            }
+        )
 
     medallion = ((sow.get("solution_architecture") or {}).get("medallion_plan") or {})
     for layer in ["bronze", "silver", "gold"]:
@@ -643,21 +698,18 @@ def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
 
 def compute_sow_quality_score(sow: dict[str, Any], findings: list[dict[str, str]] | None = None) -> dict[str, Any]:
     issues = findings if findings is not None else validate_sow_payload(sow)
+    structure = evaluate_sow_structure(sow)
     penalties = min(80, len(issues) * 8)
-    required_sections = [
-        "project_title",
-        "business_outcome",
-        "solution_architecture",
-        "project_story",
-        "milestones",
-        "roi_dashboard_requirements",
-        "resource_plan",
-        "mentoring_cta",
-    ]
-    present = sum(1 for k in required_sections if k in (sow or {}))
-    completeness = int((present / len(required_sections)) * 20)
-    score = max(0, min(100, completeness + (80 - penalties)))
-    return {"score": score, "threshold_passed": score >= 70, "finding_count": len(issues)}
+    content_score = max(0, min(100, 100 - penalties))
+    score = int(round((0.7 * content_score) + (0.3 * int(structure.get("structure_score") or 0))))
+    return {
+        "score": score,
+        "threshold_passed": score >= 70,
+        "finding_count": len(issues),
+        "structure_score": int(structure.get("structure_score") or 0),
+        "missing_sections": structure.get("missing_sections") or [],
+        "section_order_valid": bool(structure.get("order_valid")),
+    }
 
 
 def build_quality_diagnostics(quality: dict[str, Any], findings: list[dict[str, str]], floor_score: int = 80, auto_regenerated: bool = False) -> dict[str, Any]:
@@ -671,6 +723,9 @@ def build_quality_diagnostics(quality: dict[str, Any], findings: list[dict[str, 
         "deficiency_codes": sorted(set(codes)),
         "deficiency_count": len(findings),
         "top_deficiencies": [f.get("message") for f in findings[:5]],
+        "structure_score": int(quality.get("structure_score") or 0),
+        "missing_sections": quality.get("missing_sections") or [],
+        "section_order_valid": bool(quality.get("section_order_valid")),
     }
 
 

@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 import main
 from auth import Session, get_current_session
-from coaching import validate_sow_payload
+from coaching import validate_sow_payload, build_sow_skeleton, evaluate_sow_structure
 from main import app
 
 
@@ -46,6 +46,56 @@ def test_validator_flags_required_contract_fields():
     assert "PROJECT_STORY_MISSING" in codes
     assert "INGESTION_DOC_LINK_MISSING" in codes
     assert "MILESTONE_RESOURCES_MISSING" in codes
+
+
+def test_structure_evaluator_flags_missing_and_order_mismatch():
+    sow = {
+        "schema_version": "0.2",
+        "project_title": "Example",
+        "business_outcome": {},
+        "candidate_profile": {},
+        "solution_architecture": {},
+    }
+    structure = evaluate_sow_structure(sow)
+    assert "milestones" in structure["missing_sections"]
+    assert structure["order_valid"] is False
+    assert structure["structure_score"] < 100
+
+
+
+def test_validator_flags_section_order_invalid():
+    sow = build_sow_skeleton(
+        intake={"applicant_name": "Candidate", "preferences": {}},
+        parsed_jobs=[],
+    )
+    reordered = {
+        "schema_version": sow["schema_version"],
+        "project_title": sow["project_title"],
+        "candidate_profile": sow["candidate_profile"],
+        "solution_architecture": sow["solution_architecture"],
+        "business_outcome": sow["business_outcome"],
+        "project_story": sow["project_story"],
+        "milestones": sow["milestones"],
+        "roi_dashboard_requirements": sow["roi_dashboard_requirements"],
+        "resource_plan": sow["resource_plan"],
+        "mentoring_cta": sow["mentoring_cta"],
+    }
+    codes = {f["code"] for f in validate_sow_payload(reordered)}
+    assert "SECTION_ORDER_INVALID" in codes
+
+
+
+def test_skeleton_data_sources_include_public_links_docs_and_rationale():
+    sow = build_sow_skeleton(
+        intake={"applicant_name": "Candidate", "preferences": {"stack": ["python"], "tool_preferences": ["power bi"]}},
+        parsed_jobs=[{"signals": {"skills": ["SQL"], "tools": ["Power BI"], "domains": ["transport"]}}],
+    )
+    data_sources = sow["business_outcome"]["data_sources"]
+    assert len(data_sources) >= 1
+    for source in data_sources:
+        assert str(source.get("url") or "").startswith("https://")
+        assert str(source.get("ingestion_doc_url") or "").startswith("https://")
+        assert str(source.get("selection_rationale") or "").strip()
 
 
 def test_generate_sow_uses_llm_meta_and_quality_flags(monkeypatch):
@@ -98,6 +148,8 @@ def test_generate_sow_uses_llm_meta_and_quality_flags(monkeypatch):
     assert body["sow"]["milestones"][0]["expected_deliverable"]
     assert body["sow"]["milestones"][0]["business_why"]
     assert body["quality"]["quality_diagnostics"]["floor_score"] == 80
+    assert "structure_score" in body["quality"]
+    assert "missing_sections" in body["quality"]
     assert captured["validation"]["generation_meta"]["provider"] == "openai-compatible"
     assert "quality_flags" in captured["validation"]
 
