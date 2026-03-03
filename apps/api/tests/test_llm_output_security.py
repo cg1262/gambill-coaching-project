@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
+import pytest
 
 import main
 from auth import Session, get_current_session, issue_token
@@ -162,7 +163,16 @@ def test_generation_meta_is_sanitized_and_secret_free(monkeypatch):
         app.dependency_overrides = {}
 
 
-def test_generated_sow_blocks_unsafe_urls_and_secret_text(monkeypatch):
+@pytest.mark.parametrize(
+    "unsafe_url",
+    [
+        "http://127.0.0.1/private",
+        "https://user:pass@localhost/admin",
+        "data:text/html,evil",
+        "javascript:alert(1)",
+    ],
+)
+def test_generated_sow_blocks_unsafe_urls_and_secret_text(monkeypatch, unsafe_url):
     app.dependency_overrides[get_current_session] = _override_session("editor")
     monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: _base_intake(submission_id))
     monkeypatch.setattr(
@@ -194,7 +204,7 @@ def test_generated_sow_blocks_unsafe_urls_and_secret_text(monkeypatch):
             ],
             "roi_dashboard_requirements": {"required_dimensions": ["time"], "required_measures": ["cost_savings"]},
             "resource_plan": {
-                "required": [{"title": "token=supersecret", "url": "http://127.0.0.1/private", "reason": "api_key=hunter2"}],
+                "required": [{"title": "token=supersecret", "url": unsafe_url, "reason": "api_key=hunter2"}],
                 "recommended": [],
                 "optional": [],
                 "affiliate_disclosure": "Bearer abc.def.ghi",
@@ -220,7 +230,7 @@ def test_generated_sow_blocks_unsafe_urls_and_secret_text(monkeypatch):
         body = res.json()
 
         serialized = str(body).lower()
-        assert "127.0.0.1/private" not in serialized
+        assert unsafe_url.lower() not in serialized
         assert "data:text/html" not in serialized
         assert "supersecret" not in serialized
         assert "hunter2" not in serialized
@@ -238,5 +248,98 @@ def test_generated_sow_blocks_unsafe_urls_and_secret_text(monkeypatch):
         if program_url:
             urls.append(program_url)
         assert all(u.startswith("http://") or u.startswith("https://") for u in urls)
+    finally:
+        app.dependency_overrides = {}
+
+def test_project_story_narrative_fields_are_secret_masked(monkeypatch):
+    app.dependency_overrides[get_current_session] = _override_session("editor")
+    monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: _base_intake(submission_id))
+    monkeypatch.setattr(
+        main,
+        "get_coaching_account_subscription",
+        lambda workspace_id, username=None, email=None: {"subscription_status": "active", "email": email},
+    )
+
+    monkeypatch.setattr(
+        main,
+        "build_sow_skeleton",
+        lambda intake, parsed_jobs: {
+            "schema_version": "0.2",
+            "project_title": "Title api_key=title-secret",
+            "candidate_profile": {},
+            "business_outcome": {"problem_statement": "safe", "data_sources": [{"name": "Public", "url": "https://example.org/data", "ingestion_doc_url": "https://example.org/docs", "selection_rationale": "safe"}]},
+            "solution_architecture": {"medallion_plan": {"bronze": "b", "silver": "s", "gold": "g"}},
+            "project_story": {
+                "executive_summary": "token=story-secret",
+                "challenge": "bearer aaa.bbb.ccc",
+                "approach": "password=hunter2",
+                "impact_story": "clean",
+            },
+            "milestones": [
+                {"name": "M1", "duration_weeks": 1, "deliverables": ["d1"], "milestone_tags": ["discovery"], "resources": [{"title": "r", "url": "https://example.org/r1"}]},
+                {"name": "M2", "duration_weeks": 1, "deliverables": ["d2"], "milestone_tags": ["bronze"], "resources": [{"title": "r", "url": "https://example.org/r2"}]},
+                {"name": "M3", "duration_weeks": 1, "deliverables": ["d3"], "milestone_tags": ["gold"], "resources": [{"title": "r", "url": "https://example.org/r3"}]},
+            ],
+            "roi_dashboard_requirements": {"required_dimensions": ["time"], "required_measures": ["cost_savings"]},
+            "resource_plan": {"required": [{"title": "r", "url": "https://example.org/res"}], "recommended": [], "optional": [], "affiliate_disclosure": "safe", "trust_language": "safe"},
+            "mentoring_cta": {"trust_language": "safe", "program_url": "https://example.org/program"},
+        },
+    )
+
+    try:
+        client = TestClient(app)
+        res = client.post(
+            "/coaching/sow/generate",
+            json={"workspace_id": "ws-1", "submission_id": "sub-1", "parsed_jobs": []},
+        )
+        assert res.status_code == 200
+        serialized = str(res.json()).lower()
+        assert "story-secret" not in serialized
+        assert "hunter2" not in serialized
+        assert "aaa.bbb.ccc" not in serialized
+    finally:
+        app.dependency_overrides = {}
+
+
+def test_quality_diagnostics_remain_provider_secret_free(monkeypatch):
+    app.dependency_overrides[get_current_session] = _override_session("editor")
+    monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: _base_intake(submission_id))
+    monkeypatch.setattr(
+        main,
+        "get_coaching_account_subscription",
+        lambda workspace_id, username=None, email=None: {"subscription_status": "active", "email": email},
+    )
+    monkeypatch.setattr(main, "save_coaching_generation_run", lambda **kwargs: None)
+    monkeypatch.setattr(main, "list_coaching_generation_runs", lambda submission_id, limit=1: [])
+    monkeypatch.setattr(
+        main,
+        "generate_sow_with_llm",
+        lambda intake, parsed_jobs: {
+            "ok": True,
+            "sow": main.build_sow_skeleton(intake, parsed_jobs),
+            "meta": {
+                "provider": "openai-compatible",
+                "model": "gpt-test",
+                "attempts": 1,
+                "api_key": "sk-super-secret",
+                "base_url": "https://provider.example/v1",
+                "raw_provider_payload": {"token": "tok-secret"},
+            },
+        },
+    )
+
+    try:
+        client = TestClient(app)
+        res = client.post(
+            "/coaching/sow/generate",
+            json={"workspace_id": "ws-1", "submission_id": "sub-1", "parsed_jobs": []},
+        )
+        assert res.status_code == 200
+        diagnostics = (res.json().get("quality") or {}).get("quality_diagnostics") or {}
+        serialized = str(diagnostics).lower()
+        assert "provider" not in diagnostics
+        assert "api_key" not in serialized
+        assert "base_url" not in serialized
+        assert "tok-secret" not in serialized
     finally:
         app.dependency_overrides = {}

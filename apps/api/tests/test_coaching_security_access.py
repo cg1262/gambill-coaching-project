@@ -389,6 +389,9 @@ def test_subscription_denial_response_is_generic(monkeypatch):
         headers=_auth_header(viewer_token),
     )
     assert res.status_code == 403
-    detail = res.json().get("detail") or {}
-    assert detail.get("message") == "Active coaching subscription required."
-    assert "inactive" not in str(res.json()).lower()
+    body = res.json()
+    assert body["ok"] is False
+    assert body["code"] == "subscription_required"
+    assert body["auth_required"] is False
+    assert body["subscription_required"] is True
+    assert "inactive" not in str(body).lower()

@@ -105,13 +105,25 @@ def _mask_if_str(value: Any) -> Any:
     return mask_secrets_in_text(value) if isinstance(value, str) else value
 
 
+def _mask_strings_deep(value: Any) -> Any:
+    if isinstance(value, str):
+        return mask_secrets_in_text(value)
+    if isinstance(value, dict):
+        return {k: _mask_strings_deep(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_mask_strings_deep(v) for v in value]
+    return value
+
+
 def sanitize_generated_sow(sow: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, str]]]:
     out = json.loads(json.dumps(sow or {}))
     findings: list[dict[str, str]] = []
 
-    for narrative_key in ["project_title", "project_story"]:
-        if narrative_key in out:
-            out[narrative_key] = _mask_if_str(out.get(narrative_key))
+    if "project_title" in out:
+        out["project_title"] = _mask_if_str(out.get("project_title"))
+
+    if "project_story" in out:
+        out["project_story"] = _mask_strings_deep(out.get("project_story"))
 
     resources = out.get("resource_plan") or {}
     for bucket in ["required", "recommended", "optional"]:

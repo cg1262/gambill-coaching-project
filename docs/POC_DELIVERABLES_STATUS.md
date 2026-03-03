@@ -1,7 +1,55 @@
 # POC Deliverables Status
 
-Last Updated: 2026-03-02
+Last Updated: 2026-03-03
 Owner: ERD Program Team
+
+## Checkpoint Update (2026-03-03 - Sprint 4 Security Pilot Gate Pass)
+
+### Done
+- Re-verified generic auth/session denial contracts on updated coaching/auth surfaces and expanded route coverage tests:
+  - `apps/api/tests/test_auth_contract_security.py` now exercises additional protected routes for consistent 401 shape.
+  - aligned legacy assertion in `apps/api/tests/test_coaching_security_access.py` to current generic 403 subscription contract.
+- Hardened generated-output narrative masking:
+  - `apps/api/coaching.py::sanitize_generated_sow(...)` now recursively masks secret-like strings inside structured `project_story` payloads.
+- Expanded defense-in-depth URL sanitization regression coverage:
+  - added parametrized unsafe URL blocking tests for localhost/private and blocked schemes (`data:`, `javascript:`) in `apps/api/tests/test_llm_output_security.py`.
+- Added diagnostics secrecy regression:
+  - validated `quality.quality_diagnostics` remains provider/secret free and does not expose raw provider payload artifacts.
+
+### Validation
+- `python -m pytest -q tests/test_auth_contract_security.py tests/test_llm_output_security.py` (from `apps/api`) ✅
+- `python -m pytest -q tests/test_security_sprint2.py tests/test_coaching_security_access.py tests/test_coaching_generation_guardrails.py` (from `apps/api`) ✅
+
+### Risks / Follow-ups
+- Frontend stale-auth recovery logic is validated indirectly via backend contract + existing UI behavior; dedicated frontend unit/E2E tests are still recommended.
+- Pilot checklist still has open production blockers outside this pass (provider webhook signature verification, route-level rate limiting).
+
+## Checkpoint Update (2026-03-03 - Sprint 4 Frontend Stability + Intake/Diagnostics Pass)
+
+### Done
+- Hardened deterministic web build recovery in `apps/web/scripts/build-clean.ps1`:
+  - added lockfile requirement check before attempting repair (`package-lock.json` must exist).
+  - added explicit Node/npm version guidance output for reproducible local setup.
+  - broadened recovery triggers beyond `EISDIR` to include missing local binary/module patterns (`next`/`tsc` not found).
+  - switched reinstall path from `npm install` to lockfile-faithful `npm ci --no-audit --no-fund`.
+- Improved generation quality card rendering in `CoachingProjectWorkbench`:
+  - now displays `structure_score` and `section_order_valid`.
+  - now displays explicit `missing_sections` list when returned by backend diagnostics.
+  - added actionable “Regenerate guidance” list derived from quality/structure diagnostics to make remediation steps obvious.
+- Confirmed intake UX completion remains in place in active form flow:
+  - labeled confidence rows for SQL/modeling/orchestration/stakeholder communication.
+  - platform/tool exposure checklist with `Other` option and conditional text fields.
+  - clarified constraints/support wording with helper guidance.
+- Confirmed stale auth/readiness state clear flow remains centralized and invoked after successful protected API calls.
+
+### Validation
+- Pending execution in this subagent pass:
+  - `npm run typecheck` (from `apps/web`)
+  - `npm run build:clean` (from `apps/web`)
+
+### Risks / Follow-ups
+- Recovery script cannot fully remediate host-level npm extraction/fs corruption issues; it now handles common deterministic cases and provides clearer operator guidance.
+- If product expects `Other` handling in preference-stage stack/tool selectors (not just exposure checklist), add explicit fields and backend mapping in next UX pass.
 
 ## Checkpoint Update (2026-03-02 - Frontend Hotfix: Session Banner + Self-Assessment UX)
 

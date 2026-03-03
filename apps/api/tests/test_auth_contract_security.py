@@ -1,4 +1,5 @@
 from fastapi.testclient import TestClient
+import pytest
 
 import main
 from main import app
@@ -20,9 +21,20 @@ def test_auth_401_payload_is_generic_for_auth_routes():
     assert "Invalid or expired token" not in str(body)
 
 
-def test_coaching_401_payload_is_generic_on_protected_route():
+@pytest.mark.parametrize(
+    "method,path,payload",
+    [
+        ("GET", "/coaching/health/readiness", {"workspace_id": "ws-1"}),
+        ("POST", "/coaching/sow/generate-draft", {"workspace_id": "ws-1", "submission_id": "sub-1", "parsed_jobs": []}),
+        ("GET", "/coaching/intake/submissions", {"workspace_id": "ws-1"}),
+    ],
+)
+def test_coaching_401_payload_is_generic_on_protected_routes(method, path, payload):
     client = TestClient(app)
-    res = client.get("/coaching/health/readiness", params={"workspace_id": "ws-1"})
+    if method == "GET":
+        res = client.get(path, params=payload)
+    else:
+        res = client.post(path, json=payload)
     assert res.status_code == 401
     body = res.json()
     assert body["ok"] is False
