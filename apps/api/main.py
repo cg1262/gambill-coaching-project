@@ -32,6 +32,7 @@ from coaching import (
     compose_demo_project_package,
     sanitize_generated_sow,
     compute_sow_quality_score,
+    build_quality_diagnostics,
 )
 from db_lakebase import (
     healthcheck as lakebase_health,
@@ -87,17 +88,14 @@ RESOURCE_LIBRARY_PATH = Path(__file__).resolve().parents[2] / "docs" / "coaching
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    if request.url.path in {"/coaching/intake", "/coaching/health/readiness"} and exc.status_code in {401, 403}:
+    is_coaching_or_auth_route = request.url.path.startswith("/coaching") or request.url.path.startswith("/auth")
+    if is_coaching_or_auth_route and exc.status_code in {401, 403}:
         detail = exc.detail if isinstance(exc.detail, dict) else None
         is_subscription = bool(detail and detail.get("subscription_required")) or "subscription" in str(exc.detail).lower()
         message = (
-            str(detail.get("message"))
-            if isinstance(detail, dict) and detail.get("message")
-            else (
-                "Active coaching subscription required. Sync membership or reactivate subscription before retrying."
-                if is_subscription
-                else "Authentication required. Send Authorization: Bearer <token> and ensure your role has access."
-            )
+            "Active coaching subscription required. Sync membership or reactivate subscription before retrying."
+            if is_subscription
+            else "Authentication required. Send Authorization: Bearer <token> and ensure your role has access."
         )
         payload = {
             "ok": False,
@@ -135,6 +133,27 @@ def _redact_settings(connection_type: str, settings: dict) -> dict:
         "power_bi": {"client_secret"},
     }
     return mask_sensitive_dict(dict(settings or {}), secret_keys=secret_key_map.get(connection_type, set()))
+
+
+def _safe_generation_meta(meta: dict[str, Any] | None) -> dict[str, Any]:
+    src = dict(meta or {})
+    usage_src = src.get("usage") if isinstance(src.get("usage"), dict) else {}
+    safe_usage = {
+        key: int(value)
+        for key, value in usage_src.items()
+        if key in {"prompt_tokens", "completion_tokens", "total_tokens"} and isinstance(value, (int, float))
+    }
+    out: dict[str, Any] = {
+        "provider": str(src.get("provider") or "unknown"),
+        "model": str(src.get("model") or "unknown"),
+        "attempts": int(src.get("attempts") or 0),
+        "error_type": src.get("error_type") if src.get("error_type") in {"provider", "network", "timeout", "schema", None} else "provider",
+    }
+    if src.get("finish_reason"):
+        out["finish_reason"] = str(src.get("finish_reason"))
+    if safe_usage:
+        out["usage"] = safe_usage
+    return out
 
 
 def _to_canvas_data_type(databricks_type: str) -> str:
@@ -1832,9 +1851,11 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
         parsed_jobs=parsed_jobs,
     )
 
+    quality_floor_score = 80
     first_findings = validate_sow_payload(sow)
     auto_revised = False
     retried_after_validation = False
+    auto_regenerated_for_quality_floor = False
     if first_findings:
         sow = auto_revise_sow_once(sow, first_findings)
         auto_revised = True
@@ -1844,6 +1865,24 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
     strict_sow, sanitize_findings = sanitize_generated_sow(strict_sow)
     final_findings = validate_sow_payload(strict_sow)
     quality = compute_sow_quality_score(strict_sow, final_findings)
+
+    if int(quality.get("score") or 0) < quality_floor_score:
+        strict_sow = auto_revise_sow_once(strict_sow, final_findings)
+        strict_sow = CoachingSowDraft.model_validate(strict_sow).model_dump(mode="json", by_alias=True)
+        strict_sow, extra_sanitize_findings = sanitize_generated_sow(strict_sow)
+        if extra_sanitize_findings:
+            sanitize_findings = [*sanitize_findings, *extra_sanitize_findings]
+        final_findings = validate_sow_payload(strict_sow)
+        quality = compute_sow_quality_score(strict_sow, final_findings)
+        auto_regenerated_for_quality_floor = True
+        retried_after_validation = True
+
+    quality_diagnostics = build_quality_diagnostics(
+        quality=quality,
+        findings=final_findings,
+        floor_score=quality_floor_score,
+        auto_regenerated=auto_regenerated_for_quality_floor,
+    )
 
     prior_runs = list_coaching_generation_runs(req.submission_id, limit=1)
     prior_score = None
@@ -1866,6 +1905,7 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
         "score_delta": (quality.get("score") - int(prior_score)) if prior_score is not None else None,
         "findings_delta": (len(final_findings) - int(prior_findings_count)) if prior_findings_count is not None else None,
     }
+    generation_meta = _safe_generation_meta(llm_result.get("meta") or {})
 
     run_id = str(uuid4())
     save_coaching_generation_run(
@@ -1882,17 +1922,19 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
             "auto_revised": auto_revised,
             "retried_after_validation": retried_after_validation,
             "guardrails": {"strict_schema": True, "auto_revise_once": True},
-            "generation_meta": llm_result.get("meta") or {},
+            "generation_meta": generation_meta,
             "quality_flags": {
                 "has_required_contract_fields": len(final_findings) == 0,
-                "used_llm_provider": (llm_result.get("meta") or {}).get("provider") == "openai-compatible",
+                "used_llm_provider": generation_meta.get("provider") == "openai-compatible",
                 "fallback_used": not bool(llm_result.get("ok")),
+                "auto_regenerated_for_quality_floor": auto_regenerated_for_quality_floor,
             },
             "quality": {
                 **quality,
                 "regenerate_requested": bool(req.regenerate_with_improvements),
                 "quality_delta": quality_delta_meta.get("score_delta"),
                 "quality_delta_meta": quality_delta_meta,
+                "quality_diagnostics": quality_diagnostics,
             },
         },
         error_message=None,
@@ -1925,18 +1967,20 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
         "valid": len(final_findings) == 0,
         "auto_revised": auto_revised,
         "findings": final_findings,
-        "generation_meta": llm_result.get("meta") or {},
+        "generation_meta": generation_meta,
         "quality_flags": {
             "has_required_contract_fields": len(final_findings) == 0,
-            "used_llm_provider": (llm_result.get("meta") or {}).get("provider") == "openai-compatible",
+            "used_llm_provider": generation_meta.get("provider") == "openai-compatible",
             "fallback_used": not bool(llm_result.get("ok")),
             "retried_after_validation": retried_after_validation,
+            "auto_regenerated_for_quality_floor": auto_regenerated_for_quality_floor,
         },
         "quality": {
             **quality,
             "regenerate_requested": bool(req.regenerate_with_improvements),
             "quality_delta": quality_delta_meta.get("score_delta"),
             "quality_delta_meta": quality_delta_meta,
+            "quality_diagnostics": quality_diagnostics,
         },
         "schema": {
             "schema_version": "0.2",

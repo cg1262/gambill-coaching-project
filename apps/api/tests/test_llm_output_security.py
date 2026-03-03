@@ -102,6 +102,66 @@ def test_regenerate_quality_delta_response_does_not_leak_prior_sensitive_payload
         app.dependency_overrides = {}
 
 
+def test_generation_meta_is_sanitized_and_secret_free(monkeypatch):
+    app.dependency_overrides[get_current_session] = _override_session("editor")
+    monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: _base_intake(submission_id))
+    monkeypatch.setattr(
+        main,
+        "get_coaching_account_subscription",
+        lambda workspace_id, username=None, email=None: {"subscription_status": "active", "email": email},
+    )
+
+    captured = {}
+    monkeypatch.setattr(main, "save_coaching_generation_run", lambda **kwargs: captured.update(kwargs))
+    monkeypatch.setattr(main, "list_coaching_generation_runs", lambda submission_id, limit=1: [])
+    monkeypatch.setattr(
+        main,
+        "generate_sow_with_llm",
+        lambda intake, parsed_jobs: {
+            "ok": True,
+            "sow": main.build_sow_skeleton(intake, parsed_jobs),
+            "meta": {
+                "provider": "openai-compatible",
+                "model": "gpt-test",
+                "attempts": 2,
+                "finish_reason": "stop",
+                "usage": {"prompt_tokens": 12, "completion_tokens": 34, "total_tokens": 46, "raw": "nope"},
+                "base_url": "https://provider.example/v1",
+                "api_key": "sk-super-secret",
+                "raw_provider_payload": {"Authorization": "Bearer should-not-leak"},
+            },
+        },
+    )
+
+    try:
+        client = TestClient(app)
+        res = client.post(
+            "/coaching/sow/generate",
+            json={"workspace_id": "ws-1", "submission_id": "sub-1", "parsed_jobs": []},
+        )
+        assert res.status_code == 200
+        body = res.json()
+
+        meta = body.get("generation_meta") or {}
+        assert meta["provider"] == "openai-compatible"
+        assert meta["model"] == "gpt-test"
+        assert meta["attempts"] == 2
+        assert meta["usage"]["total_tokens"] == 46
+        assert "base_url" not in meta
+        assert "api_key" not in meta
+        assert "raw_provider_payload" not in meta
+
+        persisted_meta = ((captured.get("validation") or {}).get("generation_meta") or {})
+        assert persisted_meta == meta
+
+        serialized = str(body).lower()
+        assert "sk-super-secret" not in serialized
+        assert "should-not-leak" not in serialized
+        assert "raw_provider_payload" not in serialized
+    finally:
+        app.dependency_overrides = {}
+
+
 def test_generated_sow_blocks_unsafe_urls_and_secret_text(monkeypatch):
     app.dependency_overrides[get_current_session] = _override_session("editor")
     monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: _base_intake(submission_id))

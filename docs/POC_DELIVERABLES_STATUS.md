@@ -3,6 +3,27 @@
 Last Updated: 2026-03-02
 Owner: ERD Program Team
 
+## Checkpoint Update (2026-03-02 - Security Session/Diagnostics Hardening Pass)
+
+### Done
+- Hardened auth/session exception responses for coaching + auth routes:
+  - 401/403 now return a consistent generic contract (`ok`, `code`, `auth_required`, `subscription_required`, `message`).
+  - removed raw auth detail passthrough for these routes (`Missing bearer token`, `Invalid or expired token`) to reduce internal leakage.
+- Added generation diagnostics sanitization before returning/persisting `generation_meta`:
+  - now allowlists safe fields (`provider`, `model`, `attempts`, `error_type`, optional `finish_reason`, token usage counts).
+  - strips sensitive/internal fields such as provider base URLs, API keys, raw provider payload objects, and non-contract extras.
+- Added regression tests for auth banner-reset and diagnostics safety:
+  - `tests/test_auth_contract_security.py` verifies generic auth payloads and that a successful call after a 401 does not carry stale auth error flags.
+  - `tests/test_llm_output_security.py` now verifies sanitized `generation_meta` is secret-free in both response and persisted validation payload.
+
+### Validation
+- `python -m pytest -q tests/test_auth_contract_security.py tests/test_coaching_feedback_pass.py tests/test_llm_output_security.py tests/test_coaching_llm_contract.py` (from `apps/api`) ✅
+- `python -m compileall -q .` (from `apps/api`) ✅
+
+### Risks / Follow-ups
+- Auth/coaching error messages are intentionally generic; if UX needs route-specific guidance, keep it high-level and avoid exposing token/parser/provider internals.
+- Sanitized `generation_meta` is now contract-oriented; if new diagnostic fields are needed later, add explicit allowlist coverage + regression tests before exposing.
+
 ## Checkpoint Update (2026-03-02 - Frontend Urgent UX Fix: Session + Readiness + Assessment Redesign)
 
 ### Done
