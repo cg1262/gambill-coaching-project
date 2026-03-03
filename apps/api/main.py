@@ -2018,6 +2018,86 @@ def coaching_subscription_sync(req: CoachingSubscriptionSyncRequest, request: Re
     }
 
 
+@app.post("/coaching/subscription/webhook")
+async def coaching_subscription_webhook(request: Request) -> dict:
+    raw_body = await request.body()
+    payload = parse_webhook_body(raw_body)
+    provider = str(request.headers.get("x-webhook-provider") or payload.get("provider") or "squarespace").strip().lower()
+    verification = verify_webhook_signature(provider=provider, body_bytes=raw_body, headers={k: v for k, v in request.headers.items()}, tolerance_seconds=300)
+    if not verification.valid:
+        raise HTTPException(status_code=403, detail={"code": "invalid_webhook_signature", "reason": verification.reason})
+
+    event_obj = payload.get("data", {}).get("object", {}) if isinstance(payload.get("data"), dict) else {}
+    metadata = event_obj.get("metadata") if isinstance(event_obj, dict) else {}
+    req_payload = {
+        "workspace_id": str(payload.get("workspace_id") or metadata.get("workspace_id") or "").strip(),
+        "provider": provider,
+        "event_type": str(payload.get("type") or payload.get("event_type") or "subscription.updated").strip(),
+        "email": str(payload.get("email") or event_obj.get("customer_email") or event_obj.get("email") or "").strip().lower(),
+        "plan_tier": str(payload.get("plan_tier") or metadata.get("plan_tier") or "coaching-core").strip(),
+        "subscription_status": str(payload.get("subscription_status") or event_obj.get("status") or "unknown").strip(),
+        "renewal_date": payload.get("renewal_date") or event_obj.get("current_period_end") or event_obj.get("renewal_date"),
+        "provider_customer_id": payload.get("provider_customer_id") or event_obj.get("customer") or event_obj.get("customer_id"),
+        "provider_subscription_id": payload.get("provider_subscription_id") or event_obj.get("id") or event_obj.get("subscription_id"),
+        "raw_event": payload,
+    }
+    try:
+        req = CoachingSubscriptionSyncRequest.model_validate(req_payload)
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail={"code": "invalid_webhook_payload", "errors": exc.errors()})
+
+    incoming_event_id = str((req.raw_event or {}).get("id") or "").strip()
+    event_id = incoming_event_id or str(uuid4())
+    normalized_status = _normalize_subscription_status(req.subscription_status)
+    existing = get_coaching_subscription_event(event_id) if incoming_event_id else None
+    if existing:
+        replay_status = _normalize_subscription_status(str((existing.get("payload_json") or {}).get("subscription_status") or normalized_status))
+        return {
+            "ok": True,
+            "workspace_id": req.workspace_id,
+            "event_id": event_id,
+            "provider": req.provider,
+            "status": replay_status,
+            "active": _is_active_subscription(replay_status),
+            "idempotent_replay": True,
+            "message": "Subscription event already processed.",
+        }
+
+    save_coaching_subscription_event(
+        event_id=event_id,
+        workspace_id=req.workspace_id,
+        provider=req.provider,
+        event_type=req.event_type,
+        email=req.email,
+        provider_customer_id=req.provider_customer_id,
+        provider_subscription_id=req.provider_subscription_id,
+        payload=req.raw_event or req.model_dump(mode="json"),
+        received_by="webhook",
+    )
+    upsert_coaching_account_subscription(
+        workspace_id=req.workspace_id,
+        username=None,
+        email=req.email.strip().lower(),
+        plan_tier=req.plan_tier,
+        subscription_status=normalized_status,
+        renewal_date=req.renewal_date,
+        provider_customer_id=req.provider_customer_id,
+        provider_subscription_id=req.provider_subscription_id,
+        provider_source=req.provider,
+        updated_by="webhook",
+    )
+    return {
+        "ok": True,
+        "workspace_id": req.workspace_id,
+        "event_id": event_id,
+        "provider": req.provider,
+        "status": normalized_status,
+        "active": _is_active_subscription(normalized_status),
+        "idempotent_replay": False,
+        "message": "Subscription sync stub accepted and stored.",
+    }
+
+
 def _recommend_stack_tools(parsed_jobs: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     stack_scores: dict[str, int] = {}
     tool_scores: dict[str, int] = {}

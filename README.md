@@ -29,6 +29,21 @@ For each client submission, generate a structured SOW including:
 - `apps/api` — backend services and generation scaffolding
 - `docs/coaching-project` — coaching-specific plans, resources, pricing, CTA snippets
 
+## Backend Security Controls (Sprint 6)
+- Parameterized rate limits (env-driven) with an admin-ready config shape:
+  - auth: `10/min per IP`, burst `20`
+  - generation: `5/10min per user` + `20/hour per workspace`
+  - review actions: `30/min per user`
+  - exports: `20/hour per user`
+- Admin scaffold endpoints for future console edits:
+  - `GET /admin/security/rate-limits`
+  - `PUT /admin/security/rate-limits`
+- Webhook signature verification endpoint:
+  - `POST /coaching/subscription/webhook`
+  - HMAC SHA-256 over `{timestamp}.{raw_body}`
+  - rejects unsigned/invalid payloads
+  - timestamp tolerance: 5 minutes
+
 ## Run locally
 ### API
 ```powershell
