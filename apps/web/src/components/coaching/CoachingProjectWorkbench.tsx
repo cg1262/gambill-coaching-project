@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { api, type CoachingIntakeSubmission, type CoachingIntakeSubmissionDetail } from "../../lib/api";
 
@@ -313,7 +314,14 @@ function buildStructuredAssessment(draft: IntakeDraft): string {
   ].join("\n");
 }
 
-export default function CoachingProjectWorkbench() {
+type WorkbenchRouteMode = "all" | "intake" | "review" | "project";
+
+type CoachingProjectWorkbenchProps = {
+  mode?: WorkbenchRouteMode;
+  projectId?: string;
+};
+
+export default function CoachingProjectWorkbench({ mode = "all", projectId }: CoachingProjectWorkbenchProps) {
   const [authState, setAuthState] = useState<CoachingAuthState>("signedOut");
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus>("unknown");
   const [planTier] = useState<PlanTier>("starter");
@@ -364,6 +372,12 @@ export default function CoachingProjectWorkbench() {
   const canAccessReviewQueue = hasActiveSubscription && planTier !== "starter";
   const canAccessMentoringRecommendation = hasActiveSubscription;
   const canBookMentoring = hasActiveSubscription && planTier === "elite";
+
+  const showLaunchAndAccess = mode === "all" || mode === "intake";
+  const showReadiness = mode !== "project";
+  const showReviewQueue = mode === "all" || mode === "review";
+  const showIntake = mode === "all" || mode === "intake";
+  const showOutputViewer = mode === "all" || mode === "project" || mode === "intake";
 
   function clearAuthStaleState() {
     setSessionBanner(null);
@@ -459,6 +473,12 @@ export default function CoachingProjectWorkbench() {
     loadReadiness();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canAccessWorkbench, draft.workspaceId]);
+
+  useEffect(() => {
+    if (!projectId || !canAccessWorkbench) return;
+    openSubmission(projectId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, canAccessWorkbench]);
 
   async function saveCoachReview() {
     if (!selectedSubmissionId) return;
@@ -815,6 +835,14 @@ export default function CoachingProjectWorkbench() {
       </div>
       {sessionBanner && <div className="card" style={{ border: "1px solid #f59e0b", background: "#fffbeb", color: "#92400e" }}>{sessionBanner}</div>}
 
+      <div className="card" style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <Link href="/intake"><button className={mode === "intake" ? "btn-primary" : undefined}>Intake</button></Link>
+        <Link href="/review"><button className={mode === "review" ? "btn-primary" : undefined}>Review</button></Link>
+        <Link href={currentSubmissionId ? `/project/${currentSubmissionId}` : "/project/demo"}><button className={mode === "project" ? "btn-primary" : undefined}>Project</button></Link>
+      </div>
+
+      {showLaunchAndAccess && (
+      <>
       <h4>Squarespace Member Launch Flow</h4>
       <div className="card coaching-card" style={{ marginBottom: 10 }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
@@ -868,6 +896,8 @@ export default function CoachingProjectWorkbench() {
           <span className={canBookMentoring ? "badge success" : "badge info"}>Live mentoring: {canBookMentoring ? "enabled" : "locked"}</span>
         </div>
       </div>
+      </>
+      )}
 
       {!canAccessWorkbench && (
         <>
@@ -884,6 +914,8 @@ export default function CoachingProjectWorkbench() {
 
       {canAccessWorkbench && (
         <>
+          {showReadiness && (
+          <>
           <h4>Readiness Health</h4>
           <div className="card" style={{ marginBottom: 10 }}>
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 6 }}>
@@ -903,7 +935,11 @@ export default function CoachingProjectWorkbench() {
               </div>
             )}
           </div>
+          </>
+          )}
 
+          {showReviewQueue && (
+          <>
           <h4>Coach Review Queue</h4>
           <div className="card" style={{ marginBottom: 10 }}>
             {!canAccessReviewQueue ? (
@@ -1053,6 +1089,11 @@ export default function CoachingProjectWorkbench() {
             )}
           </div>
 
+          </>
+          )}
+
+          {showIntake && (
+          <>
           <h4>Coaching Project Intake</h4>
           <div className="card" style={{ marginBottom: 10 }}>
             <div style={{ marginBottom: 8, fontSize: 12, color: "var(--color-text-muted)" }}>
@@ -1230,6 +1271,11 @@ export default function CoachingProjectWorkbench() {
             </div>
           </div>
 
+          </>
+          )}
+
+          {showOutputViewer && (
+          <>
           <h4>Project Output Viewer</h4>
           <div className="card" style={{ marginBottom: 10 }}>
             {scaffold ? (
@@ -1376,6 +1422,8 @@ export default function CoachingProjectWorkbench() {
               </div>
             )}
           </div>
+          </>
+          )}
         </>
       )}
     </div>

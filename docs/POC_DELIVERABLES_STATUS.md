@@ -3,6 +3,34 @@
 Last Updated: 2026-03-02
 Owner: ERD Program Team
 
+## Checkpoint Update (2026-03-02 - Frontend Sprint 3 Kickoff: Route Split + Build Resilience)
+
+### Done
+- Added route-based coaching UX split in Next app router:
+  - `/intake` for intake-first flow
+  - `/review` for coach queue + submission review workflow
+  - `/project/[id]` for project-output-focused view tied to a submission id
+  - root `/` now redirects to `/intake`
+- Extended `CoachingProjectWorkbench` to support route mode props (`mode`, `projectId`) and conditional section rendering so each route emphasizes the correct workflow while preserving existing feature behavior.
+- Added in-app route switcher controls (Intake / Review / Project) for quick navigation across the new route surfaces.
+- Added resilient web build recovery script:
+  - `apps/web/scripts/build-clean.ps1`
+  - clears `.next` and ts build artifacts before build
+  - detects `EISDIR` build failures, reinstalls `node_modules`, and retries once.
+- Added package script:
+  - `npm run build:clean` (apps/web)
+
+### Validation
+- Route files + workbench compile shape updated; local environment dependency corruption currently blocks full `typecheck/build` verification in this pass (`tsc` missing from corrupted/incomplete `node_modules`, intermittent npm extract ENOENT on reinstall).
+- Added deterministic recovery path via `npm run build:clean` for environments affected by `.next`/node_modules filesystem inconsistency.
+
+### Risks / Follow-ups
+- Host environment shows package extraction instability on `apps/web/node_modules` (tar ENOENT during install), which can still block clean verification until filesystem/package install reliability is restored.
+- Recommend rerunning in stable local disk context (or after npm cache + fs health cleanup) with:
+  - `npm install --no-audit --no-fund`
+  - `npm run typecheck`
+  - `npm run build:clean`
+
 ## Checkpoint Update (2026-03-02 - Sprint 3 Security Execution Kickoff)
 
 ### Done
@@ -24,6 +52,41 @@ Owner: ERD Program Team
 ### Risks / Follow-ups
 - Frontend private-host detection remains literal-host based (no DNS resolution in browser); backend remains authoritative for SSRF protection.
 - Continue adding allowlist-backed outbound URL policy if production requires stricter domain controls.
+
+## Checkpoint Update (2026-03-02 - Sprint 3 Backend Kickoff: Contract + Workflow + Launch Reliability)
+
+### Done
+- Integrated latest backend/security/frontend-linked API behavior into a coherent backend contract pass:
+  - review queue endpoint now forwards `status` into DB query (`list_coaching_intake_submissions(..., review_status=status)`) so backend filtering semantics align with frontend status-filter UX contract.
+  - stabilized subscription sync contract with explicit replay field (`idempotent_replay`) and deterministic event-id behavior.
+- Cleared test environment blocker:
+  - added `httpx==0.27.2` to `apps/api/requirements.txt` so `fastapi/starlette` `TestClient` collections run without missing dependency errors.
+- Improved source-quality logic for generated SOW data source selection:
+  - added deterministic datasource candidate catalog with concrete public URLs + ingestion doc links.
+  - implemented `_select_data_sources(...)` to choose sources based on parsed job signals + intake preferences.
+  - added mandatory `selection_rationale` support and validator checks (`DATA_SOURCE_RATIONALE_MISSING`).
+  - auto-revision now backfills rationale when missing.
+- Completed coach workflow approve-send backend scaffold:
+  - new endpoint `POST /coaching/review/approve-send` sets review state to `approved_sent` and returns launch handoff payload.
+  - includes short-lived signed launch token scaffold (`launch_token`, expiry, launch path) for Squarespace/member flow handoff.
+  - new endpoint `POST /coaching/member/launch-token/verify` validates signature/expiry/workspace+submission binding.
+- Added Squarespace/member launch readiness reliability checks:
+  - new DB helpers for event lookup + recent event listing (`get_coaching_subscription_event`, `list_recent_coaching_subscription_events`).
+  - `POST /coaching/subscription/sync` now idempotently handles replayed provider events when event id repeats.
+  - new endpoint `GET /coaching/subscription/lifecycle-readiness` returns account/event consistency checks and lifecycle health signals.
+- Added/updated backend tests:
+  - `tests/test_coaching_llm_contract.py` (datasource quality/rationale coverage)
+  - `tests/test_coaching_review_endpoints.py` (approve-send + launch token verify)
+  - `tests/test_coaching_subscription.py` (idempotent sync replay + lifecycle readiness)
+
+### Validation
+- Added dependency for test collection: `httpx==0.27.2`.
+- Targeted API tests executed from `apps/api`:
+  - `python -m pytest -q tests/test_coaching_llm_contract.py tests/test_coaching_review_endpoints.py tests/test_coaching_subscription.py`
+
+### Risks / Follow-ups
+- Launch token scaffold is HMAC-based and stateless (no one-time-use/JTI replay store yet).
+- Subscription lifecycle checks currently compare account status to latest event payload status; full provider-signature verification and durable event-processing state machine still pending.
 
 ## Checkpoint Update (2026-03-02 - Security Session/Diagnostics Hardening Pass)
 
