@@ -708,17 +708,44 @@ def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
     return findings
 
 
+def _milestone_specificity_score(sow: dict[str, Any]) -> int:
+    milestones = sow.get("milestones") or []
+    if not isinstance(milestones, list) or len(milestones) == 0:
+        return 0
+
+    scored = 0
+    for ms in milestones:
+        if not isinstance(ms, dict):
+            continue
+        checks = 0
+        for field in ["execution_plan", "expected_deliverable", "business_why"]:
+            if len(str(ms.get(field) or "").strip()) >= 40:
+                checks += 1
+        deliverables = ms.get("deliverables") or []
+        if isinstance(deliverables, list) and len(deliverables) >= 2:
+            checks += 1
+        resources = ms.get("resources") or []
+        if isinstance(resources, list) and any(_is_valid_non_placeholder_url(str(r.get("url") or "")) for r in resources if isinstance(r, dict)):
+            checks += 1
+        scored += checks
+
+    max_score = max(1, len(milestones) * 5)
+    return int(round((scored / max_score) * 100))
+
+
 def compute_sow_quality_score(sow: dict[str, Any], findings: list[dict[str, str]] | None = None) -> dict[str, Any]:
     issues = findings if findings is not None else validate_sow_payload(sow)
     structure = evaluate_sow_structure(sow)
+    milestone_specificity = _milestone_specificity_score(sow)
     penalties = min(80, len(issues) * 8)
     content_score = max(0, min(100, 100 - penalties))
-    score = int(round((0.7 * content_score) + (0.3 * int(structure.get("structure_score") or 0))))
+    score = int(round((0.6 * content_score) + (0.25 * int(structure.get("structure_score") or 0)) + (0.15 * milestone_specificity)))
     return {
         "score": score,
         "threshold_passed": score >= 70,
         "finding_count": len(issues),
         "structure_score": int(structure.get("structure_score") or 0),
+        "milestone_specificity_score": milestone_specificity,
         "missing_sections": structure.get("missing_sections") or [],
         "section_order_valid": bool(structure.get("order_valid")),
     }
@@ -727,17 +754,35 @@ def compute_sow_quality_score(sow: dict[str, Any], findings: list[dict[str, str]
 def build_quality_diagnostics(quality: dict[str, Any], findings: list[dict[str, str]], floor_score: int = 80, auto_regenerated: bool = False) -> dict[str, Any]:
     score = int(quality.get("score") or 0)
     codes = [str(f.get("code") or "") for f in findings if str(f.get("code") or "")]
+    unique_codes = sorted(set(codes))
+
+    regen_hints_map = {
+        "SECTION_ORDER_INVALID": "Regenerate with exact exemplar section order from REQUIRED_SECTION_FLOW.",
+        "MISSING_SECTION": "Fill all missing top-level sections before finalizing output.",
+        "MILESTONE_EXECUTION_PLAN_MISSING": "Expand milestone execution plans with concrete tasks and acceptance criteria.",
+        "MILESTONE_EXPECTED_DELIVERABLE_MISSING": "Define measurable deliverable quality (tests, docs, demo evidence) per milestone.",
+        "MILESTONE_BUSINESS_WHY_MISSING": "Tie each milestone to a measurable KPI or business outcome.",
+        "MILESTONE_RESOURCES_MISSING": "Add at least one non-placeholder resource URL for each milestone.",
+        "DATA_SOURCE_LINK_INVALID": "Use real public data source links (no placeholders/example.com).",
+        "INGESTION_DOC_LINK_MISSING": "Add ingestion documentation URLs for every data source.",
+        "RESOURCE_LINKS_MISSING": "Populate required/recommended/optional resource plan links.",
+    }
+    targeted_regeneration_hints = [regen_hints_map[c] for c in unique_codes if c in regen_hints_map][:6]
+
     return {
         "floor_score": floor_score,
         "score": score,
         "below_floor": score < int(floor_score),
         "auto_regenerated": bool(auto_regenerated),
-        "deficiency_codes": sorted(set(codes)),
+        "deficiency_codes": unique_codes,
         "deficiency_count": len(findings),
         "top_deficiencies": [f.get("message") for f in findings[:5]],
         "structure_score": int(quality.get("structure_score") or 0),
+        "milestone_specificity_score": int(quality.get("milestone_specificity_score") or 0),
         "missing_sections": quality.get("missing_sections") or [],
         "section_order_valid": bool(quality.get("section_order_valid")),
+        "targeted_regeneration_hints": targeted_regeneration_hints,
+        "recommended_regeneration": bool(score < int(floor_score) or len(findings) > 0),
     }
 
 

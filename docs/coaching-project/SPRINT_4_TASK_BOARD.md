@@ -3,6 +3,39 @@
 Last Updated: 2026-03-03
 Sprint Goal: Deterministic build stability + project quality upgrade + pilot-ready coach workflow.
 
+## Checkpoint Update (2026-03-03 - Sprint 4 Backend Core Execution)
+
+- Done:
+  - Restored coach review queue backend reliability paths in `apps/api/main.py`:
+    - added `POST /coaching/review/approve-send` (persists `approved_sent`, returns handoff launch token).
+    - added `POST /coaching/member/launch-token/verify` (HMAC-backed workspace/submission binding check).
+  - Restored subscription lifecycle reliability endpoints/contracts:
+    - added import + usage of `get_coaching_subscription_event` and `list_recent_coaching_subscription_events`.
+    - added `GET /coaching/subscription/lifecycle-readiness` with consistency checks.
+    - hardened `POST /coaching/subscription/sync` idempotency (provider event replay detection via raw_event.id) and explicit `idempotent_replay` response field.
+  - Upgraded Project Output Quality v3 logic in `apps/api/coaching.py`:
+    - added milestone specificity scoring (`milestone_specificity_score`) to quality computation.
+    - expanded diagnostics with targeted regeneration hints, recommended-regeneration signal, and richer deficiency metadata.
+  - Added deterministic API pytest config in `apps/api/pytest.ini` (`pythonpath=.` + `testpaths=tests`).
+
+- Validation:
+  - Existing venv (`apps/api/.venv`):
+    - `.venv\\Scripts\\python -m pytest` ✅ `101 passed, 4 skipped, 1 warning in 8.19s`
+  - Clean venv (`repo/.venv-ci`):
+    - `.venv-ci\\Scripts\\python.exe -m pip install -r apps/api/requirements.txt` ✅
+    - `..\\..\\.venv-ci\\Scripts\\python.exe -m pytest` (from `apps/api`) ✅ `101 passed, 4 skipped, 1 warning in 20.15s`
+
+- Risks:
+  - Launch token flow is stateless HMAC verification (no one-time-use/jti replay store yet).
+
+- Needs from others:
+  - Product/security decision on whether to require strict launch-token TTL + one-time redemption before pilot hardening sign-off.
+
+- Next:
+  1. Add optional launch-token TTL + replay nonce persistence for high-assurance member handoff.
+  2. Add targeted tests asserting new quality diagnostics hints on low-quality outputs.
+  3. Keep lifecycle-readiness endpoint in pilot runbook checks.
+
 ## Checkpoint Update (2026-03-03 - Security Pilot Gate Pass)
 
 - Done:

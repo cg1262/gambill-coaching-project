@@ -12,6 +12,8 @@ import base64
 from datetime import datetime, timezone
 import logging
 import os
+import hashlib
+import hmac
 from typing import Any
 
 from models import CanvasAST, ValidationResult, ImpactResult, CoachingSowDraft
@@ -65,6 +67,8 @@ from db_lakebase import (
     upsert_coaching_account_subscription,
     get_coaching_account_subscription,
     save_coaching_subscription_event,
+    get_coaching_subscription_event,
+    list_recent_coaching_subscription_events,
 )
 from uc_client import healthcheck as uc_health, fetch_information_schema, fetch_schemas
 from git_ops import git_status, save_and_push_ast, set_git_config
@@ -526,6 +530,18 @@ class CoachingReviewStatusUpdateRequest(BaseModel):
     coach_notes: str | None = None
 
 
+class CoachingReviewApproveSendRequest(BaseModel):
+    workspace_id: str
+    submission_id: str
+    coach_notes: str | None = None
+
+
+class CoachingLaunchTokenVerifyRequest(BaseModel):
+    workspace_id: str
+    submission_id: str
+    launch_token: str
+
+
 def _require_active_coaching_subscription(workspace_id: str, session: Session, email: str | None = None) -> dict:
     account = get_coaching_account_subscription(
         workspace_id=workspace_id,
@@ -596,6 +612,45 @@ def _render_sow_markdown(sow: dict[str, Any]) -> str:
             json.dumps((sow.get("solution_architecture") or {}).get("medallion_plan") or {}, indent=2),
         ]
     )
+
+
+def _launch_token_secret() -> str:
+    return str(os.getenv("COACHING_LAUNCH_TOKEN_SECRET") or os.getenv("JWT_SECRET") or "dev-coaching-launch-secret")
+
+
+def _mint_launch_token(*, workspace_id: str, submission_id: str, email: str | None = None) -> str:
+    payload = {
+        "workspace_id": workspace_id,
+        "submission_id": submission_id,
+        "email": str(email or "").strip().lower(),
+        "issued_at": datetime.now(timezone.utc).isoformat(),
+    }
+    body = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+    sig = hmac.new(_launch_token_secret().encode("utf-8"), body.encode("utf-8"), hashlib.sha256).hexdigest()
+    encoded = base64.urlsafe_b64encode(body.encode("utf-8")).decode("utf-8").rstrip("=")
+    return f"{encoded}.{sig}"
+
+
+def _verify_launch_token(*, workspace_id: str, submission_id: str, token: str) -> dict[str, Any]:
+    raw = str(token or "").strip()
+    if not raw or "." not in raw:
+        return {"valid": False, "reason": "invalid_format"}
+    encoded, sig = raw.rsplit(".", 1)
+    try:
+        padded = encoded + ("=" * ((4 - len(encoded) % 4) % 4))
+        body = base64.urlsafe_b64decode(padded.encode("utf-8")).decode("utf-8")
+        expected = hmac.new(_launch_token_secret().encode("utf-8"), body.encode("utf-8"), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return {"valid": False, "reason": "invalid_signature"}
+        payload = json.loads(body)
+    except Exception:
+        return {"valid": False, "reason": "decode_error"}
+
+    if str(payload.get("workspace_id") or "") != str(workspace_id or ""):
+        return {"valid": False, "reason": "workspace_mismatch"}
+    if str(payload.get("submission_id") or "") != str(submission_id or ""):
+        return {"valid": False, "reason": "submission_mismatch"}
+    return {"valid": True, "payload": payload}
 
 app.add_middleware(
     CORSMiddleware,
@@ -1621,11 +1676,53 @@ def coaching_subscription_status(workspace_id: str, email: str | None = None, se
     }
 
 
+@app.get("/coaching/subscription/lifecycle-readiness")
+def coaching_subscription_lifecycle_readiness(workspace_id: str, email: str | None = None, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor", "viewer"})
+    account = get_coaching_account_subscription(workspace_id=workspace_id, username=session.username, email=email)
+    events = list_recent_coaching_subscription_events(workspace_id=workspace_id, email=email, limit=10)
+    normalized_status = _normalize_subscription_status(str((account or {}).get("subscription_status") or "not_found"))
+
+    last_event_status = None
+    if events:
+        payload = events[0].get("payload_json") or {}
+        if isinstance(payload, dict):
+            last_event_status = _normalize_subscription_status(str(payload.get("subscription_status") or ""))
+
+    checks = {
+        "event_stream_present": len(events) > 0,
+        "status_consistent_with_last_event": (last_event_status is None) or (last_event_status == normalized_status),
+    }
+    return {
+        "ok": True,
+        "workspace_id": workspace_id,
+        "email": email,
+        "status": normalized_status,
+        "checks": checks,
+        "recent_events": events,
+    }
+
+
 @app.post("/coaching/subscription/sync")
 def coaching_subscription_sync(req: CoachingSubscriptionSyncRequest, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor"})
-    event_id = str(uuid4())
+    incoming_event_id = str((req.raw_event or {}).get("id") or "").strip()
+    event_id = incoming_event_id or str(uuid4())
     normalized_status = _normalize_subscription_status(req.subscription_status)
+
+    existing = get_coaching_subscription_event(event_id) if incoming_event_id else None
+    if existing:
+        return {
+            "ok": True,
+            "workspace_id": req.workspace_id,
+            "event_id": event_id,
+            "provider": req.provider,
+            "status": _normalize_subscription_status(str((existing.get("payload_json") or {}).get("subscription_status") or normalized_status)),
+            "active": _is_active_subscription(normalized_status),
+            "idempotent_replay": True,
+            "message": "Subscription event already processed.",
+        }
+
     logger.info(
         "coaching_subscription_sync_received",
         extra={
@@ -1673,6 +1770,7 @@ def coaching_subscription_sync(req: CoachingSubscriptionSyncRequest, session=Dep
         "provider": req.provider,
         "status": normalized_status,
         "active": _is_active_subscription(normalized_status),
+        "idempotent_replay": False,
         "message": "Subscription sync stub accepted and stored.",
     }
 
@@ -2166,6 +2264,63 @@ def coaching_review_submission_runs(submission_id: str, limit: int = 20, session
         "workspace_id": submission.get("workspace_id"),
         "runs": runs,
         "total": len(runs),
+    }
+
+
+@app.post("/coaching/review/approve-send")
+def coaching_review_approve_send(req: CoachingReviewApproveSendRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    submission = get_coaching_intake_submission(req.submission_id)
+    if not submission:
+        return {"ok": False, "message": "submission not found", "submission_id": req.submission_id}
+
+    _require_active_coaching_subscription(
+        workspace_id=req.workspace_id,
+        session=session,
+        email=str(submission.get("applicant_email") or "").strip().lower() or None,
+    )
+
+    latest_run = get_latest_coaching_generation_run(req.submission_id)
+    if not latest_run:
+        return {"ok": False, "message": "generation run not found", "submission_id": req.submission_id}
+
+    update_coaching_review_status(
+        submission_id=req.submission_id,
+        coach_review_status="approved_sent",
+        coach_notes=req.coach_notes,
+    )
+
+    launch_token = _mint_launch_token(
+        workspace_id=req.workspace_id,
+        submission_id=req.submission_id,
+        email=str(submission.get("applicant_email") or ""),
+    )
+    return {
+        "ok": True,
+        "workspace_id": req.workspace_id,
+        "submission_id": req.submission_id,
+        "coach_review_status": "approved_sent",
+        "handoff": {
+            "launch_token": launch_token,
+            "latest_run_id": latest_run.get("run_id"),
+        },
+    }
+
+
+@app.post("/coaching/member/launch-token/verify")
+def coaching_member_launch_token_verify(req: CoachingLaunchTokenVerifyRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor", "viewer"})
+    result = _verify_launch_token(
+        workspace_id=req.workspace_id,
+        submission_id=req.submission_id,
+        token=req.launch_token,
+    )
+    return {
+        "ok": True,
+        "workspace_id": req.workspace_id,
+        "submission_id": req.submission_id,
+        "valid": bool(result.get("valid")),
+        "reason": result.get("reason"),
     }
 
 

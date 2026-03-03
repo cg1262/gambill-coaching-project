@@ -3,6 +3,29 @@
 Last Updated: 2026-03-03
 Owner: ERD Program Team
 
+## Checkpoint Update (2026-03-03 - Sprint 4 Backend Core Execution)
+
+### Done
+- Restored coach-review queue reliability endpoints in `apps/api/main.py`:
+  - `POST /coaching/review/approve-send`
+  - `POST /coaching/member/launch-token/verify`
+- Completed subscription lifecycle hardening for queue/member flow:
+  - `GET /coaching/subscription/lifecycle-readiness`
+  - idempotent replay handling in `POST /coaching/subscription/sync` using provider `raw_event.id` + `idempotent_replay` contract field.
+- Upgraded SOW output quality diagnostics (`apps/api/coaching.py`):
+  - added milestone-specificity scoring signal.
+  - added targeted regeneration hints and recommended-regeneration guidance.
+- Added deterministic pytest config for API package (`apps/api/pytest.ini`).
+
+### Validation
+- `apps/api/.venv`: `.venv\\Scripts\\python -m pytest` → **101 passed, 4 skipped, 1 warning**.
+- clean environment (`repo/.venv-ci`):
+  - `.venv-ci\\Scripts\\python.exe -m pip install -r apps/api/requirements.txt`
+  - `..\\..\\.venv-ci\\Scripts\\python.exe -m pytest` (from `apps/api`) → **101 passed, 4 skipped, 1 warning**.
+
+### Risks / Follow-ups
+- Launch-token verification is currently signature + binding based; does not yet enforce one-time-use nonce/TTL expiry window.
+
 ## Checkpoint Update (2026-03-03 - Sprint 4 Security Pilot Gate Pass)
 
 ### Done
