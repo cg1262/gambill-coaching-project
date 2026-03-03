@@ -395,3 +395,53 @@ def test_subscription_denial_response_is_generic(monkeypatch):
     assert body["auth_required"] is False
     assert body["subscription_required"] is True
     assert "inactive" not in str(body).lower()
+
+
+def test_generation_instrumentation_payload_stays_summary_only(monkeypatch):
+    captured: list[dict] = []
+
+    def _fake_logger(msg, *args, **kwargs):
+        captured.append({"msg": msg, "kwargs": kwargs})
+
+    monkeypatch.setattr(main.logger, "info", _fake_logger)
+    monkeypatch.setattr(
+        main,
+        "get_coaching_intake_submission",
+        lambda submission_id: {
+            "submission_id": submission_id,
+            "workspace_id": "ws-1",
+            "applicant_name": "Candidate",
+            "applicant_email": "member@example.com",
+            "preferences_json": {},
+            "resume_text": "resume token=super-secret-resume",
+            "self_assessment_text": "assessment api_key=sk-secret",
+            "job_links_json": ["https://example.org/jobs/1"],
+        },
+    )
+    monkeypatch.setattr(
+        main,
+        "get_coaching_account_subscription",
+        lambda workspace_id, username=None, email=None: {"subscription_status": "active", "email": email},
+    )
+    monkeypatch.setattr(main, "save_coaching_generation_run", lambda **kwargs: None)
+    monkeypatch.setattr(main, "list_coaching_generation_runs", lambda submission_id, limit=1: [])
+
+    client = TestClient(app)
+    editor_token = issue_token("editor-user", "editor")
+    res = client.post(
+        "/coaching/sow/generate",
+        headers=_auth_header(editor_token),
+        json={"workspace_id": "ws-1", "submission_id": "sub-1", "parsed_jobs": []},
+    )
+
+    assert res.status_code == 200
+    completion_logs = [x for x in captured if x.get("msg") == "coaching_sow_generate_completed"]
+    assert completion_logs
+    payload = completion_logs[-1]["kwargs"]["extra"]["payload"]
+
+    serialized = str(payload).lower()
+    assert "super-secret-resume" not in serialized
+    assert "sk-secret" not in serialized
+    assert "member@example.com" not in serialized
+    assert "resume_text_summary" in payload
+    assert "self_assessment_summary" in payload

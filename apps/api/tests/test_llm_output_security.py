@@ -171,6 +171,7 @@ def test_generation_meta_is_sanitized_and_secret_free(monkeypatch):
         "https://internal.dev.local/admin",
         "data:text/html,evil",
         "javascript:alert(1)",
+        "file:///etc/passwd",
     ],
 )
 def test_generated_sow_blocks_unsafe_urls_and_secret_text(monkeypatch, unsafe_url):

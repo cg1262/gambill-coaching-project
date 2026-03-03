@@ -4,7 +4,7 @@ Use this as a go/no-go gate before enabling pilot users.
 
 ## Current Gate Status (2026-03-03)
 - **Security pilot gate:** CONDITIONAL GO
-- **Why conditional:** auth/session contract, URL hardening, and secret-masking regressions (including Sprint 5 diagnostics masking and `.local` URL-block checks) are passing; production blockers remain open in webhook signature verification and route-level rate limiting, and web deterministic build proof is still blocked by persistent `EISDIR` build failure (`src/app/page.tsx`).
+- **Why conditional:** Sprint 6 security pass confirms auth/session denial contract stability, instrumentation/event payload sanitization, generated-output URL safety, diagnostics secrecy, and subscription replay safety; production blockers remain open in webhook signature verification and route-level rate limiting, and web deterministic build proof is still blocked by persistent `EISDIR` build failure (`node_modules/next/dist/pages/_app.js`).
 
 ## 1) Auth + Subscription Enforcement
 - [x] Verify all coaching generation routes require authenticated session + allowed role (`admin`/`editor`).
@@ -18,7 +18,7 @@ Use this as a go/no-go gate before enabling pilot users.
 
 ## 3) Webhook + Provider Integrity
 - [ ] Enforce webhook signature verification (Squarespace/Stripe) before mutating subscription state.
-- [ ] Idempotently handle duplicate provider events (`event_id` replay-safe).
+- [x] Idempotently handle duplicate provider events (`event_id` replay-safe).
 - [ ] Alert on repeated invalid signature attempts.
 
 ## 4) Abuse + Reliability Controls
@@ -38,7 +38,7 @@ Use this as a go/no-go gate before enabling pilot users.
 - [ ] Attach test/build output + commit SHA to pilot launch notes.
 
 ### Evidence Commands (2026-03-03 Security Pilot Gate)
-- `python -m pytest -q tests/test_auth_contract_security.py tests/test_llm_output_security.py tests/test_security_sprint2.py tests/test_coaching_security_access.py tests/test_coaching_generation_guardrails.py`
-- `python -m compileall -q .`
-- `npm run typecheck` ✅
-- `npm run build:clean` *(blocked: persistent `EISDIR` on `src/app/page.tsx` after retry path in `build-clean.ps1`)*
+- `python -m pytest tests/test_auth_contract_security.py tests/test_llm_output_security.py tests/test_security_sprint2.py tests/test_coaching_security_access.py tests/test_coaching_generation_guardrails.py tests/test_coaching_subscription.py` → **52 passed, 1 warning**
+- `python -m compileall -q .` → **pass**
+- `npm run typecheck` → **pass**
+- `npm run build:clean` → **blocked**: persistent `EISDIR` on `node_modules/next/dist/pages/_app.js` after scripted `npm ci` retry path in `build-clean.ps1`

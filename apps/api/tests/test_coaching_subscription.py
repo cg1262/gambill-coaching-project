@@ -38,7 +38,7 @@ def test_subscription_lifecycle_readiness(monkeypatch):
     monkeypatch.setattr(
         main,
         "list_recent_coaching_subscription_events",
-        lambda workspace_id, email=None, limit=10: [{"event_id": "evt_1", "event_type": "subscription.updated", "provider": "stripe", "received_at": "2026-03-01T00:00:00Z", "payload_json": {"subscription_status": "active"}}],
+        lambda workspace_id, email=None, limit=10: [{"event_id": "evt_1", "event_type": "subscription.updated", "provider": "stripe", "received_at": "2026-03-01T00:00:00Z", "payload_json": {"subscription_status": "active", "signature": "whsec_secret"}}],
     )
 
     client = TestClient(app)
@@ -48,6 +48,12 @@ def test_subscription_lifecycle_readiness(monkeypatch):
     assert body["ok"] is True
     assert body["checks"]["status_consistent_with_last_event"] is True
     assert body["checks"]["event_stream_present"] is True
+
+    evt = body["recent_events"][0]
+    assert evt["event_id"] == "evt_1"
+    assert evt["status"] == "active"
+    assert "payload_json" not in evt
+    assert "signature" not in str(body).lower()
     app.dependency_overrides = {}
 
 
@@ -115,7 +121,7 @@ def test_subscription_sync_is_idempotent_on_replay(monkeypatch):
             "event_type": "customer.subscription.updated",
             "email": "test@example.com",
             "plan_tier": "core",
-            "subscription_status": "trialing",
+            "subscription_status": "inactive",
             "raw_event": {"id": "evt_dupe"},
         },
     )
@@ -123,6 +129,8 @@ def test_subscription_sync_is_idempotent_on_replay(monkeypatch):
     body = res.json()
     assert body["ok"] is True
     assert body["idempotent_replay"] is True
+    assert body["status"] == "active"
+    assert body["active"] is True
     assert calls["event"] == 0
     assert calls["account"] == 0
     app.dependency_overrides = {}

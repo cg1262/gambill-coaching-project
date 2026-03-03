@@ -28,6 +28,8 @@ def test_auth_401_payload_is_generic_for_auth_routes():
         ("POST", "/coaching/sow/generate-draft", {"workspace_id": "ws-1", "submission_id": "sub-1", "parsed_jobs": []}),
         ("GET", "/coaching/intake/submissions", {"workspace_id": "ws-1"}),
         ("GET", "/coaching/health/llm-readiness", None),
+        ("GET", "/coaching/subscription/status", {"workspace_id": "ws-1", "email": "member@example.com"}),
+        ("GET", "/coaching/subscription/lifecycle-readiness", {"workspace_id": "ws-1", "email": "member@example.com"}),
     ],
 )
 def test_coaching_401_payload_is_generic_on_protected_routes(method, path, payload):

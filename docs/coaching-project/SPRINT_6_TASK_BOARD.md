@@ -153,6 +153,51 @@ Sprint Goal: Pilot launch + conversion instrumentation + post-launch learning lo
 - Acceptance:
   - repeatable operating loop documented and adopted
 
+## Checkpoint Update (2026-03-03 - Sprint 6 Security Execution)
+
+### Done
+- Re-validated generic auth/session denial contracts and no-leak behavior on protected coaching routes.
+- Expanded security regression coverage:
+  - `apps/api/tests/test_auth_contract_security.py`
+    - added generic 401 contract checks for:
+      - `GET /coaching/subscription/status`
+      - `GET /coaching/subscription/lifecycle-readiness`
+  - `apps/api/tests/test_coaching_security_access.py`
+    - added generation instrumentation/log payload regression ensuring summary-only event telemetry does not expose raw resume/self-assessment/email secrets.
+  - `apps/api/tests/test_llm_output_security.py`
+    - expanded unsafe URL regression set with `file://` payload blocking in generated SOW surfaces.
+  - `apps/api/tests/test_coaching_subscription.py`
+    - added lifecycle-readiness event sanitization assertions (no raw `payload_json`/signature leakage).
+    - strengthened idempotent replay assertions so replay status/`active` derive from stored event truth, not incoming replay payload.
+- Hardened subscription lifecycle API behavior in `apps/api/main.py`:
+  - `GET /coaching/subscription/lifecycle-readiness` now returns sanitized recent-event summaries only.
+  - `POST /coaching/subscription/sync` replay branch now computes `active` from replay status derived from persisted event payload.
+- Updated pilot hardening checklist + POC status with Sprint 6 evidence and blocker/non-blocker split.
+
+### Validation
+- API security pack (from `apps/api`):
+  - `python -m pytest tests/test_auth_contract_security.py tests/test_llm_output_security.py tests/test_security_sprint2.py tests/test_coaching_security_access.py tests/test_coaching_generation_guardrails.py tests/test_coaching_subscription.py`
+  - Result: **52 passed, 1 warning**.
+- API compile check:
+  - `python -m compileall -q .` → **pass**.
+- Web checks (from `apps/web`):
+  - `npm run typecheck` → **pass**.
+  - `npm run build:clean` → **fail** (persistent `EISDIR` on `node_modules/next/dist/pages/_app.js` after scripted `npm ci` retry).
+
+### Risks
+- **Blocker:** deterministic web clean build remains blocked by persistent filesystem/module corruption signature (`EISDIR` in Next build path), so full pilot release evidence cannot be marked complete.
+- **Blocker:** provider webhook signature verification and route-level rate limiting are still not implemented.
+- **Non-blocker:** auth/session denial contracts, output URL safety, diagnostics/output sanitization, and subscription replay/event-summary controls are regression-backed and passing.
+
+### Needs from others
+- Product/ops sign-off on whether pilot can proceed as **conditional go** with current production blockers still open.
+- Platform/devops support to resolve persistent `EISDIR` host build failure and pin supported Node/npm runtime for deterministic web builds.
+
+### Next
+1. Implement provider webhook signature verification (Stripe/Squarespace) with invalid-signature alerting.
+2. Add route-level rate limiting for `/auth/*` and subscription routes.
+3. Resolve `EISDIR` build blocker and attach final clean build logs + commit SHA to pilot launch notes.
+
 ## Required Reporting Format
 - Done:
 - Validation:

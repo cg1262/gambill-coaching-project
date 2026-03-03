@@ -3,6 +3,40 @@
 Last Updated: 2026-03-03
 Owner: ERD Program Team
 
+## Checkpoint Update (2026-03-03 - Sprint 6 Security Execution + Pilot Gate Refresh)
+
+### Done
+- Executed Sprint 6 security validation on coaching API auth/session, generation safety, telemetry payload hygiene, and subscription lifecycle controls.
+- Preserved generic denial contracts and expanded coverage:
+  - `apps/api/tests/test_auth_contract_security.py` now includes protected 401 contract checks for:
+    - `GET /coaching/subscription/status`
+    - `GET /coaching/subscription/lifecycle-readiness`
+- Expanded instrumentation/event payload safety regression:
+  - `apps/api/tests/test_coaching_security_access.py` now verifies `coaching_sow_generate_completed` logging remains summary-only and does not leak raw resume/self-assessment/email secrets.
+- Expanded output safety regressions:
+  - `apps/api/tests/test_llm_output_security.py` now includes `file://` URL blocking in generated SOW sanitization checks.
+- Hardened subscription lifecycle endpoint behavior in `apps/api/main.py`:
+  - `GET /coaching/subscription/lifecycle-readiness` now returns sanitized event summaries (no raw `payload_json` echo).
+  - `POST /coaching/subscription/sync` idempotent replay now derives `active` from persisted replay event status.
+- Expanded subscription lifecycle regression set:
+  - `apps/api/tests/test_coaching_subscription.py` now verifies lifecycle-readiness redacts raw event payload fields and replay status consistency.
+- Updated Sprint 6 task board and pilot hardening checklist with blocker/non-blocker security checkpoint status and refreshed evidence commands.
+
+### Validation
+- Security pack run (from `apps/api`):
+  - `python -m pytest tests/test_auth_contract_security.py tests/test_llm_output_security.py tests/test_security_sprint2.py tests/test_coaching_security_access.py tests/test_coaching_generation_guardrails.py tests/test_coaching_subscription.py`
+  - Result: **52 passed, 1 warning**.
+- API compile check:
+  - `python -m compileall -q .` → **pass**.
+- Web checks (from `apps/web`):
+  - `npm run typecheck` → **pass**.
+  - `npm run build:clean` → **fail** with persistent `EISDIR` on `node_modules/next/dist/pages/_app.js` after scripted `npm ci` retry.
+
+### Risks / Follow-ups
+- **Blocker:** web deterministic clean-build proof remains unresolved due to persistent `EISDIR` failure signature.
+- **Blocker:** webhook signature verification and route-level rate limiting remain open production controls.
+- **Non-blocker:** API auth/session generic denial, event/log payload hygiene, URL safety, and diagnostics/output sanitization controls are passing with regression evidence.
+
 ## Checkpoint Update (2026-03-03 - Sprint 6 Frontend Execution: Pilot UX + Instrumentation + Interview Artifacts)
 
 ### Done
