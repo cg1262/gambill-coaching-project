@@ -22,6 +22,8 @@ _SECRET_PATTERNS = [
     re.compile(r"(?i)(password\s*[=:]\s*)([^\s,;\]\}]+)"),
     re.compile(r"(?i)(client_secret\s*[=:]\s*)([^\s,;\]\}]+)"),
     re.compile(r"(?i)(api[_-]?key\s*[=:]\s*)([^\s,;\]\}]+)"),
+    re.compile(r"(?i)(signature\s*[=:]\s*)([^\s,;\]\}]+)"),
+    re.compile(r"(?i)(webhook_signature\s*[=:]\s*)([^\s,;\]\}]+)"),
 ]
 
 

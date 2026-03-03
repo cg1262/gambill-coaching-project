@@ -4,7 +4,7 @@ from pathlib import Path
 import json
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from urllib import request as urlrequest
 from urllib.error import URLError, HTTPError
 from urllib.parse import urlparse
@@ -90,26 +90,62 @@ from security import (
     pii_safe_subscription_log_payload,
     validate_resume_metadata,
 )
+from rate_limits import RateLimitExceeded, enforce_rate_limit, policy_snapshot as rate_limit_policy_snapshot, policy_update as rate_limit_policy_update
+from webhook_security import parse_webhook_body, verify_webhook_signature
 
 app = FastAPI(title="AI Data Modeling IDE API", version="0.2.0")
 logger = logging.getLogger("gambill_coaching.api")
 RESOURCE_LIBRARY_PATH = Path(__file__).resolve().parents[2] / "docs" / "coaching-project" / "RESOURCE_LIBRARY.json"
 
 
+def _client_ip(request: Request) -> str:
+    xff = str(request.headers.get("x-forwarded-for") or "").strip()
+    if xff:
+        return xff.split(",")[0].strip()
+    return str((request.client.host if request.client else "unknown") or "unknown")
+
+
+def _apply_rate_limit(*, policy_name: str, request: Request, session: Session | None = None, workspace_id: str | None = None) -> None:
+    try:
+        enforce_rate_limit(
+            policy_name,
+            ip=_client_ip(request),
+            user=(session.username if session else None),
+            workspace=workspace_id,
+        )
+    except RateLimitExceeded as exc:
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "ok": False,
+                "code": "rate_limit_exceeded",
+                "policy": exc.policy,
+                "rule": exc.rule,
+                "retry_after_seconds": exc.retry_after_seconds,
+                "message": "Too many requests. Please retry later.",
+            },
+        )
+
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     is_coaching_or_auth_route = request.url.path.startswith("/coaching") or request.url.path.startswith("/auth")
-    if is_coaching_or_auth_route and exc.status_code in {401, 403}:
+    if is_coaching_or_auth_route and exc.status_code in {401, 403, 429}:
         detail = exc.detail if isinstance(exc.detail, dict) else None
         is_subscription = bool(detail and detail.get("subscription_required")) or "subscription" in str(exc.detail).lower()
+        is_rate_limited = exc.status_code == 429
         message = (
-            "Active coaching subscription required. Sync membership or reactivate subscription before retrying."
-            if is_subscription
-            else "Authentication required. Send Authorization: Bearer <token> and ensure your role has access."
+            "Too many requests. Please wait and retry."
+            if is_rate_limited
+            else (
+                "Active coaching subscription required. Sync membership or reactivate subscription before retrying."
+                if is_subscription
+                else "Authentication required. Send Authorization: Bearer <token> and ensure your role has access."
+            )
         )
         payload = {
             "ok": False,
-            "code": "subscription_required" if is_subscription else ("auth_required" if exc.status_code == 401 else "forbidden"),
+            "code": "rate_limited" if is_rate_limited else ("subscription_required" if is_subscription else ("auth_required" if exc.status_code == 401 else "forbidden")),
             "auth_required": exc.status_code == 401,
             "subscription_required": is_subscription,
             "message": message,
@@ -499,7 +535,28 @@ class CoachingSubscriptionSyncRequest(BaseModel):
     renewal_date: str | None = None
     provider_customer_id: str | None = None
     provider_subscription_id: str | None = None
+    webhook_signature: str | None = None
+    webhook_timestamp: int | None = None
     raw_event: dict | None = None
+
+
+def _verify_subscription_webhook_signature(req: CoachingSubscriptionSyncRequest):
+    provider = str(req.provider or "generic").strip().lower()
+    provider_secret = str(os.getenv(f"WEBHOOK_SECRET_{provider.upper().replace('-', '_')}") or "").strip()
+    shared_secret = str(os.getenv("COACHING_WEBHOOK_SECRET") or "").strip()
+    if not (provider_secret or shared_secret):
+        return type("_Result", (), {"valid": True, "reason": "not_configured"})()
+
+    payload_json = req.model_dump(mode="json", exclude={"webhook_signature", "webhook_timestamp"})
+    body_bytes = json.dumps(payload_json, separators=(",", ":"), sort_keys=True).encode("utf-8")
+
+    headers: dict[str, str] = {}
+    if req.webhook_timestamp is not None:
+        headers["x-webhook-timestamp"] = str(req.webhook_timestamp)
+    if req.webhook_signature:
+        headers["x-webhook-signature"] = str(req.webhook_signature)
+
+    return verify_webhook_signature(provider=provider, body_bytes=body_bytes, headers=headers)
 
 
 def _normalize_subscription_status(status: str) -> str:
@@ -809,7 +866,8 @@ def coaching_llm_readiness(session=Depends(get_current_session)) -> dict:
 
 
 @app.post("/auth/login")
-def auth_login(req: LoginRequest) -> dict:
+def auth_login(req: LoginRequest, request: Request) -> dict:
+    _apply_rate_limit(policy_name="auth", request=request)
     user = get_user_auth(req.username, req.password)
 
     # Local-safe fallback when backend is pointed to unconfigured Postgres.
@@ -848,12 +906,14 @@ def auth_login(req: LoginRequest) -> dict:
 
 
 @app.get("/auth/me")
-def auth_me(authorization: str | None = Header(default=None)) -> dict:
+def auth_me(request: Request, authorization: str | None = Header(default=None)) -> dict:
+    _apply_rate_limit(policy_name="auth", request=request)
     return whoami(authorization)
 
 
 @app.post("/auth/refresh")
-def auth_refresh(session=Depends(get_current_session)) -> dict:
+def auth_refresh(request: Request, session=Depends(get_current_session)) -> dict:
+    _apply_rate_limit(policy_name="auth", request=request)
     token = issue_token(session.username, session.role)
     logger.info(
         "auth_refresh_completed",
@@ -866,7 +926,8 @@ def auth_refresh(session=Depends(get_current_session)) -> dict:
 
 
 @app.post("/auth/logout")
-def auth_logout(authorization: str | None = Header(default=None)) -> dict:
+def auth_logout(request: Request, authorization: str | None = Header(default=None)) -> dict:
+    _apply_rate_limit(policy_name="auth", request=request)
     return revoke_token(authorization)
 
 
@@ -1863,8 +1924,30 @@ def coaching_pilot_launch_readiness(workspace_id: str, submission_id: str | None
 
 
 @app.post("/coaching/subscription/sync")
-def coaching_subscription_sync(req: CoachingSubscriptionSyncRequest, session=Depends(get_current_session)) -> dict:
+def coaching_subscription_sync(req: CoachingSubscriptionSyncRequest, request: Request, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor"})
+    verification = _verify_subscription_webhook_signature(req)
+    if not verification.valid:
+        logger.warning(
+            "coaching_subscription_sync_rejected",
+            extra={
+                "actor": session.username,
+                "role": session.role,
+                "provider": req.provider,
+                "event_type": req.event_type,
+                "reason": verification.reason,
+                "payload": pii_safe_subscription_log_payload(
+                    workspace_id=req.workspace_id,
+                    member_email=req.email,
+                    subscription_status=_normalize_subscription_status(req.subscription_status),
+                    plan_tier=req.plan_tier,
+                    launch_token=None,
+                    can_access=False,
+                ),
+            },
+        )
+        raise HTTPException(status_code=403, detail="Invalid webhook authentication")
+
     incoming_event_id = str((req.raw_event or {}).get("id") or "").strip()
     event_id = incoming_event_id or str(uuid4())
     normalized_status = _normalize_subscription_status(req.subscription_status)
@@ -2069,8 +2152,9 @@ def coaching_jobs_parse(req: CoachingJobParseRequest, session=Depends(get_curren
 
 
 @app.post("/coaching/sow/generate")
-def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_current_session)) -> dict:
+def coaching_generate_sow(req: CoachingGenerateSowRequest, request: Request, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor"})
+    _apply_rate_limit(policy_name="generation", request=request, session=session, workspace_id=req.workspace_id)
     logger.info(
         "coaching_sow_generate_requested",
         extra={
@@ -2299,8 +2383,8 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, session=Depends(get_c
     }
 
 @app.post("/coaching/sow/generate-draft")
-def coaching_generate_sow_draft(req: CoachingGenerateSowRequest, session=Depends(get_current_session)) -> dict:
-    return coaching_generate_sow(req, session)
+def coaching_generate_sow_draft(req: CoachingGenerateSowRequest, request: Request, session=Depends(get_current_session)) -> dict:
+    return coaching_generate_sow(req, request, session)
 
 
 @app.post("/coaching/sow/validate")
@@ -2395,8 +2479,9 @@ def coaching_demo_seed_package_get(workspace_id: str, session=Depends(get_curren
 
 
 @app.post("/coaching/sow/export")
-def coaching_sow_export(req: CoachingSowExportRequest, session=Depends(get_current_session)) -> dict:
+def coaching_sow_export(req: CoachingSowExportRequest, request: Request, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor"})
+    _apply_rate_limit(policy_name="exports", request=request, session=session, workspace_id=req.workspace_id)
     intake = get_coaching_intake_submission(req.submission_id)
     if not intake:
         return {"ok": False, "message": "submission not found", "submission_id": req.submission_id}
@@ -2477,8 +2562,9 @@ def coaching_review_submission_runs(submission_id: str, limit: int = 20, session
 
 
 @app.post("/coaching/review/approve-send")
-def coaching_review_approve_send(req: CoachingReviewApproveSendRequest, session=Depends(get_current_session)) -> dict:
+def coaching_review_approve_send(req: CoachingReviewApproveSendRequest, request: Request, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor"})
+    _apply_rate_limit(policy_name="review_actions", request=request, session=session, workspace_id=req.workspace_id)
     submission = get_coaching_intake_submission(req.submission_id)
     if not submission:
         return {"ok": False, "message": "submission not found", "submission_id": req.submission_id}
@@ -2561,8 +2647,9 @@ def coaching_member_launch_token_verify(req: CoachingLaunchTokenVerifyRequest, s
 
 
 @app.post("/coaching/review/status")
-def coaching_review_status_update(req: CoachingReviewStatusUpdateRequest, session=Depends(get_current_session)) -> dict:
+def coaching_review_status_update(req: CoachingReviewStatusUpdateRequest, request: Request, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor"})
+    _apply_rate_limit(policy_name="review_actions", request=request, session=session, workspace_id=req.workspace_id)
     submission = get_coaching_intake_submission(req.submission_id)
     if not submission:
         return {"ok": False, "message": "submission not found", "submission_id": req.submission_id}
@@ -2592,8 +2679,9 @@ def coaching_review_status_update(req: CoachingReviewStatusUpdateRequest, sessio
 
 
 @app.post("/coaching/review/feedback")
-def coaching_review_feedback(req: CoachingFeedbackCaptureRequest, session=Depends(get_current_session)) -> dict:
+def coaching_review_feedback(req: CoachingFeedbackCaptureRequest, request: Request, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor"})
+    _apply_rate_limit(policy_name="review_actions", request=request, session=session, workspace_id=req.workspace_id)
     submission = get_coaching_intake_submission(req.submission_id)
     if not submission:
         return {"ok": False, "message": "submission not found", "submission_id": req.submission_id}
@@ -2762,6 +2850,19 @@ def coaching_validate_loop(req: CoachingValidateLoopRequest, session=Depends(get
         "final_findings": final_findings,
         "sow": final_sow,
     }
+
+
+@app.get("/admin/security/rate-limits")
+def admin_rate_limits_get(session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin"})
+    return {"ok": True, **rate_limit_policy_snapshot()}
+
+
+@app.put("/admin/security/rate-limits")
+def admin_rate_limits_update(payload: dict[str, Any], session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin"})
+    updated = rate_limit_policy_update(payload)
+    return {"ok": True, **updated}
 
 
 @app.get("/admin/users")

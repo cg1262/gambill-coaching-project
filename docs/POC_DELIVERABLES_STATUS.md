@@ -21,6 +21,10 @@ Owner: ERD Program Team
 - Expanded subscription lifecycle regression set:
   - `apps/api/tests/test_coaching_subscription.py` now verifies lifecycle-readiness redacts raw event payload fields and replay status consistency.
 - Updated Sprint 6 task board and pilot hardening checklist with blocker/non-blocker security checkpoint status and refreshed evidence commands.
+- Added webhook verification security controls + tests:
+  - `POST /coaching/subscription/sync` now enforces provider/shared-secret signature + timestamp checks when webhook secret is configured.
+  - New regression suite `apps/api/tests/test_security_rate_limit_webhook.py` covers valid/invalid/missing signature paths, replay-safe duplicate event handling, and timestamp window rejection.
+- Expanded rate-limit regression coverage for auth/generation/review/export routes and generic 429 payload behavior.
 
 ### Validation
 - Security pack run (from `apps/api`):
@@ -28,13 +32,16 @@ Owner: ERD Program Team
   - Result: **52 passed, 1 warning**.
 - API compile check:
   - `python -m compileall -q .` → **pass**.
+- Focused security regression add-on (from `apps/api`):
+  - `python -m pytest -q tests/test_security_rate_limit_webhook.py tests/test_coaching_subscription.py`
+  - Result: **8 passed, 1 warning**.
 - Web checks (from `apps/web`):
   - `npm run typecheck` → **pass**.
   - `npm run build:clean` → **fail** with persistent `EISDIR` on `node_modules/next/dist/pages/_app.js` after scripted `npm ci` retry.
 
 ### Risks / Follow-ups
 - **Blocker:** web deterministic clean-build proof remains unresolved due to persistent `EISDIR` failure signature.
-- **Blocker:** webhook signature verification and route-level rate limiting remain open production controls.
+- **Blocker:** deterministic web clean-build proof remains unresolved; production alerting for repeated invalid webhook signatures and subscription status-route specific rate-limit policy are still open ops controls.
 - **Non-blocker:** API auth/session generic denial, event/log payload hygiene, URL safety, and diagnostics/output sanitization controls are passing with regression evidence.
 
 ## Checkpoint Update (2026-03-03 - Sprint 6 Frontend Execution: Pilot UX + Instrumentation + Interview Artifacts)
