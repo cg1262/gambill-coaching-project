@@ -427,6 +427,28 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
     ];
   }, [scaffold]);
 
+  const qualityGuidance = useMemo(() => {
+    const q = generationState.quality || {};
+    const diagnostics = q.quality_diagnostics || {};
+    const missing = Array.isArray(q.missing_sections) ? q.missing_sections : [];
+    const sectionOrderValid = q.section_order_valid !== false;
+    const actions: string[] = [];
+
+    if (missing.length > 0) {
+      actions.push(`Missing sections detected: ${missing.join(", ")}. Regenerate with improvements to force section completion.`);
+    }
+    if (!sectionOrderValid) {
+      actions.push("Section order mismatch detected. Regenerate with improvements to restore canonical section flow.");
+    }
+    if (Number(diagnostics.deficiency_count || 0) > 0) {
+      actions.push("Use top deficiency messages below to tighten milestone execution detail, expected deliverable quality, and business rationale.");
+    }
+    if ((q.band || "").toString().toLowerCase().includes("low")) {
+      actions.push("Quality band is low. Re-run regeneration, then review data source links and milestone resources before export.");
+    }
+    return actions;
+  }, [generationState.quality]);
+
   const submissionTimeline = useMemo(() => {
     const events: TimelineEvent[] = [];
     if (selectedSubmission) {
@@ -1156,6 +1178,8 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                   <div style={{ display: "grid", gap: 4 }}>
                     <div>Quality score: <strong>{String(generationState.quality.score ?? "n/a")}</strong></div>
                     <div>Quality band: <strong>{String(generationState.quality.band ?? "n/a")}</strong></div>
+                    <div>Structure score: <strong>{String(generationState.quality.structure_score ?? "n/a")}</strong></div>
+                    <div>Section order valid: <strong>{generationState.quality.section_order_valid === false ? "no" : "yes"}</strong></div>
                     <div>
                       Regenerate delta: <strong>{String(generationState.quality.quality_delta ?? "n/a")}</strong>
                       {typeof generationState.quality.score === "number" && typeof generationState.quality.quality_delta === "number" && (
@@ -1167,12 +1191,32 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                         <div>Quality floor: <strong>{String(generationState.quality.quality_diagnostics.floor_score ?? "n/a")}</strong></div>
                         <div>Auto-regenerated for floor: <strong>{generationState.quality.quality_diagnostics.auto_regenerated ? "yes" : "no"}</strong></div>
                         <div>Deficiency count: <strong>{String(generationState.quality.quality_diagnostics.deficiency_count ?? 0)}</strong></div>
+                        {Array.isArray(generationState.quality.missing_sections) && generationState.quality.missing_sections.length > 0 && (
+                          <div>
+                            Missing sections:
+                            <ul style={{ margin: "4px 0 0 18px" }}>
+                              {generationState.quality.missing_sections.map((section: string, idx: number) => (
+                                <li key={`missing-section-${idx}`}>{section}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                         {Array.isArray(generationState.quality.quality_diagnostics.top_deficiencies) && generationState.quality.quality_diagnostics.top_deficiencies.length > 0 && (
                           <div>
                             Top deficiencies:
                             <ul style={{ margin: "4px 0 0 18px" }}>
                               {generationState.quality.quality_diagnostics.top_deficiencies.slice(0, 3).map((msg: string, idx: number) => (
                                 <li key={`quality-def-${idx}`}>{msg}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {qualityGuidance.length > 0 && (
+                          <div>
+                            Regenerate guidance:
+                            <ul style={{ margin: "4px 0 0 18px" }}>
+                              {qualityGuidance.map((msg, idx) => (
+                                <li key={`quality-guidance-${idx}`}>{msg}</li>
                               ))}
                             </ul>
                           </div>
