@@ -768,6 +768,13 @@ def build_quality_diagnostics(quality: dict[str, Any], findings: list[dict[str, 
         "RESOURCE_LINKS_MISSING": "Populate required/recommended/optional resource plan links.",
     }
     targeted_regeneration_hints = [regen_hints_map[c] for c in unique_codes if c in regen_hints_map][:6]
+    if int(quality.get("structure_score") or 0) < 90:
+        targeted_regeneration_hints.append("Regenerate using REQUIRED_SECTION_FLOW headings verbatim and keep top-level order unchanged.")
+    if int(quality.get("milestone_specificity_score") or 0) < 75:
+        targeted_regeneration_hints.append("For each milestone, include 3-5 concrete implementation tasks, a measurable deliverable, and KPI-linked business impact.")
+    if score < int(floor_score):
+        targeted_regeneration_hints.append("Raise depth: include production-ready artifact detail (tests, docs, runbooks, demo evidence) instead of generic phrasing.")
+    targeted_regeneration_hints = list(dict.fromkeys(targeted_regeneration_hints))[:8]
 
     return {
         "floor_score": floor_score,

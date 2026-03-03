@@ -47,12 +47,26 @@ def test_review_status_update_endpoint(monkeypatch):
     app.dependency_overrides[get_current_session] = _override_session("editor")
     monkeypatch.setattr(main, "_require_active_coaching_subscription", lambda **kwargs: {"subscription_status": "active"})
     monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: {"submission_id": submission_id, "workspace_id": "ws-1", "applicant_email": "a@x.com"})
-    monkeypatch.setattr(main, "update_coaching_review_status", lambda submission_id, coach_review_status, coach_notes: None)
+    monkeypatch.setattr(
+        main,
+        "_persist_review_state_with_retry",
+        lambda **kwargs: {
+            "ok": True,
+            "attempts": 1,
+            "submission": {
+                "submission_id": kwargs.get("submission_id"),
+                "coach_review_status": kwargs.get("coach_review_status"),
+                "coach_notes": kwargs.get("coach_notes") or "",
+            },
+        },
+    )
 
     client = TestClient(app)
     res = client.post("/coaching/review/status", json={"workspace_id": "ws-1", "submission_id": "sub-1", "coach_review_status": "in_review", "coach_notes": "looks good"})
     assert res.status_code == 200
-    assert res.json()["ok"] is True
+    body = res.json()
+    assert body["ok"] is True
+    assert body["consistency"]["persist_ok"] is True
     app.dependency_overrides = {}
 
 

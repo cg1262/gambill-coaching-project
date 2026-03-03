@@ -14,6 +14,7 @@ import logging
 import os
 import hashlib
 import hmac
+import time
 from typing import Any
 
 from models import CanvasAST, ValidationResult, ImpactResult, CoachingSowDraft
@@ -573,6 +574,48 @@ def _require_coaching_role(session: Session, allowed_roles: set[str]) -> None:
 
 def _require_coaching_subscription(*, workspace_id: str, session: Session, email: str | None = None) -> dict:
     return _require_active_coaching_subscription(workspace_id=workspace_id, session=session, email=email)
+
+
+def _persist_review_state_with_retry(
+    *,
+    submission_id: str,
+    coach_review_status: str,
+    coach_notes: str | None,
+    max_attempts: int = 3,
+    backoff_sec: float = 0.15,
+) -> dict[str, Any]:
+    normalized_notes = coach_notes or ""
+    last_error: Exception | None = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            update_coaching_review_status(
+                submission_id=submission_id,
+                coach_review_status=coach_review_status,
+                coach_notes=normalized_notes,
+            )
+            persisted = get_coaching_intake_submission(submission_id)
+            persisted_status = str((persisted or {}).get("coach_review_status") or "")
+            persisted_notes = str((persisted or {}).get("coach_notes") or "")
+            if persisted and persisted_status == coach_review_status and persisted_notes == normalized_notes:
+                return {
+                    "ok": True,
+                    "submission": persisted,
+                    "attempts": attempt,
+                }
+            last_error = RuntimeError("review state consistency check failed")
+        except Exception as exc:
+            last_error = exc
+
+        if attempt < max_attempts:
+            time.sleep(backoff_sec * attempt)
+
+    return {
+        "ok": False,
+        "submission": get_coaching_intake_submission(submission_id),
+        "attempts": max_attempts,
+        "error": str(last_error) if last_error else "review state update failed",
+    }
 
 
 def _check_llm_provider_reachability(base_url: str, api_key: str, timeout_sec: int = 4) -> tuple[bool, str]:
@@ -2283,12 +2326,27 @@ def coaching_review_approve_send(req: CoachingReviewApproveSendRequest, session=
     latest_run = get_latest_coaching_generation_run(req.submission_id)
     if not latest_run:
         return {"ok": False, "message": "generation run not found", "submission_id": req.submission_id}
+    if str(latest_run.get("run_status") or "") != "completed":
+        return {
+            "ok": False,
+            "message": "latest generation run must be completed before approve-send",
+            "submission_id": req.submission_id,
+            "latest_run_status": latest_run.get("run_status"),
+        }
 
-    update_coaching_review_status(
+    persist = _persist_review_state_with_retry(
         submission_id=req.submission_id,
         coach_review_status="approved_sent",
         coach_notes=req.coach_notes,
     )
+    if not persist.get("ok"):
+        return {
+            "ok": False,
+            "message": "failed to persist approved_sent review state",
+            "submission_id": req.submission_id,
+            "attempts": persist.get("attempts"),
+            "error": persist.get("error"),
+        }
 
     launch_token = _mint_launch_token(
         workspace_id=req.workspace_id,
@@ -2300,6 +2358,10 @@ def coaching_review_approve_send(req: CoachingReviewApproveSendRequest, session=
         "workspace_id": req.workspace_id,
         "submission_id": req.submission_id,
         "coach_review_status": "approved_sent",
+        "consistency": {
+            "persist_attempts": persist.get("attempts"),
+            "persist_ok": True,
+        },
         "handoff": {
             "launch_token": launch_token,
             "latest_run_id": latest_run.get("run_id"),
@@ -2335,13 +2397,24 @@ def coaching_review_status_update(req: CoachingReviewStatusUpdateRequest, sessio
         session=session,
         email=str(submission.get("applicant_email") or "").strip().lower() or None,
     )
-    update_coaching_review_status(
+    persist = _persist_review_state_with_retry(
         submission_id=req.submission_id,
         coach_review_status=req.coach_review_status,
         coach_notes=req.coach_notes,
     )
-    updated = get_coaching_intake_submission(req.submission_id)
-    return {"ok": True, "submission": updated}
+    if not persist.get("ok"):
+        return {
+            "ok": False,
+            "message": "failed to persist review status update",
+            "submission_id": req.submission_id,
+            "attempts": persist.get("attempts"),
+            "error": persist.get("error"),
+        }
+    return {
+        "ok": True,
+        "submission": persist.get("submission"),
+        "consistency": {"persist_attempts": persist.get("attempts"), "persist_ok": True},
+    }
 
 
 @app.get("/coaching/health/readiness")

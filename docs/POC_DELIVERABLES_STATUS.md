@@ -3,6 +3,38 @@
 Last Updated: 2026-03-03
 Owner: ERD Program Team
 
+## Checkpoint Update (2026-03-03 - Sprint 5 Backend Reliability + Output Quality Execution)
+
+### Done
+- Closed Sprint 5 P0 backend output quality depth improvements:
+  - stronger regeneration guidance in `apps/api/coaching.py::build_quality_diagnostics(...)` using structural and milestone-specificity thresholds.
+  - added explicit fit-for-sale depth hint when score remains below floor.
+- Hardened coach queue action reliability in `apps/api/main.py`:
+  - added `_persist_review_state_with_retry(...)` (bounded retry with consistency re-read checks).
+  - integrated retry/consistency behavior into `POST /coaching/review/status` and `POST /coaching/review/approve-send`.
+  - `approve-send` now blocks when latest run is not `completed`.
+  - queue action responses now expose persistence consistency metadata (`persist_attempts`, `persist_ok`).
+- Added/updated tests:
+  - `apps/api/tests/test_coaching_review_endpoints.py`
+    - transient retry recovery path
+    - approve-send guard for non-completed runs
+  - `apps/api/tests/test_coaching_sprint2_backend.py`
+    - review-status response consistency contract assertion.
+- API determinism + CI parity command alignment:
+  - standardized documented commands to run from `apps/api`:
+    - focused: `python -m pytest -q <target files>`
+    - full: `python -m pytest -q`
+
+### Validation
+- Focused (from `apps/api`):
+  - `python -m pytest -q tests/test_coaching_review_endpoints.py tests/test_coaching_sprint2_backend.py tests/test_coaching_llm_contract.py`
+- Full (from `apps/api`):
+  - `python -m pytest -q`
+
+### Risks / Follow-ups
+- Retry helper is endpoint-local and synchronous; consider queue-backed async reconciliation if write contention grows.
+- Review status values are still stringly-typed across layers; shared constants/enum contract should be introduced next pass.
+
 ## Checkpoint Update (2026-03-03 - Sprint 4 Backend Core Execution)
 
 ### Done
