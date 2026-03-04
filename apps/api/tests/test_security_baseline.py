@@ -2,7 +2,8 @@ from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
 
-from auth import Session, get_current_session
+import main
+from auth import Session, get_current_session, issue_token
 from main import app
 from security import (
     FileValidationError,
@@ -72,6 +73,105 @@ def test_resume_validation_endpoint_baseline():
     assert body["ok"] is True
     assert "safe_storage_path" in body
     app.dependency_overrides = {}
+
+
+def _auth_header(role: str = "editor") -> dict[str, str]:
+    token = issue_token(f"resume-{role}", role)
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_resume_validation_endpoint_requires_auth_contract():
+    client = TestClient(app)
+    res = client.post(
+        "/coaching/intake/resume/validate",
+        json={
+            "workspace_id": "coach-ws",
+            "filename": "candidate_resume.pdf",
+            "content_type": "application/pdf",
+            "size_bytes": 2048,
+        },
+    )
+    assert res.status_code == 401
+    body = res.json()
+    assert body["ok"] is False
+    assert body["code"] == "auth_required"
+    assert body["auth_required"] is True
+
+
+def test_resume_validation_endpoint_denies_viewer_role_with_generic_payload():
+    client = TestClient(app)
+    res = client.post(
+        "/coaching/intake/resume/validate",
+        json={
+            "workspace_id": "coach-ws",
+            "filename": "candidate_resume.pdf",
+            "content_type": "application/pdf",
+            "size_bytes": 2048,
+        },
+        headers=_auth_header("viewer"),
+    )
+    assert res.status_code == 403
+    body = res.json()
+    assert body["ok"] is False
+    assert body["code"] == "forbidden"
+    assert body["auth_required"] is False
+
+
+def test_resume_validation_endpoint_obeys_rate_limit_with_generic_429():
+    snapshot = main.rate_limit_policy_snapshot()
+    original = snapshot.get("policies", {}).get("subscription", {})
+    client = TestClient(app)
+    try:
+        main.rate_limit_policy_update({"policies": {"subscription": {"rules": [{"limit": 1, "window_seconds": 60, "burst": 1}]}}})
+
+        first = client.post(
+            "/coaching/intake/resume/validate",
+            json={
+                "workspace_id": "coach-ws",
+                "filename": "candidate_resume.pdf",
+                "content_type": "application/pdf",
+                "size_bytes": 2048,
+            },
+            headers=_auth_header("editor"),
+        )
+        assert first.status_code == 200
+
+        second = client.post(
+            "/coaching/intake/resume/validate",
+            json={
+                "workspace_id": "coach-ws",
+                "filename": "candidate_resume.pdf",
+                "content_type": "application/pdf",
+                "size_bytes": 2048,
+            },
+            headers=_auth_header("editor"),
+        )
+        assert second.status_code == 429
+        body = second.json()
+        assert body["code"] == "rate_limited"
+        assert body["auth_required"] is False
+    finally:
+        main.rate_limit_policy_update({"policies": {"subscription": original}})
+
+
+def test_resume_validation_endpoint_masks_secret_like_filename_echoes():
+    client = TestClient(app)
+    res = client.post(
+        "/coaching/intake/resume/validate",
+        json={
+            "workspace_id": "coach-ws",
+            "filename": "token=super-secret-candidate.pdf",
+            "content_type": "application/pdf",
+            "size_bytes": 2048,
+        },
+        headers=_auth_header("editor"),
+    )
+    assert res.status_code == 200
+    body = res.json()
+    serialized = str(body).lower()
+    assert "super-secret-candidate" not in serialized
+    assert "token=***" in serialized
+
 
 def test_pii_safe_text_summary_masks_content_to_metadata_only():
     summary = pii_safe_text_summary("Contact me at test@example.com 555-222-3333")

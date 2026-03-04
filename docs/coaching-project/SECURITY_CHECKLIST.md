@@ -1,6 +1,6 @@
 # Coaching Project Security Checklist (Baseline)
 
-Last Updated: 2026-03-02
+Last Updated: 2026-03-04
 Owner: Security Agent
 
 ## Scope
@@ -19,11 +19,14 @@ Reference: `docs/coaching-project/FILE_UPLOAD_THREAT_GUARD.md`
 - [x] Reject empty files.
 - [x] Normalize filename using basename to drop traversal/path fragments.
 - [x] Build storage path from sanitized workspace + filename under controlled base directory.
+- [x] Mask secret-like filename tokens in resume validation response echoes (`validation.filename`, `safe_storage_path`, and error message text).
 - [ ] Add server-side MIME sniffing for uploaded bytes (future hardening).
 - [ ] Add malware scanning hook before persistence (future hardening).
 
 ## 2) Secrets/Auth Hardening (Baseline)
 - [x] Keep RBAC checks on coaching intake validation endpoint (`admin`/`editor`).
+- [x] Enforce route-level rate limiting on coaching resume validation endpoint via subscription policy.
+- [x] Add authz contract tests for resume validation endpoint (401 unauth + 403 viewer role denial).
 - [x] Ensure sensitive connection settings are masked when returned by APIs.
 - [x] Mask common secret patterns in text payloads before logs/exports (`token`, `password`, `client_secret`, `api_key`, bearer tokens).
 - [ ] Remove local `admin/admin123` fallback in production profile.
@@ -63,6 +66,7 @@ Reference: `docs/coaching-project/FORM_INPUT_VALIDATION_POLICY.md`
 - [x] Block dangerous URL schemes (`javascript:`, `data:`) and flag with `UNSAFE_*` findings.
 - [x] Mask secret-like text patterns in generated resource and mentoring narrative before response/export.
 - [x] Add regression tests proving unsafe URLs are blocked/flagged and secret-like strings are absent from response payloads.
+- [x] Validate default project charter milestone sections still pass no-leak and safe-URL checks after sanitization.
 
 ## 8) Immediate Follow-ups (Next Sprint)
 1. Implement true multipart upload endpoint with byte-level validation.
@@ -80,6 +84,7 @@ Reference: `docs/coaching-project/FORM_INPUT_VALIDATION_POLICY.md`
 ### CI-ready security regression command pack
 Run from `apps/api`:
 - `python -m pytest -q tests/test_auth_contract_security.py`
+- `python -m pytest -q tests/test_security_baseline.py`
 - `python -m pytest -q tests/test_security_sprint2.py::test_e2_fetch_job_text_blocks_unsafe_urls`
 - `python -m pytest -q tests/test_llm_output_security.py`
 - `python -m pytest -q tests/test_coaching_security_access.py tests/test_coaching_generation_guardrails.py tests/test_coaching_llm_contract.py`

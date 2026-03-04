@@ -359,3 +359,24 @@ def test_quality_diagnostics_top_deficiencies_are_secret_masked():
     assert "abc123" not in serialized
     assert "sk-secret" not in serialized
     assert diagnostics["deficiency_count"] == 2
+
+
+def test_default_project_charter_milestones_and_urls_remain_safe_and_secret_free():
+    from coaching import build_sow_skeleton, sanitize_generated_sow
+
+    sow = build_sow_skeleton(_base_intake(), parsed_jobs=[])
+    sanitized, findings = sanitize_generated_sow(sow)
+
+    assert not [f for f in findings if str(f.get("code") or "").startswith("UNSAFE_")]
+
+    serialized = str(sanitized).lower()
+    assert "api_key=" not in serialized
+    assert "token=" not in serialized
+    assert "password=" not in serialized
+
+    for milestone in sanitized.get("milestones", []) or []:
+        assert str(milestone.get("expected_deliverable") or "").strip()
+        for resource in milestone.get("resources", []) or []:
+            url = str((resource or {}).get("url") or "")
+            if url:
+                assert url.startswith("http://") or url.startswith("https://")

@@ -1,4 +1,4 @@
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile, File, Form
 from uuid import uuid4
 from pathlib import Path
 import json
@@ -15,6 +15,10 @@ import os
 import hashlib
 import hmac
 import time
+import io
+import zipfile
+import xml.etree.ElementTree as ET
+import re
 from typing import Any
 
 from models import CanvasAST, ValidationResult, ImpactResult, CoachingSowDraft
@@ -37,6 +41,7 @@ from coaching import (
     compute_sow_quality_score,
     build_quality_diagnostics,
     ensure_interview_ready_package,
+    extract_resume_signals,
 )
 from db_lakebase import (
     healthcheck as lakebase_health,
@@ -84,6 +89,7 @@ from security import (
     DEFAULT_MAX_RESUME_BYTES,
     FileValidationError,
     build_safe_resume_path,
+    mask_secrets_in_text,
     mask_sensitive_dict,
     pii_safe_auth_log_payload,
     pii_safe_coaching_log_payload,
@@ -180,6 +186,44 @@ def _redact_settings(connection_type: str, settings: dict) -> dict:
         "power_bi": {"client_secret"},
     }
     return mask_sensitive_dict(dict(settings or {}), secret_keys=secret_key_map.get(connection_type, set()))
+
+
+def _extract_text_from_docx_bytes(content: bytes) -> str:
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as zf:
+            xml_bytes = zf.read("word/document.xml")
+        root = ET.fromstring(xml_bytes)
+        texts = [node.text for node in root.iter() if node.tag.endswith("}t") and node.text]
+        return " ".join(texts)
+    except Exception:
+        return ""
+
+
+def _extract_text_from_pdf_bytes(content: bytes) -> str:
+    try:
+        decoded = content.decode("latin-1", errors="ignore")
+    except Exception:
+        return ""
+    chunks = []
+    for match in re.findall(r"\(([^\)]{2,})\)", decoded):
+        txt = re.sub(r"\\[nrt]", " ", match)
+        txt = re.sub(r"\\\d{1,3}", "", txt)
+        if re.search(r"[A-Za-z]{3,}", txt):
+            chunks.append(txt)
+    return " ".join(chunks)[:20000]
+
+
+def _extract_resume_text(filename: str, content: bytes) -> tuple[str, str]:
+    ext = Path(filename or "").suffix.lower()
+    if ext == ".txt":
+        return content.decode("utf-8", errors="ignore"), "txt"
+    if ext == ".docx":
+        parsed = _extract_text_from_docx_bytes(content)
+        return parsed, "docx_xml"
+    if ext == ".pdf":
+        parsed = _extract_text_from_pdf_bytes(content)
+        return parsed, "pdf_heuristic"
+    return "", "unsupported"
 
 
 def _safe_generation_meta(meta: dict[str, Any] | None) -> dict[str, Any]:
@@ -394,6 +438,7 @@ class CoachingIntakeRequest(BaseModel):
     resume_text: str = Field(default="", max_length=12000)
     self_assessment_text: str = Field(default="", max_length=12000)
     self_assessment: dict[str, Any] = Field(default_factory=dict)
+    resume_parse_summary: dict[str, Any] = Field(default_factory=dict)
     stack_preferences: list[str] = Field(default_factory=list, max_length=25)
     tool_preferences: list[str] = Field(default_factory=list, max_length=40)
     job_links: list[str | CoachingJobLinkInput] = Field(default_factory=list, max_length=20)
@@ -431,6 +476,27 @@ class CoachingIntakeRequest(BaseModel):
         for key in value.keys():
             if key not in allowed_keys:
                 raise ValueError(f"Unsupported self_assessment field: {key}")
+        return value
+
+    @field_validator("resume_parse_summary")
+    @classmethod
+    def validate_resume_parse_summary(cls, value: dict[str, Any]) -> dict[str, Any]:
+        allowed_keys = {
+            "role_level",
+            "tools",
+            "domains",
+            "project_experience_keywords",
+            "strengths",
+            "gaps",
+            "years_experience_hint",
+            "parse_strategy",
+            "fallback_used",
+            "parse_warning",
+            "filename",
+        }
+        for key in value.keys():
+            if key not in allowed_keys:
+                raise ValueError(f"Unsupported resume_parse_summary field: {key}")
         return value
 
     @field_validator("job_links")
@@ -1097,8 +1163,9 @@ def get_connections_settings(workspace_id: str, connection_type: str | None = No
 
 
 @app.post("/coaching/intake/resume/validate")
-def coaching_resume_validate(req: ResumeUploadValidationRequest, session=Depends(get_current_session)) -> dict:
+def coaching_resume_validate(req: ResumeUploadValidationRequest, request: Request, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor"})
+    _apply_rate_limit(policy_name="subscription", request=request, session=session, workspace_id=req.workspace_id)
     try:
         result = validate_resume_metadata(
             filename=req.filename,
@@ -1111,14 +1178,63 @@ def coaching_resume_validate(req: ResumeUploadValidationRequest, session=Depends
             workspace_id=req.workspace_id,
             filename=req.filename,
         )
+        safe_result = dict(result)
+        safe_result["filename"] = mask_secrets_in_text(str(safe_result.get("filename") or ""))
         return {
             "ok": True,
             "workspace_id": req.workspace_id,
-            "validation": result,
-            "safe_storage_path": str(safe_path),
+            "validation": safe_result,
+            "safe_storage_path": mask_secrets_in_text(str(safe_path)),
         }
     except FileValidationError as e:
-        return {"ok": False, "workspace_id": req.workspace_id, "message": str(e)}
+        return {"ok": False, "workspace_id": req.workspace_id, "message": mask_secrets_in_text(str(e))}
+
+
+@app.post("/coaching/intake/resume/upload")
+async def coaching_resume_upload(
+    workspace_id: str = Form(...),
+    submission_id: str | None = Form(default=None),
+    file: UploadFile = File(...),
+    session=Depends(get_current_session),
+) -> dict:
+    assert_role(session, {"admin", "editor"})
+
+    data = await file.read()
+    filename = str(file.filename or "resume.txt")
+    try:
+        validation = validate_resume_metadata(
+            filename=filename,
+            content_type=file.content_type,
+            size_bytes=len(data),
+            max_size_bytes=DEFAULT_MAX_RESUME_BYTES,
+        )
+    except FileValidationError as e:
+        return {"ok": False, "workspace_id": workspace_id, "message": str(e)}
+
+    resume_text, strategy = _extract_resume_text(filename, data)
+    parsed_summary = extract_resume_signals(resume_text)
+    parsed_summary.update({"filename": filename, "parse_strategy": strategy})
+    if not str(resume_text or "").strip():
+        parsed_summary["fallback_used"] = True
+        parsed_summary["parse_warning"] = "Could not reliably extract text; provide pasted resume_text fallback in intake."
+    else:
+        parsed_summary["fallback_used"] = False
+
+    if submission_id:
+        intake = get_coaching_intake_submission(submission_id)
+        if intake and str(intake.get("workspace_id") or "") == str(workspace_id):
+            merged_preferences = dict(intake.get("preferences_json") or {})
+            merged_preferences["resume_parse_summary"] = parsed_summary
+            update_coaching_intake_preferences(submission_id=submission_id, preferences=merged_preferences)
+
+    return {
+        "ok": True,
+        "workspace_id": workspace_id,
+        "submission_id": submission_id,
+        "validation": validation,
+        "resume_text": str(resume_text or "")[:12000],
+        "resume_parse_summary": parsed_summary,
+    }
 
 
 @app.post("/connections/settings")
@@ -1749,6 +1865,7 @@ def coaching_intake(req: CoachingIntakeRequest, session=Depends(get_current_sess
     normalized_job_links = [item.url if isinstance(item, CoachingJobLinkInput) else str(item) for item in (req.job_links or [])]
     enriched_preferences = dict(req.preferences or {})
     enriched_preferences["self_assessment"] = req.self_assessment or {}
+    enriched_preferences["resume_parse_summary"] = req.resume_parse_summary or {}
     enriched_preferences["stack_preferences"] = req.stack_preferences or []
     enriched_preferences["tool_preferences"] = req.tool_preferences or []
     enriched_preferences["job_links_structured"] = [
@@ -2497,6 +2614,7 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, request: Request, ses
                 "roi_dashboard_requirements",
                 "resource_plan",
                 "mentoring_cta",
+                "project_charter",
             ],
             "strict_enforced": True,
         },
