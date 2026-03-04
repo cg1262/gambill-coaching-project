@@ -92,6 +92,7 @@ from security import (
 )
 from rate_limits import RateLimitExceeded, enforce_rate_limit, policy_snapshot as rate_limit_policy_snapshot, policy_update as rate_limit_policy_update
 from webhook_security import parse_webhook_body, verify_webhook_signature
+from admin_runtime_config import runtime_rate_limit_snapshot, runtime_rate_limit_update
 
 app = FastAPI(title="AI Data Modeling IDE API", version="0.2.0")
 logger = logging.getLogger("gambill_coaching.api")
@@ -2982,6 +2983,18 @@ def admin_rate_limits_update(payload: dict[str, Any], session=Depends(get_curren
     assert_role(session, {"admin"})
     updated = rate_limit_policy_update(payload)
     return {"ok": True, **updated}
+
+
+@app.get("/admin/security/runtime-rate-limit-config")
+def admin_runtime_rate_limit_config_get(session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin"})
+    return runtime_rate_limit_snapshot()
+
+
+@app.put("/admin/security/runtime-rate-limit-config")
+def admin_runtime_rate_limit_config_update(payload: dict[str, Any], session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin"})
+    return runtime_rate_limit_update(payload)
 
 
 @app.get("/admin/users")

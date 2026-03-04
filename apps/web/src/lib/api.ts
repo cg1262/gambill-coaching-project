@@ -244,6 +244,26 @@ export interface CoachingOpenSubmissionsResult {
   total: number;
 }
 
+export interface AdminRuntimeRateLimitConfigResult {
+  ok: boolean;
+  admin_editable: boolean;
+  source: string;
+  web_runtime: {
+    required_node_min: string;
+    required_node_max_major_exclusive: number;
+    required_npm_major: number;
+    preflight_scripts: string[];
+    enforced_by: string;
+    notes: string;
+  };
+  rate_limit_ui: {
+    default_retry_seconds: number;
+    helper_message: string;
+    defaultRetrySeconds: number;
+    helperMessage: string;
+  };
+}
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
 let AUTH_TOKEN = "";
 
@@ -558,4 +578,15 @@ export const api = {
   }) => postJson<CoachingApproveSendResult>("/coaching/review/approve-send", payload),
   coachingHealthReadiness: (workspaceId: string) =>
     getJson<CoachingHealthReadinessResult>(`/coaching/health/readiness?workspace_id=${encodeURIComponent(workspaceId)}`),
+  adminRuntimeRateLimitConfig: () =>
+    getJson<AdminRuntimeRateLimitConfigResult>("/admin/security/runtime-rate-limit-config"),
+  saveAdminRuntimeRateLimitConfig: (payload: {
+    web_runtime?: Partial<AdminRuntimeRateLimitConfigResult["web_runtime"]>;
+    rate_limit_ui?: {
+      default_retry_seconds?: number;
+      helper_message?: string;
+      defaultRetrySeconds?: number;
+      helperMessage?: string;
+    };
+  }) => postJson<AdminRuntimeRateLimitConfigResult>("/admin/security/runtime-rate-limit-config", payload),
 };

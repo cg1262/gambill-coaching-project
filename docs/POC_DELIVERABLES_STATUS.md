@@ -3,6 +3,61 @@
 Last Updated: 2026-03-03
 Owner: ERD Program Team
 
+## Checkpoint Update (2026-03-03 - Sprint 8 Frontend Execution: Runtime Policy Permanence + Review UX Confirmation)
+
+### Done
+- Made runtime policy persistent in `apps/web` package contract:
+  - retained `engines` (`node >=20.11.1 <21`, `npm >=10 <11`)
+  - retained `packageManager` pin (`npm@10.8.2`)
+  - added `volta` pin metadata (`node: 20.11.1`, `npm: 10.8.2`)
+  - kept `.nvmrc` aligned (`20.11.1`).
+- Hardened deterministic install/build script surface:
+  - added `npm run install:ci` -> `npm ci --no-audit --no-fund`
+  - added `npm run verify:deterministic` -> install/typecheck/build/build
+  - kept runtime guard fail-fast on `dev`, `typecheck`, `build`, and `build:clean`.
+- Updated `apps/web/README.md` with runtime pinning hierarchy and actionable remediation flow.
+- Confirmed/finalized UX review items in coaching workbench remain in place:
+  - stale session banner reset via centralized auth stale-state clear and authenticated-success reset path
+  - explicit self-assessment field labels for confidence controls
+  - tools/platform exposure checkbox UX + `Other` conditional fields
+  - clearer constraints/support labels and helper copy
+  - diagnostics + regenerate guidance shown in readable, actionable list format.
+
+### Validation
+- From `apps/web` on host runtime Node `v24.13.1` + npm `11.8.0`:
+  - `npm run runtime:check` -> **expected fail-fast** with remediation guidance.
+  - `npm run typecheck` -> **expected fail-fast** (blocked by runtime gate).
+  - `npm run build` -> **expected fail-fast** (blocked by runtime gate).
+  - `npm run build:clean` -> **expected fail-fast** (blocked by runtime gate).
+- Runtime gate output explicitly confirms required baseline: Node `>=20.11.1 <21`, npm `10.x`.
+
+### Risks / Follow-ups
+- Final deterministic green evidence (`typecheck`, `build`, `build:clean` passing) still requires execution under compliant runtime (Node `20.11.1` + npm `10.x`).
+
+## Checkpoint Update (2026-03-03 - Sprint 8 Backend Execution: Runtime/Rate-Limit Config Contract Alignment)
+
+### Done
+- Added admin config API surface to bridge frontend runtime/rate-limit scaffolding to backend policy contract:
+  - `GET /admin/security/runtime-rate-limit-config`
+  - `PUT /admin/security/runtime-rate-limit-config`
+- Implemented new backend config module `apps/api/admin_runtime_config.py` with:
+  - `web_runtime` policy metadata (Node/npm requirements + preflight scripts + enforcement reference)
+  - `rate_limit_ui` fallback contract (`default_retry_seconds`, `helper_message`) with frontend-friendly camelCase aliases.
+- Added frontend API types/methods in `apps/web/src/lib/api.ts` for runtime/rate-limit admin config retrieval and updates.
+- Added regression test `apps/api/tests/test_coaching_sprint8_backend.py` to validate contract fields and update roundtrip semantics.
+
+### Validation
+- Focused backend command (`apps/api`):
+  - `python -m pytest -q tests/test_coaching_sprint8_backend.py tests/test_coaching_sprint7_backend.py tests/test_security_rate_limit_webhook.py tests/test_rate_limits_and_webhooks.py tests/test_coaching_subscription.py`
+  - Result: **18 passed, 1 warning**.
+- Full backend suite (`apps/api`):
+  - `python -m pytest -q`
+  - Result: **128 passed, 4 skipped, 1 warning**.
+
+### Risks / Follow-ups
+- Current runtime/rate-limit admin config is in-memory/env-default backed and not yet persisted as workspace-scoped policy state.
+- Frontend internal admin panel still uses localStorage-only save path; API contract is now available but not yet wired into that UI.
+
 ## Checkpoint Update (2026-03-03 - Sprint 7 Backend Execution: Webhook/Idempotency Hardening + Subscription Ops Readiness)
 
 ### Done
