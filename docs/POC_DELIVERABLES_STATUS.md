@@ -1,7 +1,28 @@
 # POC Deliverables Status
 
-Last Updated: 2026-03-03
+Last Updated: 2026-03-04
 Owner: ERD Program Team
+
+## Checkpoint Update (2026-03-04 - Sprint 8 Security Execution: Runtime Policy Regression + Pilot Gate Revalidation)
+
+### Done
+- Re-reviewed permanent runtime policy implementation for operational safety in `apps/web` and confirmed contract pinning/guard flow remains intact.
+- Refactored runtime enforcement script (`apps/web/scripts/require-runtime.cjs`) into testable helpers while preserving fail-fast behavior.
+- Added secret-like diagnostic redaction coverage in runtime mismatch messaging to reduce leakage risk in failure paths.
+- Added runtime regression tests in `apps/web/scripts/require-runtime.test.cjs` and wired script `npm run runtime:test`.
+- Re-ran security regression packs and API compile checks; refreshed Sprint 8 and pilot checklist docs with latest evidence.
+
+### Validation
+- `npm run runtime:test` (apps/web) → **4 passed**.
+- `npm run typecheck` (apps/web) → **expected fail-fast** on host runtime mismatch (`Node v24.13.1`, `npm 11.8.0`).
+- `npm run build:clean` (apps/web) → **expected fail-fast** on host runtime mismatch.
+- `python -m pytest tests/test_auth_contract_security.py tests/test_llm_output_security.py tests/test_security_sprint2.py tests/test_coaching_security_access.py tests/test_coaching_generation_guardrails.py tests/test_coaching_subscription.py` (apps/api) → **52 passed, 1 warning**.
+- `python -m pytest -q tests/test_security_rate_limit_webhook.py tests/test_rate_limits_and_webhooks.py tests/test_coaching_subscription.py` (apps/api) → **14 passed, 1 warning**.
+- `python -m compileall -q .` (apps/api) → **pass**.
+
+### Risks / Follow-ups
+- Final deterministic web success sequence (`npm ci`, `typecheck`, `build`, `build`) still requires compliant runtime host/runner (`Node 20.11.1`, `npm 10.x`).
+- Production alerting for repeated invalid webhook signatures remains pending.
 
 ## Checkpoint Update (2026-03-03 - Sprint 8 Frontend Execution: Runtime Policy Permanence + Review UX Confirmation)
 
