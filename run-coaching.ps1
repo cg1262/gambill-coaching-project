@@ -1,3 +1,7 @@
+param(
+  [switch]$RuntimeCheckOnly
+)
+
 $ErrorActionPreference = 'Stop'
 
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -36,9 +40,30 @@ function Ensure-WebRuntime {
   Write-Host "[WEB] Runtime mismatch detected: node $nodeV, npm $npmV" -ForegroundColor Yellow
   Write-Host '[WEB] Attempting automatic runtime remediation...' -ForegroundColor Yellow
 
-  if (Get-Command volta -ErrorAction SilentlyContinue) {
+  $voltaBins = @(
+    (Join-Path $env:LOCALAPPDATA 'Volta\bin'),
+    'C:\Program Files\Volta'
+  )
+  $voltaBin = $null
+  $voltaExe = $null
+  foreach($b in $voltaBins){
+    if(Test-Path (Join-Path $b 'volta.exe')) { $voltaBin = $b; $voltaExe = (Join-Path $b 'volta.exe'); break }
+  }
+
+  if (-not $voltaExe -and (Get-Command winget -ErrorAction SilentlyContinue)) {
+    Write-Host '[WEB] Volta not found. Installing via winget...' -ForegroundColor Yellow
+    winget install --id Volta.Volta -e --accept-source-agreements --accept-package-agreements | Out-Host
+    foreach($b in $voltaBins){
+      if(Test-Path (Join-Path $b 'volta.exe')) { $voltaBin = $b; $voltaExe = (Join-Path $b 'volta.exe'); break }
+    }
+  }
+
+  if ($voltaExe) {
+    $env:PATH = "$voltaBin;$env:PATH"
     Write-Host '[WEB] Using Volta to pin Node/npm...' -ForegroundColor Cyan
-    volta install node@$NodeVersion npm@$NpmVersion | Out-Host
+    & $voltaExe setup | Out-Host
+    & $voltaExe install node@$NodeVersion npm@$NpmVersion | Out-Host
+    $env:PATH = "$voltaBin;$env:PATH"
   }
 
   $nodeV = Get-CommandVersion 'node' '-v'
@@ -79,6 +104,11 @@ Write-Host '[API] Installing dependencies...' -ForegroundColor Yellow
 & $venvPython -m pip install -r (Join-Path $apiDir 'requirements.txt') | Out-Host
 
 Ensure-WebRuntime
+
+if ($RuntimeCheckOnly) {
+  Write-Host '[WEB] Runtime check completed. Exiting due to -RuntimeCheckOnly.' -ForegroundColor Green
+  exit 0
+}
 
 Write-Host '[WEB] Installing npm dependencies (deterministic npm ci)...' -ForegroundColor Yellow
 Push-Location $webDir
