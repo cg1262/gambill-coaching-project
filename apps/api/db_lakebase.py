@@ -1699,6 +1699,36 @@ def list_coaching_intake_submissions(workspace_id: str, limit: int = 50, review_
     return data
 
 
+def update_coaching_intake_preferences(submission_id: str, preferences: dict[str, Any]) -> None:
+    if not is_configured():
+        return
+
+    payload = json.dumps(preferences or {})
+    if _using_duckdb():
+        with lakebase_connection() as conn:
+            conn.execute(
+                """
+                UPDATE coaching_intake_submissions
+                SET preferences_json = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE submission_id = ?
+                """,
+                [payload, submission_id],
+            )
+        return
+
+    with lakebase_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE coaching_intake_submissions
+                SET preferences_json = %s::jsonb, updated_at = CURRENT_TIMESTAMP
+                WHERE submission_id = %s
+                """,
+                (payload, submission_id),
+            )
+            conn.commit()
+
+
 def update_coaching_review_status(
     submission_id: str,
     coach_review_status: str,

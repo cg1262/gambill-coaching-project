@@ -51,6 +51,17 @@ REQUIRED_SECTION_FLOW = [
     "roi_dashboard_requirements",
     "resource_plan",
     "mentoring_cta",
+    "project_charter",
+]
+
+CHARTER_REQUIRED_SECTION_FLOW = [
+    "prerequisites_resources",
+    "executive_summary",
+    "technical_architecture",
+    "implementation_plan",
+    "deliverables_acceptance_criteria",
+    "risks_assumptions",
+    "stretch_goals",
 ]
 
 
@@ -241,6 +252,65 @@ def extract_job_signals(text: str) -> dict[str, Any]:
     }
 
 
+RESUME_TOOL_KEYWORDS = [
+    "python", "sql", "dbt", "airflow", "spark", "pyspark", "databricks", "snowflake", "bigquery", "redshift",
+    "azure", "aws", "gcp", "power bi", "tableau", "looker", "kafka", "terraform", "docker", "kubernetes",
+]
+
+RESUME_DOMAIN_KEYWORDS = [
+    "healthcare", "finance", "retail", "ecommerce", "logistics", "manufacturing", "insurance", "saas", "public sector", "education",
+]
+
+RESUME_PROJECT_KEYWORDS = [
+    "medallion", "lakehouse", "etl", "elt", "cdc", "dashboard", "kpi", "data quality", "orchestration", "data modeling",
+    "forecast", "a/b testing", "mlops", "batch", "streaming",
+]
+
+
+def extract_resume_signals(text: str) -> dict[str, Any]:
+    raw = str(text or "")
+    low = raw.lower()
+
+    role_level = "mid"
+    if any(token in low for token in ["principal", "staff", "architect", "head of", "director"]):
+        role_level = "senior"
+    elif any(token in low for token in ["senior", "sr ", "sr.", "lead"]):
+        role_level = "senior"
+    elif any(token in low for token in ["entry", "junior", "intern", "new grad", "associate"]):
+        role_level = "junior"
+
+    tools = sorted([tool for tool in RESUME_TOOL_KEYWORDS if tool in low])
+    domains = sorted([domain for domain in RESUME_DOMAIN_KEYWORDS if domain in low])
+    project_keywords = sorted([kw for kw in RESUME_PROJECT_KEYWORDS if kw in low])
+
+    strengths: list[str] = []
+    gaps: list[str] = []
+    if {"python", "sql"}.issubset(set(tools)):
+        strengths.append("Core analytics engineering stack (Python + SQL) evidenced")
+    if any(t in tools for t in ["dbt", "airflow", "spark", "databricks"]):
+        strengths.append("Modern data platform tooling experience")
+    if not any(t in tools for t in ["aws", "azure", "gcp"]):
+        gaps.append("Cloud platform depth not explicit (AWS/Azure/GCP)")
+    if "data quality" not in project_keywords:
+        gaps.append("Data quality/testing ownership not clearly stated")
+    if len(project_keywords) < 3:
+        gaps.append("Project experience keywords are sparse; add impact bullets with tooling and outcomes")
+
+    years_match = re.findall(r"(\d{1,2})\+?\s+years", low)
+    years_experience = max([int(x) for x in years_match], default=0)
+
+    return {
+        "role_level": role_level,
+        "tools": tools,
+        "domains": domains,
+        "project_experience_keywords": project_keywords,
+        "strengths": strengths,
+        "gaps": gaps,
+        "years_experience_hint": years_experience,
+        "parse_strategy": "heuristic",
+    }
+
+
 def _is_valid_non_placeholder_url(url: str) -> bool:
     s = str(url or "").strip().lower()
     if not (s.startswith("http://") or s.startswith("https://")):
@@ -313,10 +383,17 @@ def generate_sow_with_llm(
             "project_story_required": ["executive_summary", "challenge", "approach", "impact_story"],
             "roi_required": ["required_dimensions", "required_measures"],
             "resources_required": ["required", "recommended", "optional", "affiliate_disclosure", "trust_language"],
+            "project_charter_required": {
+                "section_order": list(CHARTER_REQUIRED_SECTION_FLOW),
+                "executive_summary_fields": ["current_state", "future_state"],
+                "technical_architecture_requires": ["data_sources with url + ingestion_doc_url"],
+                "implementation_plan_requires": ["milestones with expectations + completion_criteria"],
+            },
             "hard_rules": [
                 "Return JSON only, no markdown",
                 "Mirror exemplar section sequence and flow exactly using top_level_order_required",
                 "Keep content personalized to candidate resume/preferences/target roles (no generic placeholder narrative)",
+                "Use realistic but fictitious business narrative",
                 "Use real non-placeholder URLs",
                 "At least 3 milestones",
                 "Each milestone must include execution_plan, expected_deliverable, and business_why",
@@ -324,6 +401,7 @@ def generate_sow_with_llm(
                 "Include at least one concrete public data source URL",
                 "Include at least one ingestion documentation URL",
                 "Every data source must include ingestion_doc_url",
+                "project_charter.section_order must match project_charter_required.section_order",
             ],
         },
     }
@@ -618,6 +696,51 @@ def build_sow_skeleton(
             "reason": "Finalize after validation and skill-gap scoring.",
             "trust_language": "Mentoring recommendations are guidance-only and should align with the candidate's goals and budget.",
         },
+        "project_charter": {
+            "section_order": list(CHARTER_REQUIRED_SECTION_FLOW),
+            "sections": {
+                "prerequisites_resources": {
+                    "summary": "Repo scaffold, environment setup, and source access prerequisites.",
+                    "resources": [
+                        {"title": "GitHub Flow", "url": "https://docs.github.com/en/get-started/using-github/github-flow"},
+                        {"title": "dbt Documentation", "url": "https://docs.getdbt.com/docs/introduction"},
+                    ],
+                },
+                "executive_summary": {
+                    "current_state": "Reporting is delayed and teams reconcile metrics manually.",
+                    "future_state": "Decision makers use trusted self-serve KPIs refreshed on a predictable SLA.",
+                },
+                "technical_architecture": {
+                    "platform": "Medallion architecture with orchestration, quality gates, and semantic layer.",
+                    "data_sources": _select_data_sources(intake=intake, parsed_jobs=parsed_jobs, limit=2),
+                },
+                "implementation_plan": {
+                    "milestones": [
+                        {
+                            "name": "Foundation + source onboarding",
+                            "expectations": "Ingestion contracts, pipeline scaffolding, and CI checks merged.",
+                            "completion_criteria": ["Source landed in bronze", "Automated tests green", "Runbook checked in"],
+                        },
+                        {
+                            "name": "Modeling + KPI layer",
+                            "expectations": "Silver/gold transformations with business metric definitions.",
+                            "completion_criteria": ["Critical KPI SQL reviewed", "DQ thresholds enforced", "Stakeholder sign-off recorded"],
+                        },
+                    ],
+                },
+                "deliverables_acceptance_criteria": {
+                    "deliverables": ["Architecture diagram", "Pipelines + tests", "Executive dashboard", "Demo narrative"],
+                    "acceptance_criteria": ["Reproducible run evidence", "KPI definitions trace to source", "Business impact narrative is quantified"],
+                },
+                "risks_assumptions": {
+                    "risks": ["Source schema drift", "Unclear KPI ownership", "Timeline compression due to stakeholder availability"],
+                    "assumptions": ["Public source APIs remain available", "Candidate can dedicate weekly build cadence"],
+                },
+                "stretch_goals": {
+                    "items": ["Add near-real-time ingestion path", "Implement semantic metric layer tests", "Publish interview walkthrough video"],
+                },
+            },
+        },
         "interview_ready_package": _build_interview_ready_package(
             project_title=project_title,
             story={
@@ -693,6 +816,21 @@ def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
                 "message": "Top-level sections are out of order. Follow REQUIRED_SECTION_FLOW.",
             }
         )
+
+    charter = sow.get("project_charter") or {}
+    charter_sections = charter.get("sections") or {}
+    charter_order = charter.get("section_order") or []
+    missing_charter = [section for section in CHARTER_REQUIRED_SECTION_FLOW if section not in charter_sections]
+    if missing_charter:
+        findings.append({"code": "CHARTER_SECTION_MISSING", "message": f"project_charter.sections missing: {', '.join(missing_charter)}"})
+    if list(charter_order) != list(CHARTER_REQUIRED_SECTION_FLOW):
+        findings.append({"code": "CHARTER_SECTION_ORDER_INVALID", "message": "project_charter.section_order must match required charter flow exactly."})
+    tech_arch = charter_sections.get("technical_architecture") or {}
+    for idx, src in enumerate((tech_arch.get("data_sources") or [])):
+        if not _is_valid_non_placeholder_url(str(src.get("url") or "")):
+            findings.append({"code": "CHARTER_DATA_SOURCE_URL_INVALID", "message": f"project_charter.sections.technical_architecture.data_sources[{idx}].url must be a real link."})
+        if not _is_valid_non_placeholder_url(str(src.get("ingestion_doc_url") or "")):
+            findings.append({"code": "CHARTER_INGESTION_DOC_URL_INVALID", "message": f"project_charter.sections.technical_architecture.data_sources[{idx}].ingestion_doc_url must be a real link."})
 
     medallion = ((sow.get("solution_architecture") or {}).get("medallion_plan") or {})
     for layer in ["bronze", "silver", "gold"]:
@@ -912,6 +1050,12 @@ def auto_revise_sow_once(sow: dict[str, Any], findings: list[dict[str, str]]) ->
     out.setdefault("roi_dashboard_requirements", {})
     out["roi_dashboard_requirements"].setdefault("required_dimensions", ["time", "business_unit"])
     out["roi_dashboard_requirements"].setdefault("required_measures", ["cost_savings"])
+
+    out.setdefault("project_charter", {})
+    out["project_charter"].setdefault("section_order", list(CHARTER_REQUIRED_SECTION_FLOW))
+    sections = out["project_charter"].setdefault("sections", {})
+    for required_section in CHARTER_REQUIRED_SECTION_FLOW:
+        sections.setdefault(required_section, {})
 
     out.setdefault("resource_plan", {})
     if not (out["resource_plan"].get("required") or []):

@@ -3,6 +3,51 @@
 Last Updated: 2026-03-04
 Owner: ERD Program Team
 
+## Checkpoint Update (2026-03-04 - Sprint 9 Frontend Execution: Intake UX + Charter Review Flow)
+
+### Done
+- Reworked intake resume step with drag/drop zone + file picker and explicit upload/parse status indicators.
+- Added editable resume highlight extraction flow so coaches can refine parsed bullets before submit.
+- Updated intake submit payload composition to combine self-assessment + resume-derived profile signals.
+- Added `preferences.resume_profile` and `preferences.combined_profile` for cleaner downstream profile merge handling.
+- Redesigned output viewer with a default `Project Charter` narrative section at top for reviewer-first context.
+- Upgraded data source section with prominent ingestion instruction block.
+- Upgraded milestone rendering into card hierarchy with expectations, deliverables, and acceptance checks.
+- Improved spacing and typography affordances for reviewer scanning.
+
+### Validation
+- `powershell -ExecutionPolicy Bypass -File .\run-coaching.ps1 -RuntimeCheckOnly` (repo root) → **pass** (auto-remediated runtime to Node `20.11.1` / npm `10.8.2`).
+- `C:\Program Files\Volta\volta.exe run --node 20.11.1 --npm 10.8.2 npm run typecheck` (apps/web) → **pass**.
+- `C:\Program Files\Volta\volta.exe run --node 20.11.1 --npm 10.8.2 npm run build` (apps/web) → **fails** with pre-existing deterministic corruption signature (`EISDIR readlink next/dist/pages/_app.js`, then `EPERM .next/trace`).
+
+### Risks / Follow-ups
+- Resume parsing in browser uses text extraction heuristics; richer PDF/docx extraction may need dedicated parsing lib/service.
+- Resolve Windows `next` build corruption (`EISDIR`/`EPERM`) via lock recovery + fresh module install before release build signoff.
+
+## Checkpoint Update (2026-03-04 - Sprint 9 Backend Execution: Resume Intelligence + Charter Flow Quality)
+
+### Done
+- Added resume upload intake endpoint `POST /coaching/intake/resume/upload` supporting `pdf/docx/txt` via multipart file input.
+- Implemented resume text extraction helpers for txt/docx/pdf and signal extraction (`role_level`, `tools`, `domains`, `project_experience_keywords`, `strengths`, `gaps`) using deterministic heuristics.
+- Added fallback handling when extraction fails (`fallback_used`, `parse_warning`) so intake can still continue with pasted text.
+- Persisted parsed resume summary into intake preferences (`preferences.resume_parse_summary`) and added DB update helper for in-place preference updates.
+- Expanded SOW scaffold/validation with GlobalMart-style charter flow under `project_charter` enforcing ordered sections:
+  - `prerequisites_resources`
+  - `executive_summary`
+  - `technical_architecture`
+  - `implementation_plan`
+  - `deliverables_acceptance_criteria`
+  - `risks_assumptions`
+  - `stretch_goals`
+- Strengthened charter requirements for realistic narrative, public data links, ingestion docs, and milestone completion criteria expectations.
+- Added sprint-9 backend tests for resume parse + fallback behavior and charter section-order validation.
+
+### Validation
+- `python -m pytest -q tests/test_coaching_sprint9_backend.py` (apps/api) → **pass**.
+
+### Risks / Follow-ups
+- PDF extraction currently uses lightweight heuristic parsing; scanned/image PDFs still require manual paste fallback or OCR in future sprint.
+
 ## Checkpoint Update (2026-03-04 - Sprint 8 Security Execution: Runtime Policy Regression + Pilot Gate Revalidation)
 
 ### Done
