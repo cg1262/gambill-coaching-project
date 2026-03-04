@@ -7,9 +7,9 @@ $venvPython = Join-Path $apiDir '.venv/Scripts/python.exe'
 
 Write-Host 'Starting Gambill Coaching app with health checks...' -ForegroundColor Cyan
 
-function Get-CommandVersion($name, $args = '--version') {
+function Get-CommandVersion($name, $versionArg = '--version') {
   try {
-    $v = (& $name $args 2>$null | Select-Object -First 1).ToString().Trim()
+    $v = (& $name $versionArg 2>$null | Select-Object -First 1).ToString().Trim()
     return $v
   } catch { return $null }
 }
@@ -23,8 +23,8 @@ function Ensure-WebRuntime {
   $nodeOk = $false
   $npmOk = $false
 
-  $nodeV = Get-CommandVersion 'node'
-  $npmV = Get-CommandVersion 'npm'
+  $nodeV = Get-CommandVersion 'node' '-v'
+  $npmV = Get-CommandVersion 'npm' '-v'
   if ($nodeV -match '^v20\.11\.1$') { $nodeOk = $true }
   if ($npmV -match '^10\.') { $npmOk = $true }
 
@@ -41,8 +41,8 @@ function Ensure-WebRuntime {
     volta install node@$NodeVersion npm@$NpmVersion | Out-Host
   }
 
-  $nodeV = Get-CommandVersion 'node'
-  $npmV = Get-CommandVersion 'npm'
+  $nodeV = Get-CommandVersion 'node' '-v'
+  $npmV = Get-CommandVersion 'npm' '-v'
   $nodeOk = $nodeV -match '^v20\.11\.1$'
   $npmOk = $npmV -match '^10\.'
 
@@ -51,8 +51,8 @@ function Ensure-WebRuntime {
     nvm install $NodeVersion | Out-Host
     nvm use $NodeVersion | Out-Host
     npm i -g npm@$NpmVersion | Out-Host
-    $nodeV = Get-CommandVersion 'node'
-    $npmV = Get-CommandVersion 'npm'
+    $nodeV = Get-CommandVersion 'node' '-v'
+    $npmV = Get-CommandVersion 'npm' '-v'
     $nodeOk = $nodeV -match '^v20\.11\.1$'
     $npmOk = $npmV -match '^10\.'
   }
