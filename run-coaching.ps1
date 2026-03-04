@@ -110,13 +110,53 @@ if ($RuntimeCheckOnly) {
   exit 0
 }
 
+function Invoke-CmdChecked {
+  param(
+    [Parameter(Mandatory=$true)][string]$Command,
+    [string]$ErrorMessage = 'Command failed'
+  )
+  Invoke-Expression $Command | Out-Host
+  if ($LASTEXITCODE -ne 0) {
+    throw "$ErrorMessage (exit=$LASTEXITCODE): $Command"
+  }
+}
+
+function Stop-WebNodeProcesses {
+  param([string]$RepoPath)
+  try {
+    $procs = Get-CimInstance Win32_Process | Where-Object {
+      $_.Name -match '^node(\.exe)?$' -and $_.CommandLine -and $_.CommandLine.ToLower().Contains($RepoPath.ToLower())
+    }
+    foreach($p in $procs){
+      Write-Host "[WEB] Stopping stale node process PID $($p.ProcessId)" -ForegroundColor Yellow
+      Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+  } catch {}
+}
+
 Write-Host '[WEB] Installing npm dependencies (deterministic npm ci)...' -ForegroundColor Yellow
 Push-Location $webDir
 if (-not (Test-Path (Join-Path $webDir 'package-lock.json'))) {
   Write-Host '[WEB] package-lock.json missing, generating lockfile with npm install once...' -ForegroundColor Yellow
-  npm install --no-audit --no-fund | Out-Host
+  Invoke-CmdChecked "npm install --no-audit --no-fund" '[WEB] npm install failed'
 }
-npm ci --no-audit --no-fund | Out-Host
+
+$installed = $false
+for ($i=1; $i -le 2 -and -not $installed; $i++) {
+  try {
+    Invoke-CmdChecked "npm ci --no-audit --no-fund" '[WEB] npm ci failed'
+    $installed = $true
+  } catch {
+    if ($i -eq 1) {
+      Write-Host '[WEB] npm ci failed. Attempting lock recovery (stale node process cleanup + retry)...' -ForegroundColor Yellow
+      Stop-WebNodeProcesses -RepoPath $root
+      Start-Sleep -Seconds 2
+    } else {
+      Pop-Location
+      throw "[WEB] npm ci failed after retry. If EPERM persists, close editors/terminals using apps/web and rerun as Administrator. Details: $($_.Exception.Message)"
+    }
+  }
+}
 Pop-Location
 
 # Start API
