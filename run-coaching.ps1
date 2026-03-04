@@ -7,6 +7,63 @@ $venvPython = Join-Path $apiDir '.venv/Scripts/python.exe'
 
 Write-Host 'Starting Gambill Coaching app with health checks...' -ForegroundColor Cyan
 
+function Get-CommandVersion($name, $args = '--version') {
+  try {
+    $v = (& $name $args 2>$null | Select-Object -First 1).ToString().Trim()
+    return $v
+  } catch { return $null }
+}
+
+function Ensure-WebRuntime {
+  param(
+    [string]$NodeVersion = '20.11.1',
+    [string]$NpmVersion = '10.8.2'
+  )
+
+  $nodeOk = $false
+  $npmOk = $false
+
+  $nodeV = Get-CommandVersion 'node'
+  $npmV = Get-CommandVersion 'npm'
+  if ($nodeV -match '^v20\.11\.1$') { $nodeOk = $true }
+  if ($npmV -match '^10\.') { $npmOk = $true }
+
+  if ($nodeOk -and $npmOk) {
+    Write-Host "[WEB] Runtime OK: node $nodeV, npm $npmV" -ForegroundColor Green
+    return
+  }
+
+  Write-Host "[WEB] Runtime mismatch detected: node $nodeV, npm $npmV" -ForegroundColor Yellow
+  Write-Host '[WEB] Attempting automatic runtime remediation...' -ForegroundColor Yellow
+
+  if (Get-Command volta -ErrorAction SilentlyContinue) {
+    Write-Host '[WEB] Using Volta to pin Node/npm...' -ForegroundColor Cyan
+    volta install node@$NodeVersion npm@$NpmVersion | Out-Host
+  }
+
+  $nodeV = Get-CommandVersion 'node'
+  $npmV = Get-CommandVersion 'npm'
+  $nodeOk = $nodeV -match '^v20\.11\.1$'
+  $npmOk = $npmV -match '^10\.'
+
+  if (-not ($nodeOk -and $npmOk) -and (Get-Command nvm -ErrorAction SilentlyContinue)) {
+    Write-Host '[WEB] Falling back to nvm-windows...' -ForegroundColor Cyan
+    nvm install $NodeVersion | Out-Host
+    nvm use $NodeVersion | Out-Host
+    npm i -g npm@$NpmVersion | Out-Host
+    $nodeV = Get-CommandVersion 'node'
+    $npmV = Get-CommandVersion 'npm'
+    $nodeOk = $nodeV -match '^v20\.11\.1$'
+    $npmOk = $npmV -match '^10\.'
+  }
+
+  if (-not ($nodeOk -and $npmOk)) {
+    throw "Web runtime still unsupported (node=$nodeV npm=$npmV). Install Volta and run: volta install node@$NodeVersion npm@$NpmVersion"
+  }
+
+  Write-Host "[WEB] Runtime fixed: node $nodeV, npm $npmV" -ForegroundColor Green
+}
+
 if (-not (Test-Path $venvPython)) {
   Write-Host '[API] Creating virtual environment...' -ForegroundColor Yellow
   if (Get-Command py -ErrorAction SilentlyContinue) {
@@ -21,12 +78,16 @@ if (-not (Test-Path $venvPython)) {
 Write-Host '[API] Installing dependencies...' -ForegroundColor Yellow
 & $venvPython -m pip install -r (Join-Path $apiDir 'requirements.txt') | Out-Host
 
-if (-not (Test-Path (Join-Path $webDir 'node_modules'))) {
-  Write-Host '[WEB] Installing npm dependencies...' -ForegroundColor Yellow
-  Push-Location $webDir
-  npm install | Out-Host
-  Pop-Location
+Ensure-WebRuntime
+
+Write-Host '[WEB] Installing npm dependencies (deterministic npm ci)...' -ForegroundColor Yellow
+Push-Location $webDir
+if (-not (Test-Path (Join-Path $webDir 'package-lock.json'))) {
+  Write-Host '[WEB] package-lock.json missing, generating lockfile with npm install once...' -ForegroundColor Yellow
+  npm install --no-audit --no-fund | Out-Host
 }
+npm ci --no-audit --no-fund | Out-Host
+Pop-Location
 
 # Start API
 $apiCmd = "cd /d `"$apiDir`" && set LAKEBASE_BACKEND=duckdb && set APP_ENV=dev && .\.venv\Scripts\python.exe -m uvicorn main:app --reload --port 8000"
