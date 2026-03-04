@@ -28,6 +28,7 @@ type IntakeDraft = {
   candidateEmail: string;
   targetRole: string;
   resumeFileName: string;
+  resumeHighlights: string[];
   selfAssessment: string;
   questionnaire: {
     careerGoal: string;
@@ -57,7 +58,9 @@ type IntakeDraft = {
 type Milestone = {
   title: string;
   outcome: string;
+  expectations: string[];
   deliverables: string[];
+  acceptanceChecks: string[];
 };
 
 type ResourceLink = { title: string; type: "course" | "article" | "video" | "doc"; url: string; reason: string };
@@ -121,6 +124,7 @@ const DEFAULT_DRAFT: IntakeDraft = {
   candidateEmail: "",
   targetRole: "Senior Data Engineer",
   resumeFileName: "",
+  resumeHighlights: [""],
   selfAssessment: "",
   questionnaire: {
     careerGoal: "",
@@ -147,6 +151,33 @@ const DEFAULT_DRAFT: IntakeDraft = {
   timelineWeeks: "8",
 };
 
+function deriveResumeHighlights(rawText: string): string[] {
+  const lines = rawText
+    .split(/\r?\n/)
+    .map((line) => line.replace(/[\u2022\-\*]+/g, "").trim())
+    .filter((line) => line.length > 24);
+
+  const ranked = lines
+    .map((line) => {
+      const lower = line.toLowerCase();
+      const score = ["built", "delivered", "led", "%", "$", "pipeline", "dashboard", "data"].reduce((acc, token) => acc + (lower.includes(token) ? 1 : 0), 0);
+      return { line, score };
+    })
+    .sort((a, b) => b.score - a.score)
+    .map((item) => item.line);
+
+  return Array.from(new Set(ranked)).slice(0, 6);
+}
+
+function buildCombinedProfile(draft: IntakeDraft): string {
+  const highlights = draft.resumeHighlights.map((item) => item.trim()).filter(Boolean);
+  const summaryBits = [
+    draft.questionnaire.currentBackground.trim() && `Background: ${draft.questionnaire.currentBackground.trim()}`,
+    draft.questionnaire.careerGoal.trim() && `Goal: ${draft.questionnaire.careerGoal.trim()}`,
+    highlights.length ? `Resume signals: ${highlights.join(" | ")}` : "",
+  ].filter(Boolean);
+  return summaryBits.join("\n");
+}
 
 function buildProjectScaffold(draft: IntakeDraft): ProjectScaffold {
   const parsedJobLinks = draft.jobLinks.map((line) => line.trim()).filter(Boolean);
@@ -157,7 +188,7 @@ function buildProjectScaffold(draft: IntakeDraft): ProjectScaffold {
   return {
     title: `${targetRole} Coaching Project Blueprint`,
     executiveSummary: `${candidateName} will deliver a business-first, medallion-aligned project targeted to ${targetRole}, with measurable KPI impact and a hiring-manager-ready narrative.`,
-    candidateSnapshot: `${candidateName} targeting ${targetRole}. Intake includes ${parsedJobLinks.length || 0} job posting references and stack preference of ${[...draft.selectedPlatforms, ...draft.selectedTools].join(" + ") || "Not specified"}.`,
+    candidateSnapshot: `${candidateName} targeting ${targetRole}. Intake includes ${parsedJobLinks.length || 0} job posting references, ${draft.resumeHighlights.filter(Boolean).length} resume highlights, and stack preference of ${[...draft.selectedPlatforms, ...draft.selectedTools].join(" + ") || "Not specified"}.`,
     businessOutcome: "Design and implement a medallion-aligned analytics platform initiative that demonstrates measurable delivery impact to hiring managers.",
     dataSources: [
       { name: "Resume intake", type: "document", note: "Used to map existing strengths and experience claims." },
@@ -173,17 +204,23 @@ function buildProjectScaffold(draft: IntakeDraft): ProjectScaffold {
       {
         title: "Milestone 1: Intake-to-Model Plan",
         outcome: "Translate resume/job signals into a technical scope and risk assumptions.",
+        expectations: ["Scope ties to top hiring criteria", "Data source assumptions are explicit"],
         deliverables: ["Skill gap matrix", "System context diagram", "Delivery plan draft"],
+        acceptanceChecks: ["At least 3 role requirements mapped", "Risk register includes mitigation owner"],
       },
       {
         title: "Milestone 2: Medallion Build Sprint",
         outcome: "Ship working bronze/silver/gold data product with tests and lineage.",
+        expectations: ["Pipeline is production-like and reproducible", "Quality checks cover core tables"],
         deliverables: ["Pipeline implementation", "Data quality checks", "Lineage + runbook"],
+        acceptanceChecks: ["Critical tests pass in run log", "Runbook includes on-call recovery steps"],
       },
       {
         title: "Milestone 3: Business Readout",
         outcome: "Present architecture decisions, KPI lift, and operational readiness.",
+        expectations: ["Business narrative is concise and evidence-backed", "Trade-offs are communicated clearly"],
         deliverables: ["ROI dashboard spec", "Executive walkthrough", "Interview narrative assets"],
+        acceptanceChecks: ["Before/after KPI math is shown", "One STAR story tied to measurable impact"],
       },
     ],
     storyNarrative: [
@@ -415,8 +452,10 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
 
   const [activeStep, setActiveStep] = useState<IntakeStepId>("resume");
   const [draft, setDraft] = useState<IntakeDraft>(DEFAULT_DRAFT);
+  const [resumeUploadState, setResumeUploadState] = useState<{ phase: "idle" | "uploading" | "parsing" | "ready" | "error"; progress: number; message?: string }>({ phase: "idle", progress: 0 });
+  const resumeFileInputRef = useRef<HTMLInputElement | null>(null);
   const [scaffold, setScaffold] = useState<ProjectScaffold | null>(null);
-  const [viewerTab, setViewerTab] = useState<"summary" | "dataSources" | "architecture" | "milestones" | "story" | "roi" | "resources" | "interview">("summary");
+  const [viewerTab, setViewerTab] = useState<"charter" | "summary" | "dataSources" | "architecture" | "milestones" | "story" | "roi" | "resources" | "interview">("charter");
   const [stageState, setStageState] = useState<Record<StageId, boolean>>({
     intakeParsed: false,
     sowGenerated: false,
@@ -768,7 +807,9 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       milestones: milestones.map((m: any) => ({
         title: String(m.name || "Milestone"),
         outcome: `Duration: ${String(m.duration_weeks || "?")} weeks`,
+        expectations: Array.isArray(m.expectations) ? m.expectations.map((d: any) => String(d)) : ["Scope reviewed with coach"],
         deliverables: Array.isArray(m.deliverables) ? m.deliverables.map((d: any) => String(d)) : [],
+        acceptanceChecks: Array.isArray(m.acceptance_checks) ? m.acceptance_checks.map((d: any) => String(d)) : ["Coach and learner both confirm milestone completion"],
       })),
       storyNarrative: [String(projectStory.challenge || ""), String(projectStory.approach || ""), String(projectStory.impact_story || "")].filter(Boolean),
       roiRequirements: [
@@ -821,12 +862,34 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
     };
   }
 
+  async function processResumeFile(file: File) {
+    setResumeUploadState({ phase: "uploading", progress: 8, message: `Uploading ${file.name}...` });
+    setDraft((prev) => ({ ...prev, resumeFileName: file.name }));
+
+    const timer = window.setInterval(() => {
+      setResumeUploadState((prev) => ({ ...prev, progress: Math.min(92, prev.progress + 12) }));
+    }, 120);
+
+    try {
+      const rawText = await file.text();
+      setResumeUploadState({ phase: "parsing", progress: 95, message: "Parsing resume for highlights..." });
+      const highlights = deriveResumeHighlights(rawText);
+      setDraft((prev) => ({ ...prev, resumeHighlights: highlights.length ? highlights : ["Add one achievement highlight from your resume"] }));
+      setResumeUploadState({ phase: "ready", progress: 100, message: `Parsed ${highlights.length || 1} highlight${highlights.length === 1 ? "" : "s"}.` });
+    } catch (e: any) {
+      setResumeUploadState({ phase: "error", progress: 100, message: e?.message || "Could not parse that file. Try .txt, .md, .docx, or paste highlights manually." });
+    } finally {
+      window.clearInterval(timer);
+    }
+  }
+
   async function submitIntake() {
     if (!canAccessWorkbench) return;
 
     const jobLinks = draft.jobLinks.map((line) => line.trim()).filter(Boolean);
     const preferredStack = [...draft.selectedPlatforms, ...draft.selectedTools].join(" + ");
     const structuredAssessment = buildStructuredAssessment(draft);
+    const combinedProfile = buildCombinedProfile(draft);
 
     try {
       const intakeResult = await api.coachingIntake({
@@ -834,7 +897,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
         applicant_name: draft.candidateName || "Candidate",
         applicant_email: draft.candidateEmail || undefined,
         resume_text: draft.resumeFileName,
-        self_assessment_text: structuredAssessment,
+        self_assessment_text: [structuredAssessment, "", "Resume-Derived Highlights", ...draft.resumeHighlights.map((item) => `- ${item.trim()}`).filter((line) => line !== "-"), "", "Combined Profile", combinedProfile].join("\n"),
         job_links: jobLinks,
         preferences: {
           target_role: draft.targetRole,
@@ -842,6 +905,11 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
           timeline_weeks: draft.questionnaire.timelineWeeks || draft.timelineWeeks,
           selected_platforms: draft.selectedPlatforms,
           selected_tools: draft.selectedTools,
+          resume_profile: {
+            file_name: draft.resumeFileName,
+            highlights: draft.resumeHighlights.map((item) => item.trim()).filter(Boolean),
+          },
+          combined_profile: combinedProfile,
         },
       });
 
@@ -963,6 +1031,9 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       candidateEmail: selectedSubmission.applicant_email || prev.candidateEmail,
       targetRole: String(preferences.target_role || prev.targetRole),
       resumeFileName: selectedSubmission.resume_text || prev.resumeFileName,
+      resumeHighlights: Array.isArray((preferences as any).resume_profile?.highlights) && (preferences as any).resume_profile.highlights.length
+        ? (preferences as any).resume_profile.highlights.map((x: any) => String(x))
+        : prev.resumeHighlights,
       selfAssessment: selectedSubmission.self_assessment_text || prev.selfAssessment,
       jobLinks: parsedJobLinks.length ? [...parsedJobLinks, ...Array.from({ length: Math.max(0, 8 - parsedJobLinks.length) }, () => "")].slice(0, 10) : prev.jobLinks,
       selectedPlatforms: Array.isArray((preferences as any).selected_platforms) ? (preferences as any).selected_platforms.map((x: any) => String(x)) : prev.selectedPlatforms,
@@ -1018,7 +1089,9 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
         ...scaffold.milestones.flatMap((m) => [
           `### ${m.title}`,
           `- Outcome: ${m.outcome}`,
+          ...m.expectations.map((d) => `- Expectation: ${d}`),
           ...m.deliverables.map((d) => `- Deliverable: ${d}`),
+          ...m.acceptanceChecks.map((d) => `- Acceptance check: ${d}`),
         ]),
         "",
         "## Story Narrative",
@@ -1581,10 +1654,65 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
             <input value={draft.targetRole} onChange={(e) => setDraft((prev) => ({ ...prev, targetRole: e.target.value }))} placeholder="Senior Data Engineer" style={{ marginBottom: 8 }} />
 
             {activeStep === "resume" && (
-              <>
-                <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Resume Upload (name-only scaffold)</label>
-                <input value={draft.resumeFileName} onChange={(e) => setDraft((prev) => ({ ...prev, resumeFileName: e.target.value }))} placeholder="resume.pdf" />
-              </>
+              <div style={{ display: "grid", gap: 8 }}>
+                <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Resume upload + highlights</label>
+                <div
+                  className="resume-dropzone"
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const file = e.dataTransfer.files?.[0];
+                    if (file) processResumeFile(file);
+                  }}
+                >
+                  <div style={{ fontWeight: 600 }}>Drag and drop resume here</div>
+                  <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>or</div>
+                  <button type="button" onClick={() => resumeFileInputRef.current?.click()}>Choose file</button>
+                  <input
+                    ref={resumeFileInputRef}
+                    type="file"
+                    accept=".txt,.md,.doc,.docx,.pdf"
+                    style={{ display: "none" }}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) processResumeFile(file);
+                    }}
+                  />
+                  <div style={{ fontSize: 12 }}>Selected: <strong>{draft.resumeFileName || "none"}</strong></div>
+                </div>
+
+                <div style={{ display: "grid", gap: 4 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                    <span>Upload + parse status</span>
+                    <span>{resumeUploadState.progress}%</span>
+                  </div>
+                  <div className="resume-progress-track"><span style={{ width: `${resumeUploadState.progress}%` }} /></div>
+                  {resumeUploadState.message && <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>{resumeUploadState.message}</div>}
+                </div>
+
+                <div className="card" style={{ padding: 10 }}>
+                  <strong style={{ fontSize: 12 }}>Editable parsed highlights</strong>
+                  <div style={{ fontSize: 11, color: "var(--color-text-muted)", marginTop: 4 }}>Tune these before submit so reviewers see the strongest evidence.</div>
+                  <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+                    {draft.resumeHighlights.map((highlight, idx) => (
+                      <div key={`resume-highlight-${idx}`} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 6 }}>
+                        <input
+                          value={highlight}
+                          onChange={(e) => setDraft((prev) => ({ ...prev, resumeHighlights: prev.resumeHighlights.map((item, i) => i === idx ? e.target.value : item) }))}
+                          placeholder="Led migration to lakehouse and reduced latency by 38%"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setDraft((prev) => ({ ...prev, resumeHighlights: prev.resumeHighlights.length <= 1 ? [""] : prev.resumeHighlights.filter((_, i) => i !== idx) }))}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <button type="button" style={{ marginTop: 8 }} onClick={() => setDraft((prev) => ({ ...prev, resumeHighlights: [...prev.resumeHighlights, ""] }))}>Add highlight</button>
+                </div>
+              </div>
             )}
 
             {activeStep === "selfAssessment" && (
@@ -1726,10 +1854,11 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                 </div>
 
                 <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+                  <button onClick={() => setViewerTab("charter")}>Project Charter</button>
                   <button onClick={() => setViewerTab("summary")}>Executive Summary</button>
-                  <button onClick={() => setViewerTab("dataSources")}>Data Sources</button>
+                  <button onClick={() => setViewerTab("dataSources")}>Data Sources + Ingestion</button>
                   <button onClick={() => setViewerTab("architecture")}>Architecture</button>
-                  <button onClick={() => setViewerTab("milestones")}>Milestones</button>
+                  <button onClick={() => setViewerTab("milestones")}>Milestone Cards</button>
                   <button onClick={() => setViewerTab("story")}>Story Narrative</button>
                   <button onClick={() => setViewerTab("roi")}>ROI Dashboard</button>
                   <button onClick={() => setViewerTab("resources")}>Resource Links by Step</button>
@@ -1744,6 +1873,27 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                   ))}
                 </div>
 
+                {viewerTab === "charter" && (
+                  <div style={{ display: "grid", gap: 10 }}>
+                    <div className="card" style={{ padding: 12, border: "1px solid var(--color-border-strong)" }}>
+                      <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, color: "var(--color-text-muted)" }}>Business story</div>
+                      <div style={{ fontSize: 15, lineHeight: 1.65, marginTop: 4 }}>{scaffold.storyNarrative[0] || scaffold.executiveSummary}</div>
+                      <div style={{ fontSize: 13, marginTop: 8 }}><strong>Why now:</strong> {scaffold.storyNarrative[1] || scaffold.businessOutcome}</div>
+                      <div style={{ fontSize: 13, marginTop: 4 }}><strong>What success looks like:</strong> {scaffold.storyNarrative[2] || scaffold.businessOutcome}</div>
+                    </div>
+                    <div className="coaching-input-grid">
+                      <div className="card" style={{ padding: 12 }}>
+                        <div style={{ fontSize: 11, textTransform: "uppercase", color: "var(--color-text-muted)" }}>Candidate profile</div>
+                        <div style={{ marginTop: 4, fontSize: 13, lineHeight: 1.5 }}>{scaffold.candidateSnapshot}</div>
+                      </div>
+                      <div className="card" style={{ padding: 12 }}>
+                        <div style={{ fontSize: 11, textTransform: "uppercase", color: "var(--color-text-muted)" }}>Business outcome</div>
+                        <div style={{ marginTop: 4, fontSize: 13, lineHeight: 1.5 }}>{scaffold.businessOutcome}</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {viewerTab === "summary" && (
                   <div className="card" style={{ padding: 10, background: "rgba(120,120,255,0.05)" }}>
                     <div style={{ fontSize: 14, marginBottom: 8, lineHeight: 1.5 }}>{scaffold.executiveSummary}</div>
@@ -1753,13 +1903,18 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                 )}
 
                 {viewerTab === "dataSources" && (
-                  <div style={{ display: "grid", gap: 8 }}>
+                  <div style={{ display: "grid", gap: 10 }}>
+                    <div className="card" style={{ padding: 10, border: "1px solid var(--color-border-strong)", background: "color-mix(in srgb, var(--panel-bg) 88%, #10b981 12%)" }}>
+                      <strong>Ingestion instruction block</strong>
+                      <div style={{ fontSize: 12, marginTop: 6 }}>Document source owner, refresh cadence, and bronze landing location for every source before build starts.</div>
+                    </div>
                     {scaffold.dataSources.map((source) => (
-                      <div key={`${source.name}-${source.link || "nolink"}`} className="card" style={{ padding: 8 }}>
+                      <div key={`${source.name}-${source.link || "nolink"}`} className="card" style={{ padding: 10 }}>
                         <div style={{ fontSize: 13 }}>
                           <strong>{source.name}</strong> <span style={{ color: "var(--color-text-muted)" }}>({source.type})</span>
                         </div>
-                        <div style={{ fontSize: 12, marginTop: 4 }}>{source.note}</div>
+                        <div style={{ fontSize: 12, marginTop: 4 }}><strong>Data purpose:</strong> {source.note}</div>
+                        <div style={{ fontSize: 12, marginTop: 4 }}><strong>Ingestion note:</strong> Define source auth, schema drift handling, and failure alert destination.</div>
                         <div style={{ fontSize: 12, marginTop: 4 }}>
                           {source.link ? (() => { const safety = safeExternalUrl(source.link); return safety.safe ? <a href={safety.normalized} target="_blank" rel="noreferrer">{source.link}</a> : <span>{source.link} <span className="badge warning">Blocked unsafe link ({safety.reason})</span></span>; })() : <span style={{ color: "var(--color-text-muted)" }}>No external link provided</span>}
                         </div>
@@ -1769,13 +1924,22 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                 )}
 
                 {viewerTab === "milestones" && (
-                  <div style={{ display: "grid", gap: 8 }}>
+                  <div style={{ display: "grid", gap: 10 }}>
                     {scaffold.milestones.map((m) => (
-                      <div key={m.title} className="card" style={{ padding: 10 }}>
+                      <div key={m.title} className="card milestone-card" style={{ padding: 12 }}>
                         <strong>{m.title}</strong>
-                        <div style={{ fontSize: 12, marginTop: 4 }}>{m.outcome}</div>
-                        <ul style={{ margin: "6px 0 0 18px", padding: 0, fontSize: 12 }}>
+                        <div style={{ fontSize: 13, marginTop: 6, lineHeight: 1.5 }}>{m.outcome}</div>
+                        <div style={{ marginTop: 8, fontSize: 12 }}><strong>Expectations</strong></div>
+                        <ul style={{ margin: "4px 0 0 18px", padding: 0, fontSize: 12 }}>
+                          {m.expectations.map((item, idx) => <li key={`${m.title}-exp-${idx}`}>{item}</li>)}
+                        </ul>
+                        <div style={{ marginTop: 8, fontSize: 12 }}><strong>Deliverables</strong></div>
+                        <ul style={{ margin: "4px 0 0 18px", padding: 0, fontSize: 12 }}>
                           {m.deliverables.map((item) => <li key={item}>{item}</li>)}
+                        </ul>
+                        <div style={{ marginTop: 8, fontSize: 12 }}><strong>Acceptance checks</strong></div>
+                        <ul style={{ margin: "4px 0 0 18px", padding: 0, fontSize: 12 }}>
+                          {m.acceptanceChecks.map((item, idx) => <li key={`${m.title}-acc-${idx}`}>{item}</li>)}
                         </ul>
                       </div>
                     ))}
