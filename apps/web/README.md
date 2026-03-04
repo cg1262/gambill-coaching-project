@@ -1,16 +1,22 @@
 # Web App (Next.js + React Flow)
 
 ## Runtime / Tooling Baseline
-- Node: **20 LTS** (pinned to **20.11.1** via `.nvmrc`)
-- npm: **10.x** (`packageManager` + `engines` in `package.json`)
-- `npm` scripts now enforce runtime parity before `dev`, `typecheck`, `build`, and `build:clean`.
+- Node: **20 LTS** (pinned to **20.11.1** via `.nvmrc` + `volta.node`)
+- npm: **10.x** (pinned via `packageManager` + `engines` + `volta.npm`)
+- `npm` scripts enforce runtime parity before `dev`, `typecheck`, `build`, and `build:clean`.
   - mismatch exits immediately with a remediation message (switch to Node 20.11.1 + npm 10.x).
 
 ## Deterministic Build Flow (from clean clone)
 From `apps/web`:
 
 ```bash
-npm ci --no-audit --no-fund
+npm run verify:deterministic
+```
+
+Equivalent explicit sequence:
+
+```bash
+npm run install:ci
 npm run typecheck
 npm run build
 npm run build
@@ -41,6 +47,17 @@ npm run build:clean
   - Run: `npm install` once to generate `package-lock.json`, commit it, then rerun deterministic flow.
 - repeated install/build failure after recovery
   - Run `npm cache verify`, confirm Node/npm versions above, retry on stable local disk context.
+
+## Actionable Runtime Remediation Flow
+```bash
+npm run runtime:check
+```
+- If runtime check fails:
+  1. switch to Node `20.11.1` (`.nvmrc` / Volta pin)
+  2. confirm npm is `10.x`
+  3. run `npm run install:ci`
+  4. run `npm run verify:deterministic`
+- If deterministic verification still fails, run `npm run build:clean` for one-pass artifact + module recovery.
 
 ## Internal Rate-Limit UX Scaffolding (Admin-ready hook)
 - The workbench now handles HTTP **429** responses with actionable retry guidance.
