@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, UploadFile, File, Form
 from uuid import uuid4
 from pathlib import Path
@@ -10,7 +11,9 @@ from urllib.error import URLError, HTTPError
 from urllib.parse import urlparse
 import base64
 from datetime import datetime, timezone
+import json as _json_stdlib
 import logging
+import logging.config
 import os
 import hashlib
 import hmac
@@ -100,9 +103,77 @@ from rate_limits import RateLimitExceeded, enforce_rate_limit, policy_snapshot a
 from webhook_security import parse_webhook_body, verify_webhook_signature
 from admin_runtime_config import runtime_rate_limit_snapshot, runtime_rate_limit_update
 
-app = FastAPI(title="AI Data Modeling IDE API", version="0.2.0")
+class _JsonFormatter(logging.Formatter):
+    """JSON log formatter — no extra packages required."""
+
+    _RESERVED = frozenset(logging.LogRecord("", 0, "", 0, "", (), None).__dict__.keys())
+
+    def format(self, record: logging.LogRecord) -> str:
+        base: dict[str, Any] = {
+            "ts": self.formatTime(record),
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+        }
+        for k, v in record.__dict__.items():
+            if k not in self._RESERVED and not k.startswith("_"):
+                base[k] = v
+        if record.exc_info:
+            base["exc"] = self.formatException(record.exc_info)
+        return _json_stdlib.dumps(base, default=str)
+
+
+logging.config.dictConfig({
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {"json": {"()": _JsonFormatter}},
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "json",
+            "stream": "ext://sys.stdout",
+        }
+    },
+    "loggers": {
+        "gambill_coaching.api": {
+            "handlers": ["console"],
+            "level": os.getenv("LOG_LEVEL", "INFO"),
+            "propagate": False,
+        }
+    },
+})
+
 logger = logging.getLogger("gambill_coaching.api")
 RESOURCE_LIBRARY_PATH = Path(__file__).resolve().parents[2] / "docs" / "coaching-project" / "RESOURCE_LIBRARY.json"
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    web_concurrency = int(os.getenv("WEB_CONCURRENCY", "1"))
+    if web_concurrency > 1:
+        logger.warning(
+            "multi_worker_in_memory_state",
+            extra={
+                "event": "startup_warning",
+                "web_concurrency": web_concurrency,
+                "detail": (
+                    f"WEB_CONCURRENCY={web_concurrency}: in-memory session store (auth.py) "
+                    "and rate limit store (rate_limits.py) are NOT shared across workers. "
+                    "A Redis backend is required for production multi-worker deployments."
+                ),
+            },
+        )
+    yield
+
+
+app = FastAPI(
+    title="Gambill Coaching API",
+    version="0.2.0",
+    description="AI-powered data engineering coaching platform",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    lifespan=_lifespan,
+)
 
 
 def _client_ip(request: Request) -> str:

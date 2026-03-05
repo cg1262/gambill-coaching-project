@@ -7,7 +7,12 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import secrets
+
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives import hashes
 
 from config import settings
 
@@ -77,9 +82,40 @@ def verify_password_hash(password: str, stored: str) -> bool:
 
 
 def _xor_crypt(data: bytes, key: bytes) -> bytes:
+    # Kept for backward-compatibility with enc:v1: values already in the database.
     if not key:
         return data
     return bytes(b ^ key[i % len(key)] for i, b in enumerate(data))
+
+
+def _derive_aes_key(raw_key: bytes) -> bytes:
+    """Derive a 32-byte AES-256 key from the raw connection secret using HKDF-SHA256."""
+    hkdf = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=None,
+        info=b"gambill_coaching_connection_secret_v2",
+    )
+    return hkdf.derive(raw_key)
+
+
+def _aes_gcm_encrypt(plaintext: bytes, key: bytes) -> str:
+    """Encrypt with AES-256-GCM. Returns 'enc:v2:<base64(nonce+ciphertext)>'."""
+    derived = _derive_aes_key(key)
+    nonce = os.urandom(12)  # 96-bit nonce
+    aesgcm = AESGCM(derived)
+    ciphertext = aesgcm.encrypt(nonce, plaintext, None)
+    blob = base64.urlsafe_b64encode(nonce + ciphertext).decode("utf-8")
+    return f"enc:v2:{blob}"
+
+
+def _aes_gcm_decrypt(encoded: str, key: bytes) -> bytes:
+    """Decrypt an 'enc:v2:<base64>' value. Returns plaintext bytes."""
+    blob = base64.urlsafe_b64decode(encoded.split("enc:v2:", 1)[1].encode("utf-8"))
+    nonce, ciphertext = blob[:12], blob[12:]
+    derived = _derive_aes_key(key)
+    aesgcm = AESGCM(derived)
+    return aesgcm.decrypt(nonce, ciphertext, None)
 
 
 def _encrypt_connection_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -93,9 +129,7 @@ def _encrypt_connection_payload(payload: dict[str, Any]) -> dict[str, Any]:
         v = out.get(f)
         if v in (None, ""):
             continue
-        plain = str(v).encode("utf-8")
-        cipher = _xor_crypt(plain, key)
-        out[f] = "enc:v1:" + base64.urlsafe_b64encode(cipher).decode("utf-8")
+        out[f] = _aes_gcm_encrypt(str(v).encode("utf-8"), key)
     return out
 
 
@@ -107,11 +141,15 @@ def _decrypt_connection_payload(payload: dict[str, Any]) -> dict[str, Any]:
     out = dict(payload)
     for f in ["token", "connection_string", "password", "client_secret"]:
         v = out.get(f)
-        if not isinstance(v, str) or not v.startswith("enc:v1:"):
+        if not isinstance(v, str):
             continue
         try:
-            blob = base64.urlsafe_b64decode(v.split("enc:v1:", 1)[1].encode("utf-8"))
-            out[f] = _xor_crypt(blob, key).decode("utf-8")
+            if v.startswith("enc:v2:"):
+                out[f] = _aes_gcm_decrypt(v, key).decode("utf-8")
+            elif v.startswith("enc:v1:"):
+                # Backward compat: decrypt legacy XOR-encrypted values
+                blob = base64.urlsafe_b64decode(v.split("enc:v1:", 1)[1].encode("utf-8"))
+                out[f] = _xor_crypt(blob, key).decode("utf-8")
         except Exception:
             out[f] = ""
     return out

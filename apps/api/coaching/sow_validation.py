@@ -1,0 +1,286 @@
+from __future__ import annotations
+
+from typing import Any
+
+from security import mask_secrets_in_text
+
+from .constants import REQUIRED_SECTION_FLOW, CHARTER_REQUIRED_SECTION_FLOW
+from .sow_security import sanitize_generated_sow, _is_valid_non_placeholder_url
+
+
+def _build_interview_ready_package(project_title: str, story: dict[str, Any], milestones: list[dict[str, Any]], tools: list[str]) -> dict[str, Any]:
+    challenge = str((story or {}).get("challenge") or "Translate ambiguous business requirements into reliable data outcomes.")
+    approach = str((story or {}).get("approach") or "Use iterative delivery with measurable acceptance criteria and stakeholder demos.")
+    impact = str((story or {}).get("impact_story") or "Deliver KPI improvements with reproducible implementation evidence.")
+
+    milestone_names = [str(m.get("name") or "Milestone") for m in (milestones or []) if isinstance(m, dict)]
+    star_bullets = [
+        f"Situation: {challenge}",
+        f"Task: Own delivery of {project_title} milestones with clear KPI targets.",
+        f"Action: {approach}",
+        f"Result: {impact}",
+    ]
+    portfolio_checklist = [
+        "Architecture diagram exported and narrated in README",
+        "Pipeline tests + data quality checks committed with run evidence",
+        "Executive KPI dashboard with metric dictionary and assumptions",
+        "Demo script + retrospective including trade-offs and next steps",
+    ]
+    recruiter_mapping = {
+        "technical_depth": milestone_names[:3],
+        "business_impact": [impact],
+        "communication": ["Executive summary", "STAR narrative", "Demo walkthrough"],
+        "tooling_keywords": sorted({str(t) for t in (tools or []) if str(t).strip()}),
+    }
+    return {
+        "star_bullets": star_bullets,
+        "portfolio_checklist": portfolio_checklist,
+        "recruiter_mapping": recruiter_mapping,
+    }
+
+
+def evaluate_sow_structure(sow: dict[str, Any]) -> dict[str, Any]:
+    payload = sow or {}
+    expected = list(REQUIRED_SECTION_FLOW)
+    missing_sections = [section for section in expected if section not in payload]
+    actual_sequence = [key for key in payload.keys() if key in expected]
+    expected_sequence = [section for section in expected if section in payload]
+
+    order_valid = actual_sequence == expected_sequence
+    out_of_order_sections: list[str] = []
+    if not order_valid:
+        for index, section in enumerate(actual_sequence):
+            if index >= len(expected_sequence) or section != expected_sequence[index]:
+                out_of_order_sections.append(section)
+
+    structure_score = int(((len(expected) - len(missing_sections)) / len(expected)) * 100)
+    if not order_valid:
+        structure_score = max(0, structure_score - (10 * max(1, len(out_of_order_sections))))
+
+    return {
+        "expected_sequence": expected,
+        "actual_sequence": actual_sequence,
+        "order_valid": order_valid,
+        "missing_sections": missing_sections,
+        "out_of_order_sections": out_of_order_sections,
+        "structure_score": max(0, min(100, structure_score)),
+        "structure_valid": (len(missing_sections) == 0 and order_valid),
+    }
+
+
+def ensure_interview_ready_package(sow: dict[str, Any]) -> dict[str, Any]:
+    out = dict(sow or {})
+    package = out.get("interview_ready_package")
+    if not isinstance(package, dict):
+        package = {}
+    if not package.get("star_bullets") or not isinstance(package.get("star_bullets"), list):
+        built = _build_interview_ready_package(
+            project_title=str(out.get("project_title") or "Project"),
+            story=out.get("project_story") or {},
+            milestones=out.get("milestones") or [],
+            tools=((out.get("solution_architecture") or {}).get("primary_tools") or []),
+        )
+        for k, v in built.items():
+            package.setdefault(k, v)
+    out["interview_ready_package"] = package
+    return out
+
+
+def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
+    sow, safety_findings = sanitize_generated_sow(sow)
+    sow = ensure_interview_ready_package(sow)
+    findings: list[dict[str, str]] = list(safety_findings)
+
+    structure = evaluate_sow_structure(sow)
+    for key in structure.get("missing_sections") or []:
+        findings.append({"code": "MISSING_SECTION", "message": f"Missing required section: {key}"})
+    if not structure.get("order_valid"):
+        findings.append(
+            {
+                "code": "SECTION_ORDER_INVALID",
+                "message": "Top-level sections are out of order. Follow REQUIRED_SECTION_FLOW.",
+            }
+        )
+
+    charter = sow.get("project_charter") or {}
+    charter_sections = charter.get("sections") or {}
+    charter_order = charter.get("section_order") or []
+    missing_charter = [section for section in CHARTER_REQUIRED_SECTION_FLOW if section not in charter_sections]
+    if missing_charter:
+        findings.append({"code": "CHARTER_SECTION_MISSING", "message": f"project_charter.sections missing: {', '.join(missing_charter)}"})
+    if list(charter_order) != list(CHARTER_REQUIRED_SECTION_FLOW):
+        findings.append({"code": "CHARTER_SECTION_ORDER_INVALID", "message": "project_charter.section_order must match required charter flow exactly."})
+    tech_arch = charter_sections.get("technical_architecture") or {}
+    for idx, src in enumerate((tech_arch.get("data_sources") or [])):
+        if not _is_valid_non_placeholder_url(str(src.get("url") or "")):
+            findings.append({"code": "CHARTER_DATA_SOURCE_URL_INVALID", "message": f"project_charter.sections.technical_architecture.data_sources[{idx}].url must be a real link."})
+        if not _is_valid_non_placeholder_url(str(src.get("ingestion_doc_url") or "")):
+            findings.append({"code": "CHARTER_INGESTION_DOC_URL_INVALID", "message": f"project_charter.sections.technical_architecture.data_sources[{idx}].ingestion_doc_url must be a real link."})
+
+    medallion = ((sow.get("solution_architecture") or {}).get("medallion_plan") or {})
+    for layer in ["bronze", "silver", "gold"]:
+        if not str(medallion.get(layer) or "").strip():
+            findings.append({"code": "MEDALLION_INCOMPLETE", "message": f"Missing medallion layer detail: {layer}"})
+
+    story = sow.get("project_story") or {}
+    for k in ["executive_summary", "challenge", "approach", "impact_story"]:
+        if not str(story.get(k) or "").strip():
+            findings.append({"code": "PROJECT_STORY_MISSING", "message": f"project_story.{k} is required."})
+
+    business = sow.get("business_outcome") or {}
+    data_sources = business.get("data_sources") or []
+    if not isinstance(data_sources, list) or len(data_sources) == 0:
+        findings.append({"code": "DATA_SOURCES_MISSING", "message": "business_outcome.data_sources must include at least one source."})
+    concrete_source_links = 0
+    ingestion_doc_links = 0
+    for i, ds in enumerate(data_sources):
+        if _is_valid_non_placeholder_url(str(ds.get("url") or "")):
+            concrete_source_links += 1
+        else:
+            findings.append({"code": "DATA_SOURCE_LINK_INVALID", "message": f"data_sources[{i}].url must be a real link."})
+        if _is_valid_non_placeholder_url(str(ds.get("ingestion_doc_url") or "")):
+            ingestion_doc_links += 1
+        else:
+            findings.append({"code": "INGESTION_DOC_LINK_MISSING", "message": f"data_sources[{i}].ingestion_doc_url must be a real link."})
+        if not str(ds.get("selection_rationale") or "").strip():
+            findings.append({"code": "DATA_SOURCE_RATIONALE_MISSING", "message": f"data_sources[{i}].selection_rationale is required."})
+    if concrete_source_links < 1:
+        findings.append({"code": "DATA_SOURCE_PUBLIC_LINK_REQUIRED", "message": "At least one concrete public data source URL is required."})
+    if ingestion_doc_links < 1:
+        findings.append({"code": "DATA_SOURCE_INGESTION_DOC_REQUIRED", "message": "At least one ingestion documentation URL is required."})
+
+    milestones = sow.get("milestones") or []
+    if not isinstance(milestones, list) or len(milestones) < 3:
+        findings.append({"code": "MILESTONE_MINIMUM", "message": "At least 3 milestones are required."})
+    else:
+        for i, ms in enumerate(milestones):
+            if not str(ms.get("execution_plan") or "").strip():
+                findings.append({"code": "MILESTONE_EXECUTION_PLAN_MISSING", "message": f"milestones[{i}].execution_plan is required."})
+            if not str(ms.get("expected_deliverable") or "").strip():
+                findings.append({"code": "MILESTONE_EXPECTED_DELIVERABLE_MISSING", "message": f"milestones[{i}].expected_deliverable is required."})
+            if not str(ms.get("business_why") or "").strip():
+                findings.append({"code": "MILESTONE_BUSINESS_WHY_MISSING", "message": f"milestones[{i}].business_why is required."})
+            ms_resources = ms.get("resources") or []
+            if not isinstance(ms_resources, list) or len(ms_resources) == 0:
+                findings.append({"code": "MILESTONE_RESOURCES_MISSING", "message": f"milestones[{i}] must include resources."})
+            else:
+                for j, r in enumerate(ms_resources):
+                    if not _is_valid_non_placeholder_url(str(r.get("url") or "")):
+                        findings.append({"code": "MILESTONE_RESOURCE_LINK_INVALID", "message": f"milestones[{i}].resources[{j}].url must be a real link."})
+
+    roi = sow.get("roi_dashboard_requirements") or {}
+    if not (roi.get("required_measures") and roi.get("required_dimensions")):
+        findings.append({"code": "ROI_REQUIREMENTS_MISSING", "message": "ROI dashboard measures and dimensions are required."})
+
+    resources = sow.get("resource_plan") or {}
+    total_links = sum(len(resources.get(k) or []) for k in ["required", "recommended", "optional"])
+    if total_links == 0:
+        findings.append({"code": "RESOURCE_LINKS_MISSING", "message": "Provide at least one resource link in resource_plan."})
+    for bucket in ["required", "recommended", "optional"]:
+        for idx, item in enumerate(resources.get(bucket) or []):
+            if not _is_valid_non_placeholder_url(str(item.get("url") or "")):
+                findings.append({"code": "RESOURCE_LINK_INVALID", "message": f"resource_plan.{bucket}[{idx}].url must be a real link."})
+
+    if not str(resources.get("affiliate_disclosure") or "").strip():
+        findings.append({"code": "AFFILIATE_DISCLOSURE_MISSING", "message": "resource_plan.affiliate_disclosure is required for trust transparency."})
+
+    mentoring_cta = sow.get("mentoring_cta") or {}
+    if not str(mentoring_cta.get("trust_language") or "").strip():
+        findings.append({"code": "TRUST_LANGUAGE_MISSING", "message": "mentoring_cta.trust_language is required."})
+
+    interview = sow.get("interview_ready_package") or {}
+    if not isinstance(interview.get("star_bullets"), list) or len(interview.get("star_bullets") or []) < 4:
+        findings.append({"code": "INTERVIEW_STAR_BULLETS_INCOMPLETE", "message": "interview_ready_package.star_bullets must include at least 4 STAR bullets."})
+    if not isinstance(interview.get("portfolio_checklist"), list) or len(interview.get("portfolio_checklist") or []) < 3:
+        findings.append({"code": "INTERVIEW_PORTFOLIO_CHECKLIST_INCOMPLETE", "message": "interview_ready_package.portfolio_checklist must include at least 3 checklist items."})
+    recruiter_mapping = interview.get("recruiter_mapping") or {}
+    for key in ["technical_depth", "business_impact", "communication"]:
+        if not isinstance(recruiter_mapping.get(key), list) or len(recruiter_mapping.get(key) or []) == 0:
+            findings.append({"code": "INTERVIEW_RECRUITER_MAPPING_INCOMPLETE", "message": f"interview_ready_package.recruiter_mapping.{key} must be non-empty."})
+
+    return findings
+
+
+def _milestone_specificity_score(sow: dict[str, Any]) -> int:
+    milestones = sow.get("milestones") or []
+    if not isinstance(milestones, list) or len(milestones) == 0:
+        return 0
+
+    scored = 0
+    for ms in milestones:
+        if not isinstance(ms, dict):
+            continue
+        checks = 0
+        for field in ["execution_plan", "expected_deliverable", "business_why"]:
+            if len(str(ms.get(field) or "").strip()) >= 40:
+                checks += 1
+        deliverables = ms.get("deliverables") or []
+        if isinstance(deliverables, list) and len(deliverables) >= 2:
+            checks += 1
+        resources = ms.get("resources") or []
+        if isinstance(resources, list) and any(_is_valid_non_placeholder_url(str(r.get("url") or "")) for r in resources if isinstance(r, dict)):
+            checks += 1
+        scored += checks
+
+    max_score = max(1, len(milestones) * 5)
+    return int(round((scored / max_score) * 100))
+
+
+def compute_sow_quality_score(sow: dict[str, Any], findings: list[dict[str, str]] | None = None) -> dict[str, Any]:
+    issues = findings if findings is not None else validate_sow_payload(sow)
+    structure = evaluate_sow_structure(sow)
+    milestone_specificity = _milestone_specificity_score(sow)
+    penalties = min(80, len(issues) * 8)
+    content_score = max(0, min(100, 100 - penalties))
+    score = int(round((0.6 * content_score) + (0.25 * int(structure.get("structure_score") or 0)) + (0.15 * milestone_specificity)))
+    return {
+        "score": score,
+        "threshold_passed": score >= 70,
+        "finding_count": len(issues),
+        "structure_score": int(structure.get("structure_score") or 0),
+        "milestone_specificity_score": milestone_specificity,
+        "missing_sections": structure.get("missing_sections") or [],
+        "section_order_valid": bool(structure.get("order_valid")),
+    }
+
+
+def build_quality_diagnostics(quality: dict[str, Any], findings: list[dict[str, str]], floor_score: int = 80, auto_regenerated: bool = False) -> dict[str, Any]:
+    score = int(quality.get("score") or 0)
+    codes = [str(f.get("code") or "") for f in findings if str(f.get("code") or "")]
+    unique_codes = sorted(set(codes))
+
+    regen_hints_map = {
+        "SECTION_ORDER_INVALID": "Regenerate with exact exemplar section order from REQUIRED_SECTION_FLOW.",
+        "MISSING_SECTION": "Fill all missing top-level sections before finalizing output.",
+        "MILESTONE_EXECUTION_PLAN_MISSING": "Expand milestone execution plans with concrete tasks and acceptance criteria.",
+        "MILESTONE_EXPECTED_DELIVERABLE_MISSING": "Define measurable deliverable quality (tests, docs, demo evidence) per milestone.",
+        "MILESTONE_BUSINESS_WHY_MISSING": "Tie each milestone to a measurable KPI or business outcome.",
+        "MILESTONE_RESOURCES_MISSING": "Add at least one non-placeholder resource URL for each milestone.",
+        "DATA_SOURCE_LINK_INVALID": "Use real public data source links (no placeholders/example.com).",
+        "INGESTION_DOC_LINK_MISSING": "Add ingestion documentation URLs for every data source.",
+        "RESOURCE_LINKS_MISSING": "Populate required/recommended/optional resource plan links.",
+    }
+    targeted_regeneration_hints = [regen_hints_map[c] for c in unique_codes if c in regen_hints_map][:6]
+    if int(quality.get("structure_score") or 0) < 90:
+        targeted_regeneration_hints.append("Regenerate using REQUIRED_SECTION_FLOW headings verbatim and keep top-level order unchanged.")
+    if int(quality.get("milestone_specificity_score") or 0) < 75:
+        targeted_regeneration_hints.append("For each milestone, include 3-5 concrete implementation tasks, a measurable deliverable, and KPI-linked business impact.")
+    if score < int(floor_score):
+        targeted_regeneration_hints.append("Raise depth: include production-ready artifact detail (tests, docs, runbooks, demo evidence) instead of generic phrasing.")
+    targeted_regeneration_hints = list(dict.fromkeys(targeted_regeneration_hints))[:8]
+
+    return {
+        "floor_score": floor_score,
+        "score": score,
+        "below_floor": score < int(floor_score),
+        "auto_regenerated": bool(auto_regenerated),
+        "deficiency_codes": unique_codes,
+        "deficiency_count": len(findings),
+        "top_deficiencies": [mask_secrets_in_text(str(f.get("message") or "")) for f in findings[:5]],
+        "structure_score": int(quality.get("structure_score") or 0),
+        "milestone_specificity_score": int(quality.get("milestone_specificity_score") or 0),
+        "missing_sections": quality.get("missing_sections") or [],
+        "section_order_valid": bool(quality.get("section_order_valid")),
+        "targeted_regeneration_hints": targeted_regeneration_hints,
+        "recommended_regeneration": bool(score < int(floor_score) or len(findings) > 0),
+    }
