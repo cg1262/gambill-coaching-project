@@ -100,8 +100,31 @@ if (-not (Test-Path $venvPython)) {
   }
 }
 
-Write-Host '[API] Installing dependencies...' -ForegroundColor Yellow
-& $venvPython -m pip install -r (Join-Path $apiDir 'requirements.txt') | Out-Host
+function Get-RequirementsHash {
+  param([string]$RequirementsPath)
+  $bytes = [System.IO.File]::ReadAllBytes($RequirementsPath)
+  $sha = [System.Security.Cryptography.SHA256]::Create()
+  $hashBytes = $sha.ComputeHash($bytes)
+  return ([System.BitConverter]::ToString($hashBytes) -replace '-', '').ToLower()
+}
+
+$reqFile = Join-Path $apiDir 'requirements.txt'
+$hashFile = Join-Path $apiDir '.pip-installed-hash'
+$currentHash = Get-RequirementsHash -RequirementsPath $reqFile
+$cachedHash = if (Test-Path $hashFile) { (Get-Content $hashFile -Raw).Trim() } else { '' }
+
+if ($currentHash -eq $cachedHash) {
+  Write-Host '[API] Dependencies up to date (hash match). Skipping pip install.' -ForegroundColor Green
+} else {
+  Write-Host '[API] Installing dependencies (requirements.txt changed)...' -ForegroundColor Yellow
+  & $venvPython -m pip install -r $reqFile | Out-Host
+  if ($LASTEXITCODE -eq 0) {
+    Set-Content -Path $hashFile -Value $currentHash -NoNewline
+    Write-Host '[API] Dependencies installed and hash cached.' -ForegroundColor Green
+  } else {
+    throw '[API] pip install failed'
+  }
+}
 
 Ensure-WebRuntime
 
@@ -115,7 +138,15 @@ function Invoke-CmdChecked {
     [Parameter(Mandatory=$true)][string]$Command,
     [string]$ErrorMessage = 'Command failed'
   )
-  Invoke-Expression $Command | Out-Host
+  # Use & operator to avoid Invoke-Expression injection risk
+  $tokens = $Command -split '\s+', 2
+  $exe = $tokens[0]
+  $argStr = if ($tokens.Length -gt 1) { $tokens[1] } else { '' }
+  if ($argStr) {
+    & $exe ($argStr -split '\s+') | Out-Host
+  } else {
+    & $exe | Out-Host
+  }
   if ($LASTEXITCODE -ne 0) {
     throw "$ErrorMessage (exit=$LASTEXITCODE): $Command"
   }

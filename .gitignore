@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 .venv/
+apps/api/.pip-installed-hash
 
 # Env files
 .env
