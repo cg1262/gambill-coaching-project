@@ -73,15 +73,27 @@ def ensure_interview_ready_package(sow: dict[str, Any]) -> dict[str, Any]:
     package = out.get("interview_ready_package")
     if not isinstance(package, dict):
         package = {}
-    if not package.get("star_bullets") or not isinstance(package.get("star_bullets"), list):
-        built = _build_interview_ready_package(
-            project_title=str(out.get("project_title") or "Project"),
-            story=out.get("project_story") or {},
-            milestones=out.get("milestones") or [],
-            tools=((out.get("solution_architecture") or {}).get("primary_tools") or []),
-        )
-        for k, v in built.items():
-            package.setdefault(k, v)
+
+    built = _build_interview_ready_package(
+        project_title=str(out.get("project_title") or "Project"),
+        story=out.get("project_story") or {},
+        milestones=out.get("milestones") or [],
+        tools=((out.get("solution_architecture") or {}).get("primary_tools") or []),
+    )
+
+    if not isinstance(package.get("star_bullets"), list) or len(package.get("star_bullets") or []) < 4:
+        package["star_bullets"] = built["star_bullets"]
+    if not isinstance(package.get("portfolio_checklist"), list) or len(package.get("portfolio_checklist") or []) < 3:
+        package["portfolio_checklist"] = built["portfolio_checklist"]
+
+    recruiter_mapping = package.get("recruiter_mapping") if isinstance(package.get("recruiter_mapping"), dict) else {}
+    built_mapping = built.get("recruiter_mapping") or {}
+    for key in ["technical_depth", "business_impact", "communication"]:
+        if not isinstance(recruiter_mapping.get(key), list) or len(recruiter_mapping.get(key) or []) == 0:
+            recruiter_mapping[key] = built_mapping.get(key) or []
+    recruiter_mapping.setdefault("tooling_keywords", built_mapping.get("tooling_keywords") or [])
+    package["recruiter_mapping"] = recruiter_mapping
+
     out["interview_ready_package"] = package
     return out
 
@@ -142,6 +154,8 @@ def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
             ingestion_doc_links += 1
         else:
             findings.append({"code": "INGESTION_DOC_LINK_MISSING", "message": f"data_sources[{i}].ingestion_doc_url must be a real link."})
+        if not str(ds.get("ingestion_instructions") or "").strip():
+            findings.append({"code": "INGESTION_INSTRUCTIONS_MISSING", "message": f"data_sources[{i}].ingestion_instructions are required."})
         if not str(ds.get("selection_rationale") or "").strip():
             findings.append({"code": "DATA_SOURCE_RATIONALE_MISSING", "message": f"data_sources[{i}].selection_rationale is required."})
     if concrete_source_links < 1:
@@ -160,6 +174,9 @@ def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
                 findings.append({"code": "MILESTONE_EXPECTED_DELIVERABLE_MISSING", "message": f"milestones[{i}].expected_deliverable is required."})
             if not str(ms.get("business_why") or "").strip():
                 findings.append({"code": "MILESTONE_BUSINESS_WHY_MISSING", "message": f"milestones[{i}].business_why is required."})
+            checks = ms.get("acceptance_checks") or []
+            if not isinstance(checks, list) or len([c for c in checks if str(c).strip()]) < 2:
+                findings.append({"code": "MILESTONE_ACCEPTANCE_CHECKS_MISSING", "message": f"milestones[{i}].acceptance_checks must include at least 2 concrete checks."})
             ms_resources = ms.get("resources") or []
             if not isinstance(ms_resources, list) or len(ms_resources) == 0:
                 findings.append({"code": "MILESTONE_RESOURCES_MISSING", "message": f"milestones[{i}] must include resources."})
@@ -201,6 +218,27 @@ def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
     return findings
 
 
+def _style_anchor_alignment_score(sow: dict[str, Any]) -> int:
+    story = sow.get("project_story") or {}
+    charter = (sow.get("project_charter") or {}).get("sections") or {}
+    technical_arch = charter.get("technical_architecture") or {}
+    implementation_plan = charter.get("implementation_plan") or {}
+
+    score = 0
+    if str((charter.get("executive_summary") or {}).get("current_state") or "").strip():
+        score += 20
+    if str((charter.get("executive_summary") or {}).get("future_state") or "").strip():
+        score += 20
+    story_text = " ".join(str(story.get(k) or "") for k in ["executive_summary", "challenge", "approach", "impact_story"]).lower()
+    if any(token in story_text for token in ["kpi", "%", "minutes", "sla", "uptime", "cost", "revenue"]):
+        score += 20
+    if len(technical_arch.get("data_sources") or []) >= 2:
+        score += 20
+    if len((implementation_plan.get("milestones") or [])) >= 2:
+        score += 20
+    return max(0, min(100, score))
+
+
 def _milestone_specificity_score(sow: dict[str, Any]) -> int:
     milestones = sow.get("milestones") or []
     if not isinstance(milestones, list) or len(milestones) == 0:
@@ -232,7 +270,8 @@ def compute_sow_quality_score(sow: dict[str, Any], findings: list[dict[str, str]
     milestone_specificity = _milestone_specificity_score(sow)
     penalties = min(80, len(issues) * 8)
     content_score = max(0, min(100, 100 - penalties))
-    score = int(round((0.6 * content_score) + (0.25 * int(structure.get("structure_score") or 0)) + (0.15 * milestone_specificity)))
+    style_alignment_score = _style_anchor_alignment_score(sow)
+    score = int(round((0.5 * content_score) + (0.2 * int(structure.get("structure_score") or 0)) + (0.15 * milestone_specificity) + (0.15 * style_alignment_score)))
     return {
         "score": score,
         "threshold_passed": score >= 70,
@@ -241,6 +280,7 @@ def compute_sow_quality_score(sow: dict[str, Any], findings: list[dict[str, str]
         "milestone_specificity_score": milestone_specificity,
         "missing_sections": structure.get("missing_sections") or [],
         "section_order_valid": bool(structure.get("order_valid")),
+        "style_alignment_score": style_alignment_score,
     }
 
 
@@ -259,12 +299,16 @@ def build_quality_diagnostics(quality: dict[str, Any], findings: list[dict[str, 
         "DATA_SOURCE_LINK_INVALID": "Use real public data source links (no placeholders/example.com).",
         "INGESTION_DOC_LINK_MISSING": "Add ingestion documentation URLs for every data source.",
         "RESOURCE_LINKS_MISSING": "Populate required/recommended/optional resource plan links.",
+        "INGESTION_INSTRUCTIONS_MISSING": "Add explicit ingestion instructions (how/where/frequency) for each data source.",
+        "MILESTONE_ACCEPTANCE_CHECKS_MISSING": "Define at least 2 concrete acceptance checks for every milestone.",
     }
     targeted_regeneration_hints = [regen_hints_map[c] for c in unique_codes if c in regen_hints_map][:6]
     if int(quality.get("structure_score") or 0) < 90:
         targeted_regeneration_hints.append("Regenerate using REQUIRED_SECTION_FLOW headings verbatim and keep top-level order unchanged.")
     if int(quality.get("milestone_specificity_score") or 0) < 75:
         targeted_regeneration_hints.append("For each milestone, include 3-5 concrete implementation tasks, a measurable deliverable, and KPI-linked business impact.")
+    if int(quality.get("style_alignment_score") or 0) < 75:
+        targeted_regeneration_hints.append("Match GlobalMart/VoltStream charter tone: quantified outcomes, current->future state framing, and risk-aware implementation detail.")
     if score < int(floor_score):
         targeted_regeneration_hints.append("Raise depth: include production-ready artifact detail (tests, docs, runbooks, demo evidence) instead of generic phrasing.")
     targeted_regeneration_hints = list(dict.fromkeys(targeted_regeneration_hints))[:8]
@@ -281,6 +325,7 @@ def build_quality_diagnostics(quality: dict[str, Any], findings: list[dict[str, 
         "milestone_specificity_score": int(quality.get("milestone_specificity_score") or 0),
         "missing_sections": quality.get("missing_sections") or [],
         "section_order_valid": bool(quality.get("section_order_valid")),
+        "style_alignment_score": int(quality.get("style_alignment_score") or 0),
         "targeted_regeneration_hints": targeted_regeneration_hints,
         "recommended_regeneration": bool(score < int(floor_score) or len(findings) > 0),
     }

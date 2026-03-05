@@ -112,6 +112,7 @@ class SowMilestone(BaseModel):
     execution_plan: str = Field(default="", validation_alias=AliasChoices("execution_plan", "executionPlan"))
     expected_deliverable: str = Field(default="", validation_alias=AliasChoices("expected_deliverable", "expectedDeliverable"))
     business_why: str = Field(default="", validation_alias=AliasChoices("business_why", "businessWhy"))
+    acceptance_checks: list[str] = Field(default_factory=list, validation_alias=AliasChoices("acceptance_checks", "acceptanceChecks"))
 
 
 class CoachingSowDraft(BaseModel):

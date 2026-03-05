@@ -13,6 +13,7 @@ from .constants import (
     RESUME_TOOL_KEYWORDS,
     RESUME_DOMAIN_KEYWORDS,
     RESUME_PROJECT_KEYWORDS,
+    STYLE_ANCHORS,
 )
 from .sow_security import sanitize_generated_sow, utc_now_iso
 from .intake import fetch_job_text, extract_job_signals, extract_resume_signals
@@ -56,4 +57,5 @@ __all__ = [
     "RESUME_TOOL_KEYWORDS",
     "RESUME_DOMAIN_KEYWORDS",
     "RESUME_PROJECT_KEYWORDS",
+    "STYLE_ANCHORS",
 ]

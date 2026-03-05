@@ -41,6 +41,7 @@ def auto_revise_sow_once(sow: dict[str, Any], findings: list[dict[str, str]]) ->
                 "url": "https://www.bls.gov/data/",
                 "ingestion_doc_url": "https://www.bls.gov/developers/home.htm",
                 "selection_rationale": "Public API-backed labor data supports robust ingestion and KPI storytelling without private data dependencies.",
+                "ingestion_instructions": "Use the BLS API v2 endpoint in daily batch mode, land raw JSON to bronze, and persist request metadata for replay.",
             }
         ]
 
@@ -63,6 +64,11 @@ def auto_revise_sow_once(sow: dict[str, Any], findings: list[dict[str, str]]) ->
             ms["business_why"] = "Milestone output should improve delivery speed, trust, or measurable business value."
         if not (ms.get("resources") or []):
             ms["resources"] = [{"title": "Project delivery best practices", "url": "https://www.pmi.org/learning/library"}]
+        if not (ms.get("acceptance_checks") or []):
+            ms["acceptance_checks"] = [
+                "Demo evidence recorded and linked in README",
+                "Coach validates milestone quality against completion criteria",
+            ]
 
     out.setdefault("roi_dashboard_requirements", {})
     out["roi_dashboard_requirements"].setdefault("required_dimensions", ["time", "business_unit"])

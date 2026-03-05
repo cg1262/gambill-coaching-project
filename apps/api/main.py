@@ -2515,6 +2515,7 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, request: Request, ses
     auto_revised = False
     retried_after_validation = False
     auto_regenerated_for_quality_floor = False
+    hard_quality_gate_triggered = False
     if first_findings:
         sow = auto_revise_sow_once(sow, first_findings)
         auto_revised = True
@@ -2537,6 +2538,24 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, request: Request, ses
         quality = compute_sow_quality_score(strict_sow, final_findings)
         auto_regenerated_for_quality_floor = True
         retried_after_validation = True
+
+    # hard quality gate: never ship low-quality output to client payload
+    if final_findings or int(quality.get("score") or 0) < quality_floor_score:
+        hard_quality_gate_triggered = True
+        strict_sow = auto_revise_sow_once(build_sow_skeleton(
+            intake={
+                "applicant_name": intake.get("applicant_name"),
+                "preferences": intake.get("preferences_json") or {},
+            },
+            parsed_jobs=parsed_jobs,
+        ), final_findings)
+        strict_sow = CoachingSowDraft.model_validate(ensure_interview_ready_package(strict_sow)).model_dump(mode="json", by_alias=True)
+        strict_sow, hard_gate_sanitize = sanitize_generated_sow(strict_sow)
+        strict_sow = ensure_interview_ready_package(strict_sow)
+        sanitize_findings = [*sanitize_findings, *hard_gate_sanitize]
+        final_findings = validate_sow_payload(strict_sow)
+        quality = compute_sow_quality_score(strict_sow, final_findings)
+        auto_regenerated_for_quality_floor = True
 
     quality_diagnostics = build_quality_diagnostics(
         quality=quality,
@@ -2605,6 +2624,8 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, request: Request, ses
                 "used_llm_provider": generation_meta.get("provider") == "openai-compatible",
                 "fallback_used": not bool(llm_result.get("ok")),
                 "auto_regenerated_for_quality_floor": auto_regenerated_for_quality_floor,
+            "hard_quality_gate_triggered": hard_quality_gate_triggered,
+                "hard_quality_gate_triggered": hard_quality_gate_triggered,
             },
             "quality": {
                 **quality,
@@ -2665,6 +2686,7 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, request: Request, ses
             "fallback_used": not bool(llm_result.get("ok")),
             "retried_after_validation": retried_after_validation,
             "auto_regenerated_for_quality_floor": auto_regenerated_for_quality_floor,
+            "hard_quality_gate_triggered": hard_quality_gate_triggered,
         },
         "quality": {
             **quality,

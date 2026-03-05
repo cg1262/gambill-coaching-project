@@ -96,3 +96,17 @@ DATA_SOURCE_CANDIDATES: list[dict[str, Any]] = [
         "selection_rationale": "Good source for reproducible city analytics projects with clear ingestion endpoints and metadata.",
     },
 ]
+
+
+STYLE_ANCHORS = {
+    "globalmart": {
+        "name": "GlobalMart Retail Intelligence Pipeline",
+        "tone_cues": ["executive-ready", "decision-grade", "delivery accountability"],
+        "required_signals": ["current_state", "future_state", "quantified KPI targets", "milestone acceptance checks"],
+    },
+    "voltstream": {
+        "name": "VoltStream EV Grid Resilience",
+        "tone_cues": ["systems thinking", "risk-aware", "operationally realistic"],
+        "required_signals": ["realistic fictitious business narrative", "public datasource URLs", "explicit ingestion instructions"],
+    },
+}

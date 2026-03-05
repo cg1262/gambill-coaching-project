@@ -12,6 +12,7 @@ from .constants import (
     REQUIRED_SECTION_FLOW,
     CHARTER_REQUIRED_SECTION_FLOW,
     DATA_SOURCE_CANDIDATES,
+    STYLE_ANCHORS,
 )
 from .sow_validation import evaluate_sow_structure, _build_interview_ready_package
 
@@ -68,6 +69,7 @@ def _select_data_sources(intake: dict[str, Any], parsed_jobs: list[dict[str, Any
                 "url": str(candidate.get("url") or ""),
                 "ingestion_doc_url": str(candidate.get("ingestion_doc_url") or ""),
                 "selection_rationale": str(candidate.get("selection_rationale") or "Selected for relevance to target project outcomes."),
+                "ingestion_instructions": "Use documented API/file endpoint, land raw extract to bronze with run metadata, then apply conformance tests in silver before publishing gold KPIs.",
             }
         )
     return chosen
@@ -99,6 +101,7 @@ def generate_sow_with_llm(
             "self_assessment_text": str(intake.get("self_assessment_text") or "")[:4000],
         },
         "parsed_jobs": parsed_jobs[:8],
+        "style_anchors": STYLE_ANCHORS,
         "required_contract": {
             "top_level_required": list(REQUIRED_SECTION_FLOW),
             "top_level_order_required": list(REQUIRED_SECTION_FLOW),
@@ -113,11 +116,11 @@ def generate_sow_with_llm(
                 "mentoring_cta -> optional personalized recommendation language",
             ],
             "business_outcome_required": ["problem_statement", "target_metrics", "domain_focus", "data_sources"],
-            "data_source_shape": {"name": "string", "url": "https://real-link", "ingestion_doc_url": "https://real-doc-link"},
+            "data_source_shape": {"name": "string", "url": "https://real-link", "ingestion_doc_url": "https://real-doc-link", "ingestion_instructions": "explicit step-by-step instructions"},
             "milestone_shape": {
                 "name": "string", "duration_weeks": "int>=1", "deliverables": ["string"],
                 "execution_plan": "string", "expected_deliverable": "string", "business_why": "string",
-                "milestone_tags": ["string"], "resources": [{"title": "string", "url": "https://real-link"}],
+                "milestone_tags": ["string"], "resources": [{"title": "string", "url": "https://real-link"}], "acceptance_checks": ["string"],
             },
             "project_story_required": ["executive_summary", "challenge", "approach", "impact_story"],
             "roi_required": ["required_dimensions", "required_measures"],
@@ -125,8 +128,8 @@ def generate_sow_with_llm(
             "project_charter_required": {
                 "section_order": list(CHARTER_REQUIRED_SECTION_FLOW),
                 "executive_summary_fields": ["current_state", "future_state"],
-                "technical_architecture_requires": ["data_sources with url + ingestion_doc_url"],
-                "implementation_plan_requires": ["milestones with expectations + completion_criteria"],
+                "technical_architecture_requires": ["data_sources with url + ingestion_doc_url + ingestion_instructions"],
+                "implementation_plan_requires": ["milestones with expectations + completion_criteria + acceptance checks"],
             },
             "hard_rules": [
                 "Return JSON only, no markdown",
@@ -137,8 +140,10 @@ def generate_sow_with_llm(
                 "At least 3 milestones",
                 "Each milestone must include execution_plan, expected_deliverable, and business_why",
                 "Each milestone must include at least one resource link",
+                "Each milestone must include at least two acceptance_checks",
                 "Include at least one concrete public data source URL",
                 "Include at least one ingestion documentation URL",
+                "Each data source must include explicit ingestion_instructions",
                 "Every data source must include ingestion_doc_url",
                 "project_charter.section_order must match project_charter_required.section_order",
             ],
@@ -151,7 +156,7 @@ def generate_sow_with_llm(
         "messages": [
             {
                 "role": "system",
-                "content": "You are a senior data engineering consulting partner. Produce production-grade SOW JSON following the required contract exactly. The top-level section order must mirror the exemplar flow exactly, while all narrative content remains personalized to the candidate context. For each milestone, provide concrete execution details (what to do), explicit expected deliverable quality, and business rationale that ties work to measurable outcomes.",
+                "content": "You are a senior data engineering consulting partner. Produce production-grade SOW JSON following the required contract exactly. Style-align to two anchors: GlobalMart Retail Intelligence Pipeline and VoltStream EV Grid Resilience. Match their executive charter tone, section depth, quantified KPI orientation, and implementation realism while keeping all details personalized and fictitious. For each milestone, provide concrete execution details, measurable deliverable quality, explicit acceptance checks, and business rationale tied to outcomes.",
             },
             {"role": "user", "content": json.dumps(prompt_payload)},
         ],
@@ -280,6 +285,7 @@ def build_sow_skeleton(
                 "business_why": "Aligning scope and KPI definitions early prevents rework and accelerates measurable ROI delivery.",
                 "milestone_tags": ["discovery", "architecture", "roi"],
                 "resources": [{"title": "Kimball Dimensional Modeling", "url": "https://www.kimballgroup.com/data-warehouse-business-intelligence-resources/"}],
+                "acceptance_checks": ["Charter signed by sponsor", "KPI dictionary reviewed with coach"],
             },
             {
                 "name": "Bronze/Silver implementation",
@@ -290,6 +296,7 @@ def build_sow_skeleton(
                 "business_why": "Reliable ingestion and conformance reduce reporting defects and improve trust in downstream analytics.",
                 "milestone_tags": ["bronze", "silver", "pipeline"],
                 "resources": [{"title": "Delta Lake Medallion Architecture", "url": "https://docs.databricks.com/en/lakehouse/medallion.html"}],
+                "acceptance_checks": ["Pipeline test suite passes in CI", "DQ threshold report attached"],
             },
             {
                 "name": "Gold + ROI dashboard",
@@ -300,6 +307,7 @@ def build_sow_skeleton(
                 "business_why": "Clear KPI visibility enables faster decisions and proves business impact of the data platform investment.",
                 "milestone_tags": ["gold", "roi", "bi"],
                 "resources": [{"title": "Power BI Design Guidance", "url": "https://learn.microsoft.com/en-us/power-bi/guidance/"}],
+                "acceptance_checks": ["Metric definitions traced to source tables", "Stakeholder review walkthrough recorded"],
             },
             {
                 "name": "Final review + portfolio assets",
@@ -310,6 +318,7 @@ def build_sow_skeleton(
                 "business_why": "Strong communication artifacts increase hiring signal and stakeholder confidence in project value.",
                 "milestone_tags": ["communication", "career"],
                 "resources": [{"title": "GitHub Portfolio Guide", "url": "https://docs.github.com/en/get-started/showcase-your-work/about-your-profile"}],
+                "acceptance_checks": ["Demo script dry-run completed", "Retrospective includes quantified outcomes"],
             },
         ],
         "roi_dashboard_requirements": {
