@@ -134,6 +134,24 @@ function Stop-WebNodeProcesses {
   } catch {}
 }
 
+function Repair-WebNodeModulesLock {
+  param([string]$WebPath)
+  $targets = @(
+    (Join-Path $WebPath 'node_modules\next\node_modules\@next\swc-win32-x64-msvc\next-swc.win32-x64-msvc.node'),
+    (Join-Path $WebPath 'node_modules\next\node_modules\@next\swc-win32-x64-msvc')
+  )
+
+  foreach($t in $targets){
+    try {
+      if (Test-Path $t) {
+        attrib -R $t 2>$null | Out-Null
+        Remove-Item -LiteralPath $t -Force -Recurse -ErrorAction SilentlyContinue
+        Write-Host "[WEB] Removed stale lock target: $t" -ForegroundColor Yellow
+      }
+    } catch {}
+  }
+}
+
 Write-Host '[WEB] Installing npm dependencies (deterministic npm ci)...' -ForegroundColor Yellow
 Push-Location $webDir
 if (-not (Test-Path (Join-Path $webDir 'package-lock.json'))) {
@@ -142,18 +160,19 @@ if (-not (Test-Path (Join-Path $webDir 'package-lock.json'))) {
 }
 
 $installed = $false
-for ($i=1; $i -le 2 -and -not $installed; $i++) {
+for ($i=1; $i -le 3 -and -not $installed; $i++) {
   try {
     Invoke-CmdChecked "npm ci --no-audit --no-fund" '[WEB] npm ci failed'
     $installed = $true
   } catch {
-    if ($i -eq 1) {
-      Write-Host '[WEB] npm ci failed. Attempting lock recovery (stale node process cleanup + retry)...' -ForegroundColor Yellow
+    if ($i -lt 3) {
+      Write-Host "[WEB] npm ci attempt $i failed. Attempting lock recovery before retry..." -ForegroundColor Yellow
       Stop-WebNodeProcesses -RepoPath $root
-      Start-Sleep -Seconds 2
+      Repair-WebNodeModulesLock -WebPath $webDir
+      Start-Sleep -Seconds 3
     } else {
       Pop-Location
-      throw "[WEB] npm ci failed after retry. If EPERM persists, close editors/terminals using apps/web and rerun as Administrator. Details: $($_.Exception.Message)"
+      throw "[WEB] npm ci failed after 3 attempts. If EPERM persists, temporarily exclude this repo path from AV real-time scan and rerun PowerShell as Administrator. Details: $($_.Exception.Message)"
     }
   }
 }
