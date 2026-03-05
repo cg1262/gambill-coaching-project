@@ -15,6 +15,10 @@ class Session:
     expires_at: datetime
 
 
+# TODO: _SESSIONS is in-memory only. With WEB_CONCURRENCY > 1 (multiple uvicorn
+# workers), each worker maintains a separate session store — tokens issued by one
+# worker will not be recognized by others. A Redis or DB session store is required
+# for production multi-worker deployments.
 _SESSIONS: dict[str, Session] = {}
 _MAX_SESSIONS = 5000
 
@@ -86,10 +90,8 @@ def assert_role(session: Session, allowed_roles: set[str]) -> None:
         raise HTTPException(status_code=403, detail="Insufficient role")
 
 
-def refresh_token(authorization: str | None = Header(default=None), ttl_hours: int = 12) -> dict[str, Any]:
-    token = parse_bearer_token(authorization)
-    if not token:
-        raise HTTPException(status_code=401, detail="Missing bearer token")
+def _refresh_token_logic(token: str, ttl_hours: int = 12) -> dict[str, Any]:
+    """Pure logic: refresh a valid session token. No FastAPI DI."""
     session = validate_token(token)
     if not session:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
@@ -98,12 +100,24 @@ def refresh_token(authorization: str | None = Header(default=None), ttl_hours: i
     return {"ok": True, "token": new_token, "username": session.username, "role": session.role}
 
 
+def refresh_token(authorization: str | None = Header(default=None), ttl_hours: int = 12) -> dict[str, Any]:
+    token = parse_bearer_token(authorization)
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+    return _refresh_token_logic(token, ttl_hours=ttl_hours)
+
+
+def _revoke_token_logic(token: str) -> dict[str, Any]:
+    """Pure logic: revoke a session token. No FastAPI DI."""
+    _SESSIONS.pop(token, None)
+    return {"ok": True}
+
+
 def revoke_token(authorization: str | None = Header(default=None)) -> dict[str, Any]:
     token = parse_bearer_token(authorization)
     if not token:
         raise HTTPException(status_code=401, detail="Missing bearer token")
-    _SESSIONS.pop(token, None)
-    return {"ok": True}
+    return _revoke_token_logic(token)
 
 
 def revoke_user_sessions(username: str) -> int:
@@ -118,11 +132,16 @@ def session_stats() -> dict[str, Any]:
     return {"active_sessions": len(_SESSIONS), "max_sessions": _MAX_SESSIONS}
 
 
-def whoami(authorization: str | None = Header(default=None)) -> dict[str, Any]:
-    token = parse_bearer_token(authorization)
+def _whoami_logic(token: str | None) -> dict[str, Any]:
+    """Pure logic: return session info for a token. No FastAPI DI."""
     session = validate_token(token) if token else None
     return {
         "authenticated": bool(session),
         "username": session.username if session else None,
         "role": session.role if session else None,
     }
+
+
+def whoami(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    token = parse_bearer_token(authorization)
+    return _whoami_logic(token)

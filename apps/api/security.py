@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import hashlib
+import os
 import re
 from typing import Any
 
@@ -22,7 +23,6 @@ _SECRET_PATTERNS = [
     re.compile(r"(?i)(password\s*[=:]\s*)([^\s,;\]\}]+)"),
     re.compile(r"(?i)(client_secret\s*[=:]\s*)([^\s,;\]\}]+)"),
     re.compile(r"(?i)(api[_-]?key\s*[=:]\s*)([^\s,;\]\}]+)"),
-    re.compile(r"(?i)(signature\s*[=:]\s*)([^\s,;\]\}]+)"),
     re.compile(r"(?i)(webhook_signature\s*[=:]\s*)([^\s,;\]\}]+)"),
 ]
 
@@ -80,7 +80,12 @@ def build_safe_resume_path(base_dir: str | Path, workspace_id: str, filename: st
     safe_file = Path(filename or "resume").name
     target = (base / safe_workspace / safe_file).resolve()
 
-    if base not in target.parents and target != base:
+    try:
+        common = os.path.commonpath([str(base), str(target)])
+        if os.path.normcase(common) != os.path.normcase(str(base)):
+            raise FileValidationError("Unsafe file path detected")
+    except ValueError:
+        # commonpath raises ValueError when paths span different drives (Windows)
         raise FileValidationError("Unsafe file path detected")
 
     return target

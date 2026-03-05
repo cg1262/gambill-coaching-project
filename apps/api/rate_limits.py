@@ -76,6 +76,12 @@ class RateLimitStore:
                     raise RateLimitExceeded(policy=policy.name, rule=rule.name, retry_after_seconds=retry_after)
 
 
+# TODO: RATE_LIMIT_POLICIES and RATE_LIMIT_STORE are in-memory only.
+# With WEB_CONCURRENCY > 1 (multiple uvicorn workers), each worker maintains
+# a separate copy — rate limit counts are NOT shared across workers.
+# A Redis or DB backend is required for production multi-worker deployments.
+_POLICIES_LOCK = threading.RLock()
+
 RATE_LIMIT_POLICIES_DEFAULT: dict[str, RateLimitPolicy] = {
     "auth": RateLimitPolicy(
         name="auth",
@@ -112,6 +118,14 @@ RATE_LIMIT_POLICIES_DEFAULT: dict[str, RateLimitPolicy] = {
 }
 
 
+def _get_rule(policy: RateLimitPolicy, name: str) -> RateLimitRule:
+    """Look up a rule by name. Avoids fragile positional indexing."""
+    for rule in policy.rules:
+        if rule.name == name:
+            return rule
+    raise ValueError(f"Rule '{name}' not found in policy '{policy.name}'")
+
+
 def _env_int(name: str, default: int) -> int:
     raw = str(os.getenv(name) or "").strip()
     if not raw:
@@ -128,20 +142,29 @@ def _apply_env_overrides(base: dict[str, RateLimitPolicy]) -> dict[str, RateLimi
         for name, policy in base.items()
     }
 
-    out["auth"].rules[0].limit = _env_int("RATE_LIMIT_AUTH_LIMIT_PER_MIN", out["auth"].rules[0].limit)
-    out["auth"].rules[0].burst = _env_int("RATE_LIMIT_AUTH_BURST", int(out["auth"].rules[0].burst or out["auth"].rules[0].limit))
+    auth_ip = _get_rule(out["auth"], "auth_ip")
+    auth_ip.limit = _env_int("RATE_LIMIT_AUTH_LIMIT_PER_MIN", auth_ip.limit)
+    auth_ip.burst = _env_int("RATE_LIMIT_AUTH_BURST", int(auth_ip.burst or auth_ip.limit))
 
-    out["generation"].rules[0].limit = _env_int("RATE_LIMIT_GENERATION_USER_LIMIT_PER_10M", out["generation"].rules[0].limit)
-    out["generation"].rules[1].limit = _env_int("RATE_LIMIT_GENERATION_WORKSPACE_LIMIT_PER_HOUR", out["generation"].rules[1].limit)
+    gen_user = _get_rule(out["generation"], "generation_user_10m")
+    gen_user.limit = _env_int("RATE_LIMIT_GENERATION_USER_LIMIT_PER_10M", gen_user.limit)
 
-    out["review_actions"].rules[0].limit = _env_int("RATE_LIMIT_REVIEW_ACTIONS_USER_LIMIT_PER_MIN", out["review_actions"].rules[0].limit)
+    gen_ws = _get_rule(out["generation"], "generation_workspace_1h")
+    gen_ws.limit = _env_int("RATE_LIMIT_GENERATION_WORKSPACE_LIMIT_PER_HOUR", gen_ws.limit)
 
-    out["exports"].rules[0].limit = _env_int("RATE_LIMIT_EXPORTS_USER_LIMIT_PER_HOUR", out["exports"].rules[0].limit)
+    review_user = _get_rule(out["review_actions"], "review_user_1m")
+    review_user.limit = _env_int("RATE_LIMIT_REVIEW_ACTIONS_USER_LIMIT_PER_MIN", review_user.limit)
 
-    out["subscription"].rules[0].limit = _env_int("RATE_LIMIT_SUBSCRIPTION_USER_LIMIT_PER_MIN", out["subscription"].rules[0].limit)
-    out["subscription"].rules[0].burst = _env_int("RATE_LIMIT_SUBSCRIPTION_USER_BURST", int(out["subscription"].rules[0].burst or out["subscription"].rules[0].limit))
-    out["subscription"].rules[1].limit = _env_int("RATE_LIMIT_SUBSCRIPTION_IP_LIMIT_PER_MIN", out["subscription"].rules[1].limit)
-    out["subscription"].rules[1].burst = _env_int("RATE_LIMIT_SUBSCRIPTION_IP_BURST", int(out["subscription"].rules[1].burst or out["subscription"].rules[1].limit))
+    exports_user = _get_rule(out["exports"], "exports_user_1h")
+    exports_user.limit = _env_int("RATE_LIMIT_EXPORTS_USER_LIMIT_PER_HOUR", exports_user.limit)
+
+    sub_user = _get_rule(out["subscription"], "subscription_user_1m")
+    sub_user.limit = _env_int("RATE_LIMIT_SUBSCRIPTION_USER_LIMIT_PER_MIN", sub_user.limit)
+    sub_user.burst = _env_int("RATE_LIMIT_SUBSCRIPTION_USER_BURST", int(sub_user.burst or sub_user.limit))
+
+    sub_ip = _get_rule(out["subscription"], "subscription_ip_1m")
+    sub_ip.limit = _env_int("RATE_LIMIT_SUBSCRIPTION_IP_LIMIT_PER_MIN", sub_ip.limit)
+    sub_ip.burst = _env_int("RATE_LIMIT_SUBSCRIPTION_IP_BURST", int(sub_ip.burst or sub_ip.limit))
 
     return out
 
@@ -151,18 +174,19 @@ RATE_LIMIT_STORE = RateLimitStore()
 
 
 def policy_snapshot() -> dict[str, Any]:
-    return {
-        "backend": "in_memory_token_bucket",
-        "admin_editable": True,
-        "db_ready_shape": True,
-        "policies": {
-            name: {
-                "name": policy.name,
-                "rules": [asdict(rule) for rule in policy.rules],
-            }
-            for name, policy in RATE_LIMIT_POLICIES.items()
-        },
-    }
+    with _POLICIES_LOCK:
+        return {
+            "backend": "in_memory_token_bucket",
+            "admin_editable": True,
+            "db_ready_shape": True,
+            "policies": {
+                name: {
+                    "name": policy.name,
+                    "rules": [asdict(rule) for rule in policy.rules],
+                }
+                for name, policy in RATE_LIMIT_POLICIES.items()
+            },
+        }
 
 
 def policy_update(payload: dict[str, Any]) -> dict[str, Any]:
@@ -170,39 +194,41 @@ def policy_update(payload: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(policies, dict):
         return policy_snapshot()
 
-    for policy_name, entry in policies.items():
-        if policy_name not in RATE_LIMIT_POLICIES or not isinstance(entry, dict):
-            continue
-        rules = entry.get("rules")
-        if not isinstance(rules, list):
-            continue
-        current_policy = RATE_LIMIT_POLICIES[policy_name]
-        for idx, rule in enumerate(rules):
-            if idx >= len(current_policy.rules) or not isinstance(rule, dict):
+    with _POLICIES_LOCK:
+        for policy_name, entry in policies.items():
+            if policy_name not in RATE_LIMIT_POLICIES or not isinstance(entry, dict):
                 continue
-            if "limit" in rule:
-                try:
-                    current_policy.rules[idx].limit = max(1, int(rule["limit"]))
-                except Exception:
-                    pass
-            if "window_seconds" in rule:
-                try:
-                    current_policy.rules[idx].window_seconds = max(1, int(rule["window_seconds"]))
-                except Exception:
-                    pass
-            if "burst" in rule:
-                try:
-                    burst_raw = rule["burst"]
-                    current_policy.rules[idx].burst = None if burst_raw is None else max(1, int(burst_raw))
-                except Exception:
-                    pass
+            rules = entry.get("rules")
+            if not isinstance(rules, list):
+                continue
+            current_policy = RATE_LIMIT_POLICIES[policy_name]
+            for idx, rule in enumerate(rules):
+                if idx >= len(current_policy.rules) or not isinstance(rule, dict):
+                    continue
+                if "limit" in rule:
+                    try:
+                        current_policy.rules[idx].limit = max(1, int(rule["limit"]))
+                    except Exception:
+                        pass
+                if "window_seconds" in rule:
+                    try:
+                        current_policy.rules[idx].window_seconds = max(1, int(rule["window_seconds"]))
+                    except Exception:
+                        pass
+                if "burst" in rule:
+                    try:
+                        burst_raw = rule["burst"]
+                        current_policy.rules[idx].burst = None if burst_raw is None else max(1, int(burst_raw))
+                    except Exception:
+                        pass
 
     RATE_LIMIT_STORE.reset()
     return policy_snapshot()
 
 
 def enforce_rate_limit(policy_name: str, *, ip: str | None = None, user: str | None = None, workspace: str | None = None) -> None:
-    policy = RATE_LIMIT_POLICIES.get(policy_name)
+    with _POLICIES_LOCK:
+        policy = RATE_LIMIT_POLICIES.get(policy_name)
     if policy is None:
         return
     key_values = {
