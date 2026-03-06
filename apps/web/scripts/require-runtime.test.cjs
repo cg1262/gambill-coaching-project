@@ -47,3 +47,16 @@ test("failure message does not leak secret-like runtime strings", () => {
   assert.equal(all.includes("shh-secret"), false);
   assert.match(all, /Detected: Node v20\.11\.1, npm 10\.8\.2\?token=\*\*\*/);
 });
+
+test("failure message stays secret-safe when npm version cannot be parsed", () => {
+  const runtime = detectRuntime(
+    { npm_config_user_agent: "npm/not-semver?token=raw-secret", npm_version: "11.bad?api_key=abc" },
+    "v24.13.1",
+  );
+
+  const lines = createFailureMessage(runtime, "20.11.1");
+  const all = lines.join("\n").toLowerCase();
+  assert.equal(all.includes("raw-secret"), false);
+  assert.equal(all.includes("api_key=abc"), false);
+  assert.match(all, /detected: node v24\.13\.1, npm unknown/);
+});

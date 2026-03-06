@@ -3,6 +3,32 @@
 Last Updated: 2026-03-06
 Owner: ERD Program Team
 
+## Checkpoint Update (2026-03-06 - Sprint 13 Security Execution: Runtime Safety + Diagnostics Leakage Regressions)
+
+### Done
+- Executed Sprint 13 security regression pack to revalidate auth/session/rate-limit/webhook controls after backend quality/personalization changes.
+- Expanded diagnostics/personalization leakage regression coverage in `apps/api/tests/test_llm_output_security.py`:
+  - `test_quality_diagnostics_actionable_reasons_mask_personalization_and_secret_tokens`
+  - verifies actionable fail reasons keep structured field paths while masking secret-like token payloads.
+- Expanded startup/runtime error safety regression coverage in `apps/web/scripts/require-runtime.test.cjs`:
+  - `failure message stays secret-safe when npm version cannot be parsed`
+  - verifies runtime mismatch diagnostics do not leak raw token-like text when npm metadata is malformed.
+- Revalidated web runtime gate under compliant pinned runtime (`Node 20.11.1`, `npm 10.8.2`) while documenting remaining install/build instability signatures.
+- Updated pilot hardening checklist with Sprint 13 evidence commands and blocker/non-blocker framing.
+
+### Validation
+- `python -m pytest tests/test_auth_contract_security.py tests/test_auth_sessions.py tests/test_security_rate_limit_webhook.py tests/test_rate_limits_and_webhooks.py tests/test_coaching_subscription.py tests/test_llm_output_security.py` (apps/api) → **41 passed, 1 warning**.
+- `python -m pytest tests/test_llm_output_security.py tests/test_coaching_sprint13_backend.py tests/test_auth_sessions.py tests/test_security_rate_limit_webhook.py` (apps/api) → **29 passed, 1 warning**.
+- `python -m py_compile main.py webhook_security.py webhook_alerts.py coaching\sow_validation.py coaching\sow_security.py` (apps/api) → **pass**.
+- `node --test scripts/require-runtime.test.cjs` (apps/web) → **5 passed**.
+- `& "C:\Program Files\Volta\volta.exe" run --node 20.11.1 --npm 10.8.2 npm run runtime:check` (apps/web) → **pass**.
+- `& "C:\Program Files\Volta\volta.exe" run --node 20.11.1 --npm 10.8.2 npm run typecheck` (apps/web) → **fail** (`tsc` missing after local install corruption).
+- `& "C:\Program Files\Volta\volta.exe" run --node 20.11.1 --npm 10.8.2 npm run build` (apps/web) → **fail** (`next` missing after local install corruption).
+
+### Blocker / Non-blocker Decisions
+- **Blocker:** deterministic compliant-runtime web compile/build evidence remains unresolved due local Windows package extraction/install instability (`npm ci` TAR/ENOENT warnings with follow-on missing `tsc`/`next`).
+- **Non-blocker:** API auth/session/rate-limit/webhook integrity controls and diagnostics/output secret-masking controls are regression-backed and passing after Sprint 13 changes.
+
 ## Checkpoint Update (2026-03-06 - Sprint 13 Backend Execution: Golden Snapshots + Personalization + Conversion Drop-off)
 
 ### Done

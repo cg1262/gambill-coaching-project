@@ -412,6 +412,30 @@ def test_quality_diagnostics_top_deficiencies_are_secret_masked():
     assert diagnostics["deficiency_count"] == 2
 
 
+def test_quality_diagnostics_actionable_reasons_mask_personalization_and_secret_tokens():
+    from coaching import build_quality_diagnostics
+
+    findings = [
+        {
+            "code": "PERSONALIZATION_SIGNAL_MISSING",
+            "message": "milestones[0].execution_plan ignored resume signal token=abc123 and api_key=sk-live-secret",
+        }
+    ]
+    diagnostics = build_quality_diagnostics(
+        {"score": 58, "structure_score": 90, "milestone_specificity_score": 72, "style_alignment_score": 68},
+        findings,
+    )
+
+    reasons = diagnostics.get("actionable_fail_reasons") or []
+    assert len(reasons) == 1
+    assert reasons[0].get("field") == "milestones[0].execution_plan"
+
+    serialized = str(diagnostics).lower()
+    assert "abc123" not in serialized
+    assert "sk-live-secret" not in serialized
+    assert "token=***" in serialized
+
+
 def test_default_project_charter_milestones_and_urls_remain_safe_and_secret_free():
     from coaching import build_sow_skeleton, sanitize_generated_sow
 
