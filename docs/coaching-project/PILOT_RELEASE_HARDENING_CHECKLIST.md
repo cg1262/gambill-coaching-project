@@ -4,7 +4,7 @@ Use this as a go/no-go gate before enabling pilot users.
 
 ## Current Gate Status (2026-03-05)
 - **Security pilot gate:** CONDITIONAL GO
-- **Why conditional:** Sprint 11 security execution reconfirmed auth/session denial contract stability, generated-output URL safety, diagnostics secrecy, subscription replay safety, webhook signature/timestamp rejection behavior, and route-level throttling for auth + subscription status/sync/webhook surfaces. New regressions now explicitly guard resume filename/error echo masking and feedback-hint diagnostics masking. Pilot remains conditional on (1) deterministic web build success proof under compliant runtime (`Node 20.11.1`, `npm 10.x`) and (2) production alerting for repeated invalid webhook signatures.
+- **Why conditional:** Sprint 12 security execution revalidated auth/session/rate-limit/webhook controls and added repeated invalid-signature alert triggering for both subscription sync and raw webhook ingestion paths. Remaining blocker is deterministic web compile/build proof on compliant runtime (`Node 20.11.1`, `npm 10.x`) because current host still fails runtime/Windows filesystem stability checks (`typecheck` runtime gate on host toolchain, `npm ci` EPERM under Volta).
 
 ## 1) Auth + Subscription Enforcement
 - [x] Verify all coaching generation routes require authenticated session + allowed role (`admin`/`editor`).
@@ -20,7 +20,7 @@ Use this as a go/no-go gate before enabling pilot users.
 ## 3) Webhook + Provider Integrity
 - [x] Enforce webhook signature verification (Squarespace/Stripe) before mutating subscription state. *(When webhook secret is configured.)*
 - [x] Idempotently handle duplicate provider events (`event_id` replay-safe).
-- [ ] Alert on repeated invalid signature attempts.
+- [x] Alert on repeated invalid signature attempts. *(`_record_invalid_webhook_signature_attempt(...)` now emits `coaching_webhook_invalid_signature_alert` at configurable threshold/window; covered by `test_invalid_signature_alert_emits_after_threshold_sync` + `test_invalid_signature_alert_emits_after_threshold_webhook`.)*
 
 ## 4) Abuse + Reliability Controls
 - [x] Apply route-level rate limits for `/auth/*` and subscription sync/status/webhook endpoints. *(Enforced via `subscription` policy and generic 429 contract regressions.)*
@@ -36,12 +36,13 @@ Use this as a go/no-go gate before enabling pilot users.
 
 ## 6) Test + Release Evidence
 - [x] Run API security regression tests (auth, RBAC, inactive-subscription denial, logging masks, LLM guardrails).
-- [ ] Run compile/build checks for API + web. *(API compile passes; on this host, web `typecheck` is intentionally fail-fast due runtime mismatch (`Node v24.13.1`, `npm 11.8.0`) before build execution. Compliant-runtime green proof is still pending.)*
+- [ ] Run compile/build checks for API + web. *(API compile passes. Web remains blocked pending deterministic runner hygiene: host runtime gate intentionally fails (`Node v24.13.1`, `npm 11.8.0`), and compliant-runtime attempt (`Volta Node 20.11.1/npm 10.8.2`) still hit local filesystem/install instability (`npm ci` EPERM unlink in `node_modules`).)*
 - [ ] Attach test/build output + commit SHA to pilot launch notes.
 
-### Evidence Commands (2026-03-05 Sprint 11 Security Execution)
-- `python -m pytest tests/test_auth_contract_security.py tests/test_llm_output_security.py tests/test_security_sprint2.py tests/test_coaching_security_access.py tests/test_coaching_generation_guardrails.py tests/test_coaching_subscription.py` → **54 passed, 1 warning**
-- `python -m pytest -q tests/test_security_rate_limit_webhook.py tests/test_rate_limits_and_webhooks.py tests/test_coaching_subscription.py` → **14 passed, 1 warning**
-- `python -m py_compile main.py coaching\sow_validation.py coaching\sow_security.py` → **pass**
-- `npm run typecheck` → **expected fail-fast** on runtime mismatch (`Node v24.13.1`, `npm 11.8.0`)
-- `npm audit --omit=dev --json` → **1 high vulnerability (`next`)**; advisories include `GHSA-h25m-26qc-wcjf` and `GHSA-9g9p-9gw9-jx7f`; lockfile reports major upgrade path (`next@16.1.6`) so remediation should be planned as controlled framework upgrade under Node 20.11.1/npm 10.x.
+### Evidence Commands (2026-03-05 Sprint 12 Security Execution)
+- `python -m pytest -q tests/test_auth_contract_security.py tests/test_auth_sessions.py tests/test_security_rate_limit_webhook.py tests/test_rate_limits_and_webhooks.py tests/test_coaching_subscription.py` → **27 passed, 1 warning**
+- `python -m py_compile main.py webhook_security.py webhook_alerts.py coaching\sow_validation.py coaching\sow_security.py` → **pass**
+- `npm run typecheck` → **expected fail-fast** on host runtime mismatch (`Node v24.13.1`, `npm 11.8.0`)
+- `"C:\Program Files\Volta\volta.exe" run --node 20.11.1 --npm 10.8.2 npm run typecheck` → **fail** (`tsc` not found due install corruption / missing local binaries)
+- `"C:\Program Files\Volta\volta.exe" run --node 20.11.1 --npm 10.8.2 npm ci --no-audit --no-fund` → **fail** (`EPERM unlink ... node_modules\csstype\index.js.flow`)
+- `npm audit --omit=dev --json` → **1 high vulnerability (`next`)**; advisories include `GHSA-h25m-26qc-wcjf` and `GHSA-9g9p-9gw9-jx7f`; current lockfile fix path remains major (`next@16.1.6`), tracked in `docs/coaching-project/NEXTJS_VULNERABILITY_REMEDIATION_PLAN.md`.

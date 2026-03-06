@@ -8,6 +8,7 @@ import main
 from auth import Session, get_current_session
 from main import app
 from rate_limits import RATE_LIMIT_POLICIES_DEFAULT, RATE_LIMIT_STORE
+from webhook_alerts import INVALID_WEBHOOK_SIGNATURE_TRACKER
 
 
 def _override_session(role: str = "editor", username: str = "security-tester"):
@@ -67,6 +68,7 @@ def setup_function():
     _reset_policies_to_defaults()
     RATE_LIMIT_STORE.reset()
     app.dependency_overrides = {}
+    INVALID_WEBHOOK_SIGNATURE_TRACKER._attempts.clear()
 
 
 def test_auth_login_rate_limit_returns_generic_payload(monkeypatch):
@@ -289,3 +291,82 @@ def test_no_sensitive_leak_in_webhook_rejection_logs(monkeypatch, caplog):
     assert "whsec_super_secret" not in joined
     assert "signature_value" not in joined
     app.dependency_overrides = {}
+
+
+def test_invalid_signature_alert_emits_after_threshold_sync(monkeypatch):
+    app.dependency_overrides[get_current_session] = _override_session("editor", "coach-admin")
+    monkeypatch.setenv("COACHING_WEBHOOK_SECRET", "whsec_alert_secret")
+    monkeypatch.setenv("WEBHOOK_INVALID_SIG_ALERT_THRESHOLD", "2")
+    monkeypatch.setattr(main, "save_coaching_subscription_event", lambda **kwargs: None)
+    monkeypatch.setattr(main, "upsert_coaching_account_subscription", lambda **kwargs: None)
+    monkeypatch.setattr(main, "get_coaching_subscription_event", lambda event_id: None)
+
+    calls: list[tuple[str, dict]] = []
+
+    def _capture_error(msg, *args, **kwargs):
+        calls.append((msg, kwargs.get("extra") or {}))
+
+    monkeypatch.setattr(main.logger, "error", _capture_error)
+
+    payload = {
+        "workspace_id": "ws-1",
+        "provider": "stripe",
+        "event_type": "customer.subscription.updated",
+        "email": "test@example.com",
+        "plan_tier": "core",
+        "subscription_status": "active",
+        "raw_event": {"id": "evt_alert_sync_1"},
+        "webhook_timestamp": int(time.time()),
+        "webhook_signature": "bad",
+    }
+
+    client = TestClient(app)
+    r1 = client.post("/coaching/subscription/sync", json=payload)
+    r2 = client.post("/coaching/subscription/sync", json={**payload, "raw_event": {"id": "evt_alert_sync_2"}})
+
+    assert r1.status_code == 403
+    assert r2.status_code == 403
+    alerts = [extra for msg, extra in calls if msg == "coaching_webhook_invalid_signature_alert"]
+    assert len(alerts) == 1
+    assert alerts[0].get("route") == "/coaching/subscription/sync"
+    app.dependency_overrides = {}
+
+
+def test_invalid_signature_alert_emits_after_threshold_webhook(monkeypatch):
+    monkeypatch.setenv("COACHING_WEBHOOK_SECRET", "whsec_alert_secret")
+    monkeypatch.setenv("WEBHOOK_INVALID_SIG_ALERT_THRESHOLD", "2")
+
+    calls: list[tuple[str, dict]] = []
+
+    def _capture_error(msg, *args, **kwargs):
+        calls.append((msg, kwargs.get("extra") or {}))
+
+    monkeypatch.setattr(main.logger, "error", _capture_error)
+
+    payload = {
+        "id": "evt_wh_alert_1",
+        "workspace_id": "ws-1",
+        "provider": "squarespace",
+        "event_type": "subscription.updated",
+        "email": "member@example.com",
+        "plan_tier": "core",
+        "subscription_status": "active",
+    }
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    now_ts = int(time.time())
+    bad_headers = {
+        "x-webhook-provider": "squarespace",
+        "x-webhook-timestamp": str(now_ts),
+        "x-webhook-signature": "bad",
+        "content-type": "application/json",
+    }
+
+    client = TestClient(app)
+    r1 = client.post("/coaching/subscription/webhook", content=body, headers=bad_headers)
+    r2 = client.post("/coaching/subscription/webhook", content=body, headers=bad_headers)
+
+    assert r1.status_code == 403
+    assert r2.status_code == 403
+    alerts = [extra for msg, extra in calls if msg == "coaching_webhook_invalid_signature_alert"]
+    assert len(alerts) == 1
+    assert alerts[0].get("route") == "/coaching/subscription/webhook"
