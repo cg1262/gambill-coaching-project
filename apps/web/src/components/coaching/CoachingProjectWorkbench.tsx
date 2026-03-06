@@ -126,6 +126,48 @@ const FEEDBACK_TAG_LABELS: Record<string, string> = {
   execution_risk: "Execution risk",
 };
 
+const QUICK_FEEDBACK_TEMPLATES: Array<{ id: string; label: string; tags: string[]; body: string }> = [
+  {
+    id: "revision-scope",
+    label: "Needs revision — tighten scope",
+    tags: ["scope_clarity", "execution_risk"],
+    body: "Your scope is promising, but it is currently too broad for the target timeline. Reduce to one measurable business KPI, one primary data source path, and one interview-ready milestone artifact per week.",
+  },
+  {
+    id: "revision-architecture",
+    label: "Needs revision — architecture depth",
+    tags: ["architecture_depth", "business_alignment"],
+    body: "Please add deeper architecture rationale: clarify bronze/silver/gold responsibilities, quality checks by layer, and why this path improves business decision confidence.",
+  },
+  {
+    id: "ready-approve",
+    label: "Ready — approve with evidence check",
+    tags: ["storytelling"],
+    body: "Strong revision. Before final send, verify each milestone includes one concrete deliverable, one success metric, and one evidence link for portfolio/interview narration.",
+  },
+];
+
+const REGENERATE_RECIPES: Array<{ id: string; label: string; guidance: string; tags: string[] }> = [
+  {
+    id: "scope-repair",
+    label: "Scope repair",
+    guidance: "Regenerate with narrower scope: enforce one KPI, one domain problem statement, and explicit timeline guardrails.",
+    tags: ["scope_clarity", "execution_risk"],
+  },
+  {
+    id: "architecture-repair",
+    label: "Architecture repair",
+    guidance: "Regenerate with stronger architecture detail: require medallion layer responsibilities, data contracts, and acceptance checks.",
+    tags: ["architecture_depth"],
+  },
+  {
+    id: "story-repair",
+    label: "Storytelling + portfolio repair",
+    guidance: "Regenerate with interview story improvements: tighten STAR evidence, milestone outcomes, and recruiter mapping language.",
+    tags: ["storytelling", "portfolio_gap"],
+  },
+];
+
 const RESUME_CONFIDENCE_BANDS = [
   { min: 85, label: "High confidence", tone: "success" as const, guidance: "Highlights look clean. Tighten wording, then continue." },
   { min: 60, label: "Medium confidence", tone: "warning" as const, guidance: "Review each highlight for metrics and role relevance before submit." },
@@ -529,6 +571,8 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   const [submissionDetailError, setSubmissionDetailError] = useState<string | null>(null);
   const [selectedSubmissionRuns, setSelectedSubmissionRuns] = useState<Record<string, any>[]>([]);
   const [selectedSubmissionStatus, setSelectedSubmissionStatus] = useState<string>("submitted");
+  const [selectedSubmissionIds, setSelectedSubmissionIds] = useState<string[]>([]);
+  const [batchReviewState, setBatchReviewState] = useState<{ running: boolean; message?: string; error?: string }>({ running: false });
   const [coachNotes, setCoachNotes] = useState<string>("");
   const [coachFeedbackTags, setCoachFeedbackTags] = useState<string[]>([]);
   const [queueStatusFilter, setQueueStatusFilter] = useState<string>("all");
@@ -561,6 +605,11 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   }), [draft]);
 
   const completedCount = Object.values(completion).filter(Boolean).length;
+
+  useEffect(() => {
+    setSelectedSubmissionIds((prev) => prev.filter((id) => submissions.some((row) => row.submission_id === id)));
+  }, [submissions]);
+
   const resumeConfidenceBand = useMemo(() => {
     return RESUME_CONFIDENCE_BANDS.find((band) => resumeParseConfidence >= band.min) || RESUME_CONFIDENCE_BANDS[RESUME_CONFIDENCE_BANDS.length - 1];
   }, [resumeParseConfidence]);
@@ -870,6 +919,62 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       await loadSubmissions();
     } catch (e: any) {
       setQuickActionState({ running: false, error: handleProtectedApiError(e) });
+    }
+  }
+
+  function applyFeedbackTemplate(templateId: string, mode: "append" | "replace" = "append") {
+    const template = QUICK_FEEDBACK_TEMPLATES.find((item) => item.id === templateId);
+    if (!template) return;
+    setCoachNotes((prev) => {
+      if (mode === "replace") return template.body;
+      return prev.trim() ? `${prev.trim()}\n\n${template.body}` : template.body;
+    });
+    setCoachFeedbackTags((prev) => Array.from(new Set([...prev, ...template.tags])));
+  }
+
+  function applyRegenerateRecipe(recipeId: string) {
+    const recipe = REGENERATE_RECIPES.find((item) => item.id === recipeId);
+    if (!recipe) return;
+    const guidance = `Regenerate recipe (${recipe.label}): ${recipe.guidance}`;
+    setCoachNotes((prev) => (prev.trim() ? `${prev.trim()}\n\n${guidance}` : guidance));
+    setCoachFeedbackTags((prev) => Array.from(new Set([...prev, ...recipe.tags])));
+    void generateSow(true);
+  }
+
+  async function runBatchReviewAction(action: "in_review" | "needs_revision" | "ready") {
+    if (!selectedSubmissionIds.length || batchReviewState.running) return;
+
+    try {
+      setBatchReviewState({ running: true, message: `Applying ${action} to ${selectedSubmissionIds.length} submissions...` });
+      const ids = [...selectedSubmissionIds];
+      let success = 0;
+      let failure = 0;
+
+      for (const submissionId of ids) {
+        try {
+          const out = await api.coachingReviewStatusUpdate({
+            workspace_id: draft.workspaceId || "demo-workspace",
+            submission_id: submissionId,
+            coach_review_status: action,
+            coach_notes: composeCoachNotesWithTags(coachNotes, coachFeedbackTags),
+          });
+          if (out.ok) {
+            success += 1;
+          } else {
+            failure += 1;
+          }
+        } catch {
+          failure += 1;
+        }
+      }
+
+      await loadSubmissions();
+      setBatchReviewState({ running: false, message: `Batch complete: ${success} updated, ${failure} failed.` });
+      if (failure === 0) {
+        setSelectedSubmissionIds([]);
+      }
+    } catch (e: any) {
+      setBatchReviewState({ running: false, error: handleProtectedApiError(e) });
     }
   }
 
@@ -1517,10 +1622,31 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                   {reviewError && <span className="badge error">{reviewError}</span>}
                 </div>
 
+                <div className="card" style={{ padding: 8, marginBottom: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <strong style={{ fontSize: 12 }}>Batch review actions</strong>
+                    <span className="badge info">Selected: {selectedSubmissionIds.length}</span>
+                    <button type="button" onClick={() => runBatchReviewAction("in_review")} disabled={batchReviewState.running || selectedSubmissionIds.length === 0}>Batch → in_review</button>
+                    <button type="button" onClick={() => runBatchReviewAction("needs_revision")} disabled={batchReviewState.running || selectedSubmissionIds.length === 0}>Batch → needs_revision</button>
+                    <button type="button" className="btn-success" onClick={() => runBatchReviewAction("ready")} disabled={batchReviewState.running || selectedSubmissionIds.length === 0}>Batch → ready</button>
+                    <button type="button" onClick={() => setSelectedSubmissionIds([])} disabled={batchReviewState.running || selectedSubmissionIds.length === 0}>Clear selection</button>
+                  </div>
+                  {batchReviewState.message && <div style={{ marginTop: 6 }}><span className="badge success">{batchReviewState.message}</span></div>}
+                  {batchReviewState.error && <div style={{ marginTop: 6 }}><span className="badge error">{batchReviewState.error}</span></div>}
+                </div>
+
                 <div style={{ overflowX: "auto", marginBottom: 8 }}>
                   <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
                     <thead>
                       <tr>
+                        <th align="left">
+                          <input
+                            type="checkbox"
+                            checked={submissions.length > 0 && selectedSubmissionIds.length === submissions.length}
+                            onChange={(e) => setSelectedSubmissionIds(e.target.checked ? submissions.map((row) => row.submission_id) : [])}
+                            aria-label="Select all submissions"
+                          />
+                        </th>
                         <th align="left">Applicant</th>
                         <th align="left">Email</th>
                         <th align="left">Status</th>
@@ -1532,13 +1658,21 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                     <tbody>
                       {submissions.length === 0 ? (
                         <tr>
-                          <td colSpan={6} style={{ color: "var(--color-text-muted)", padding: "8px 0" }}>
+                          <td colSpan={7} style={{ color: "var(--color-text-muted)", padding: "8px 0" }}>
                             No submissions yet for this workspace.
                           </td>
                         </tr>
                       ) : (
                         submissions.map((s) => (
                           <tr key={s.submission_id} style={selectedSubmissionId === s.submission_id ? { background: "rgba(120,120,255,0.08)" } : undefined}>
+                            <td>
+                              <input
+                                type="checkbox"
+                                checked={selectedSubmissionIds.includes(s.submission_id)}
+                                onChange={(e) => setSelectedSubmissionIds((prev) => e.target.checked ? Array.from(new Set([...prev, s.submission_id])) : prev.filter((id) => id !== s.submission_id))}
+                                aria-label={`Select ${s.applicant_name || s.submission_id}`}
+                              />
+                            </td>
                             <td>{s.applicant_name || "—"}</td>
                             <td>{s.applicant_email || "—"}</td>
                             <td>
@@ -1652,6 +1786,18 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                           {reviewSaveState.error && <span className="badge error">{reviewSaveState.error}</span>}
                         </div>
                         <div style={{ marginTop: 8, fontSize: 12 }}>
+                          <strong>Quick feedback templates</strong>
+                          <div style={{ display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+                            {QUICK_FEEDBACK_TEMPLATES.map((template) => (
+                              <button key={template.id} type="button" onClick={() => applyFeedbackTemplate(template.id)}>
+                                + {template.label}
+                              </button>
+                            ))}
+                            <button type="button" onClick={() => setCoachNotes("")}>Clear notes</button>
+                          </div>
+                        </div>
+
+                        <div style={{ marginTop: 8, fontSize: 12 }}>
                           <strong>Feedback tags</strong>
                           <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
                             {COACH_FEEDBACK_TAG_OPTIONS.map((tag) => (
@@ -1673,6 +1819,16 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                           )}
                         </div>
                         {reviewPromptDraft && <div style={{ marginTop: 6, fontSize: 11, color: "var(--color-text-muted)" }}><strong>Prompt draft:</strong> {reviewPromptDraft}</div>}
+                        <div style={{ marginTop: 8, fontSize: 12 }}>
+                          <strong>Regenerate recipes</strong>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 4 }}>
+                            {REGENERATE_RECIPES.map((recipe) => (
+                              <button key={recipe.id} type="button" className="btn-primary" onClick={() => applyRegenerateRecipe(recipe.id)} disabled={generationState.running}>
+                                {generationState.running ? "Regenerating..." : recipe.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
                         <textarea
                           value={coachNotes}
                           onChange={(e) => setCoachNotes(e.target.value)}
@@ -1902,6 +2058,9 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                       <span className={`badge ${resumeConfidenceBand.tone}`}>{resumeConfidenceBand.label} ({resumeParseConfidence}%)</span>
                     </div>
                     <div style={{ marginTop: 6, fontSize: 11, color: "var(--color-text-muted)" }}>{resumeConfidenceBand.guidance}</div>
+                    <div style={{ marginTop: 6, fontSize: 11, color: "var(--color-text-muted)" }}>
+                      Confidence factors: highlights ({draft.resumeHighlights.filter((x) => x.trim()).length}) + strengths ({resumeStrengthSignals.filter((x) => x.trim()).length}) + gaps penalty ({resumeGapSignals.filter((x) => x.trim()).length > 0 ? "applied" : "none"}).
+                    </div>
                     <div className="coaching-input-grid" style={{ marginTop: 8 }}>
                       <div>
                         <div style={{ fontSize: 11, color: "var(--color-text-muted)", marginBottom: 4 }}><strong>Editable strengths</strong></div>

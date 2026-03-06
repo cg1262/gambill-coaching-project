@@ -85,6 +85,8 @@ function Invoke-Build() {
 
 function Needs-ModuleRecovery([string]$text) {
   if ($text -match "EISDIR") { return $true }
+  if ($text -match "EPERM") { return $true }
+  if ($text -match "operation not permitted") { return $true }
   if ($text -match "(tsc|next)\s*(is not recognized|not found|cannot find)") { return $true }
   if ($text -match "Cannot find module 'next'") { return $true }
   if ($text -match "Cannot find module 'typescript'") { return $true }
@@ -109,10 +111,11 @@ if ($buildRes.Code -eq 0) {
 
 $buildText = ($buildRes.Output -join "`n")
 if (Needs-ModuleRecovery $buildText) {
-  Write-Warning "[build-clean] detected recoverable build failure (EISDIR/missing local binaries). Rebuilding node_modules with npm ci and retrying once."
+  Write-Warning "[build-clean] detected recoverable build failure (EISDIR/EPERM/missing local binaries). Rebuilding node_modules with npm ci and retrying once."
   Remove-PathSafe "node_modules"
   Remove-PathSafe ".next"
   Remove-PathSafe "tsconfig.tsbuildinfo"
+  Remove-PathSafe "node_modules\next\node_modules\@next\swc-win32-x64-msvc"
 
   & npm ci --no-audit --no-fund
   if ($LASTEXITCODE -ne 0) {

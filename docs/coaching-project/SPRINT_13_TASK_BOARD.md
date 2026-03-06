@@ -118,6 +118,20 @@ Sprint Goal: Stabilize deterministic web builds, improve project output quality 
 - Needs from others:
   - Frontend to consume `regenerate_payload.body.deficiency_context` for richer one-click regenerate UX.
   - Frontend analytics views to surface `drop_off_insights.top_drop_offs` from weekly summary endpoint.
+
+## Frontend Checkpoint Addendum (2026-03-06)
+- Done:
+  - Added `apps/web/scripts/install-ci.ps1` and switched `npm run install:ci` to use Windows recovery retries for `EPERM`/`ENOTEMPTY`/`EISDIR` SWC corruption signatures.
+  - Expanded `apps/web/scripts/build-clean.ps1` recovery detection to include `EPERM` and `operation not permitted` failures.
+  - Added coach workflow accelerators in `CoachingProjectWorkbench`:
+    - quick feedback templates
+    - multi-select batch review status actions
+    - regenerate recipes that append corrective guidance and trigger regenerate.
+  - Added resume confidence factor visibility in intake UI.
+  - Added detailed checkpoint log: `docs/coaching-project/SPRINT_13_CHECKPOINT.md`.
+- Validation:
+  - Runtime parity confirmed under Volta pin (`node v20.11.1`, `npm 10.8.2`).
+  - Deterministic run is currently blocked in this workspace by ACL-locked `node_modules/@next/swc-win32-x64-msvc/next-swc.win32-x64-msvc.node` (non-admin shell cannot clear). See checkpoint for exact commands and remediation.
 - Next:
   - Add optional `parsed_jobs` carry-through from UI regeneration action to improve corrective precision.
   - Add frontend explainability card for confidence factors + missing-signal nudges.

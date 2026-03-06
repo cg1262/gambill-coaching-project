@@ -14,7 +14,7 @@
   "scripts": {
     "runtime:check": "node ./scripts/require-runtime.cjs",
     "runtime:test": "node --test ./scripts/require-runtime.test.cjs",
-    "install:ci": "npm ci --no-audit --no-fund",
+    "install:ci": "powershell -ExecutionPolicy Bypass -File ./scripts/install-ci.ps1",
     "verify:deterministic": "npm run install:ci && npm run typecheck && npm run build && npm run build",
     "remediate:runtime": "npm run runtime:check || (echo Runtime mismatch. Switch to Node 20.11.1 plus npm 10.x first. && exit 1)",
     "predev": "npm run runtime:check",
