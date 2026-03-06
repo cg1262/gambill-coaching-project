@@ -9,7 +9,11 @@ export type ConversionEventName =
   | "sow_regenerate_clicked"
   | "export_clicked"
   | "export_completed"
-  | "mentoring_cta_clicked";
+  | "mentoring_cta_clicked"
+  | "discord_cta_clicked"
+  | "coaching_plan_checkout_clicked"
+  | "resume_parse_completed"
+  | "resume_parse_failed";
 
 export type ConversionEvent = {
   name: ConversionEventName;

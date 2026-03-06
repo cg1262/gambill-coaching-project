@@ -380,5 +380,17 @@ input:focus, select:focus, button:focus {
 }
 
 .milestone-card {
-  line-height: 1.55;
+  line-height: 1.58;
+  border: 1px solid color-mix(in srgb, var(--color-border-strong) 58%, transparent);
+  background: color-mix(in srgb, var(--panel-bg) 94%, #2563eb 6%);
 }
+
+.milestone-card ul li {
+  margin-bottom: 2px;
+}
+
+.card h4,
+.card h5 {
+  margin-top: 0;
+}
+

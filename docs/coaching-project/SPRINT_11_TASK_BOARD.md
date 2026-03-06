@@ -1,60 +1,69 @@
-# Sprint 11 Task Board (Backend) — Checkpoint
+# Sprint 11 Task Board (Frontend UX + Reliability)
 
 Date: 2026-03-05
-Owner: Backend execution subagent
+Owner: Gambill Claw
 
-## Sprint Goals
-- **P0 Output quality polish:** tighten charter fidelity to anchor flow, enforce milestone detail + acceptance checks, expose actionable fail reasons.
-- **P0 Resume-to-project intelligence:** strengthen resume parsing confidence/signals, persist editable profile fields, map parsed signals into role/scope difficulty guidance.
-- **P1 Funnel instrumentation:** ensure intake/generate/regenerate/export/CTA events are reportable in weekly conversion rollups.
-- **P1 Reliability cleanup:** improve backend startup/runtime resilience for noisy local environments and upcoming app upgrade path.
+## Scope
+P0
+1. Frontend review polish: section hierarchy, milestone readability, datasource why + ingestion UX.
+2. Resume flow UX: parse confidence + editable strengths/gaps before generation.
+3. Quality diagnostics UX: explicit fail reasons + clearer regeneration guidance.
 
-## Checkpoint Status
+P1
+4. Funnel wiring: CTA event tracking for Discord + coaching conversion signals.
+5. Reliability cleanup: Next.js dependency patch update and runtime/startup hygiene.
+6. Docs checkpoint + validation runs.
 
-### ✅ Completed
-1. **Quality diagnostics + validation hardening**
-   - Added actionable fail reason payloads (`actionable_fail_reasons`) with field pointers and suggested fixes.
-   - Added stricter acceptance-check validation for milestones (`MILESTONE_ACCEPTANCE_CHECKS_NOT_ACTIONABLE`) to reduce vague outputs.
-   - Kept structure + section-order enforcement intact and regeneration hints updated.
+## Completed
+- Updated `apps/web/src/components/coaching/CoachingProjectWorkbench.tsx`
+  - Added resume parse confidence scoring bands (High/Medium/Low) and guidance.
+  - Added editable parsed **strengths** and **gaps to close** in resume step.
+  - Included resume strengths/gaps/confidence in intake payload (`preferences.resume_profile`) and self-assessment text block.
+  - Improved quality diagnostics with a new **Clear fail reasons** section plus existing regenerate guidance.
+  - Improved datasource tab UX with explicit "Why this source matters" and ordered ingestion steps.
+  - Improved milestone card readability with step badges and cleaner hierarchy.
+  - Added conversion wiring for Discord + coaching funnel actions in mentoring recommendation card.
 
-2. **Resume intelligence upgrades**
-   - Resume parser now emits:
-     - `parse_confidence`
-     - `role_evidence`
-     - stronger strength signals (including cloud visibility)
-   - Intake schema now allows editable profile payloads in `preferences`:
-     - `resume_profile`, `combined_profile`, `profile_overrides`
-     - `stack_preferences`, `tool_preferences`
-     - `resume_parse_summary`
+- Updated conversion telemetry type map:
+  - `apps/web/src/lib/conversion.ts`
+  - Added events:
+    - `discord_cta_clicked`
+    - `coaching_plan_checkout_clicked`
+    - `resume_parse_completed`
+    - `resume_parse_failed`
 
-3. **Role/scope mapping into generated SOWs**
-   - Added scope-profile derivation from resume/job signals (`current_role_level`, `target_role_level`, `scope_difficulty`, timeline suggestion).
-   - Injected role/scope assessment into candidate profile.
-   - Mentoring CTA recommendation now ties to inferred difficulty tier.
+- Updated polish styles:
+  - `apps/web/src/app/globals.css`
+  - Refined milestone card contrast/border/readability.
 
-4. **Conversion instrumentation for weekly reporting**
-   - Added backend query support for windowed event retrieval.
-   - Added `GET /coaching/conversion/weekly-summary` endpoint with:
-     - configurable lookback window
-     - event counts for intake/generate/regenerate/export/CTA/intent
-     - conversion rates + daily breakdown
+- Dependency reliability patch:
+  - `apps/web/package.json` + lockfile
+  - `next` upgraded from `14.2.5` -> `14.2.35` (same major, latest 14.2 patch line).
 
-5. **Reliability cleanup**
-   - Hardened auto-revision path against malformed payload types (e.g., string `project_story`) to prevent runtime crashes.
-   - Added resilient fallback in feedback-event reads when local DuckDB lock/IO exceptions occur.
-   - Secret masking now also applies to interview-ready narrative composition inputs.
+## Validation Runs
+From `apps/web`:
+- `npm run runtime:check` ❌ (expected fail on host runtime mismatch)
+  - Required: Node `>=20.11.1 <21`, npm `10.x`
+  - Detected: Node `24.13.1`, npm `11.8.0`
+- `npm run typecheck` ❌ blocked by runtime precheck
+- `npm run build` ❌ blocked by runtime precheck
+- `npm run build:clean` ❌ blocked by runtime precheck
 
-6. **Test coverage + verification**
-   - Added `test_coaching_sprint11_backend.py` for Sprint 11 features.
-   - Focused tests passed.
-   - Full backend pytest run passed.
+Additional compile checks:
+- `npm --ignore-scripts run typecheck` ✅
+- `npm --ignore-scripts run build` ❌ with known runtime-corruption signature:
+  - `EISDIR: illegal operation on a directory, readlink ... src/app/intake/page.tsx`
 
-## POC Status
-- **POC A (Quality diagnostics UX contract):** ✅ validated in backend response payload.
-- **POC B (Resume signal confidence + editable profile persistence):** ✅ validated via parser + intake model tests.
-- **POC C (Weekly conversion reporting API):** ✅ endpoint implemented and covered by API test.
-- **POC D (Resilience under malformed SOW + DB lock pressure):** ✅ backend now degrades safely instead of hard-failing.
+## Next Action Required (Environment)
+Switch local runtime to pinned toolchain before final deterministic verify:
+1. Node `20.11.1`
+2. npm `10.x`
+3. Run:
+   - `npm ci --no-audit --no-fund`
+   - `npm run typecheck`
+   - `npm run build`
+   - `npm run build:clean`
 
-## Notes / Follow-ups
-- Consider adding SQL-level weekly aggregation views if event volume grows beyond API-side rollups.
-- Consider surfacing `scope_difficulty` and parse confidence explicitly in UI coaching controls for coach overrides.
+## Notes
+- Runtime guardrails are functioning correctly and intentionally preventing unsafe builds on mismatched Node/npm.
+- Frontend changes are in place and typecheck clean under direct TypeScript execution.

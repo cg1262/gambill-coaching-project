@@ -118,6 +118,14 @@ const FEEDBACK_TAG_LABELS: Record<string, string> = {
   execution_risk: "Execution risk",
 };
 
+const RESUME_CONFIDENCE_BANDS = [
+  { min: 85, label: "High confidence", tone: "success" as const, guidance: "Highlights look clean. Tighten wording, then continue." },
+  { min: 60, label: "Medium confidence", tone: "warning" as const, guidance: "Review each highlight for metrics and role relevance before submit." },
+  { min: 0, label: "Low confidence", tone: "error" as const, guidance: "Parser confidence is low. Add/replace highlights manually before generating." },
+];
+
+const DISCORD_COMMUNITY_URL = "https://discord.gg/gambillcoaching";
+
 const DEFAULT_DRAFT: IntakeDraft = {
   workspaceId: "demo-workspace",
   candidateName: "",
@@ -167,6 +175,24 @@ function deriveResumeHighlights(rawText: string): string[] {
     .map((item) => item.line);
 
   return Array.from(new Set(ranked)).slice(0, 6);
+}
+
+function deriveResumeSignalSummary(rawText: string, highlights: string[]) {
+  const tokens = rawText.toLowerCase();
+  const strengthCandidates = highlights.filter((line) => /\d|%|\$|led|built|launched|migrat|automated|reduced|improved/.test(line.toLowerCase()));
+  const gapCandidates = [
+    !tokens.includes("stakeholder") ? "Add one stakeholder communication win" : "",
+    !tokens.includes("impact") && !tokens.includes("reduced") && !tokens.includes("improved") ? "Add one measurable business impact metric" : "",
+    !tokens.includes("airflow") && !tokens.includes("dbt") && !tokens.includes("spark") ? "Add one tooling detail (dbt/Airflow/Spark/etc.)" : "",
+  ].filter(Boolean);
+
+  const confidence = Math.max(15, Math.min(98, Math.round((highlights.length * 14) + (strengthCandidates.length * 11) + (gapCandidates.length ? 0 : 12))));
+
+  return {
+    confidence,
+    strengths: (strengthCandidates.length ? strengthCandidates : highlights).slice(0, 4),
+    gaps: gapCandidates.slice(0, 3),
+  };
 }
 
 function buildCombinedProfile(draft: IntakeDraft): string {
@@ -453,6 +479,9 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   const [activeStep, setActiveStep] = useState<IntakeStepId>("resume");
   const [draft, setDraft] = useState<IntakeDraft>(DEFAULT_DRAFT);
   const [resumeUploadState, setResumeUploadState] = useState<{ phase: "idle" | "uploading" | "parsing" | "ready" | "error"; progress: number; message?: string }>({ phase: "idle", progress: 0 });
+  const [resumeParseConfidence, setResumeParseConfidence] = useState<number>(0);
+  const [resumeStrengthSignals, setResumeStrengthSignals] = useState<string[]>([]);
+  const [resumeGapSignals, setResumeGapSignals] = useState<string[]>([]);
   const resumeFileInputRef = useRef<HTMLInputElement | null>(null);
   const [scaffold, setScaffold] = useState<ProjectScaffold | null>(null);
   const [viewerTab, setViewerTab] = useState<"charter" | "summary" | "dataSources" | "architecture" | "milestones" | "story" | "roi" | "resources" | "interview">("charter");
@@ -503,6 +532,9 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   }), [draft]);
 
   const completedCount = Object.values(completion).filter(Boolean).length;
+  const resumeConfidenceBand = useMemo(() => {
+    return RESUME_CONFIDENCE_BANDS.find((band) => resumeParseConfidence >= band.min) || RESUME_CONFIDENCE_BANDS[RESUME_CONFIDENCE_BANDS.length - 1];
+  }, [resumeParseConfidence]);
   const hasActiveSubscription = authState === "authenticated" && subscriptionStatus === "active";
   const canAccessWorkbench = hasActiveSubscription;
   const canAccessReviewQueue = hasActiveSubscription && planTier !== "starter";
@@ -586,6 +618,24 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       actions.push("Quality band is low. Re-run regeneration, then review data source links and milestone resources before export.");
     }
     return actions;
+  }, [generationState.quality]);
+
+  const qualityFailureReasons = useMemo(() => {
+    const q = generationState.quality || {};
+    const diagnostics = (q.quality_diagnostics || {}) as Record<string, any>;
+    const reasons: string[] = [];
+
+    if (Array.isArray(q.missing_sections) && q.missing_sections.length > 0) {
+      reasons.push(`Missing required sections: ${q.missing_sections.join(", ")}`);
+    }
+    if (q.section_order_valid === false) {
+      reasons.push("Section order invalid for expected coaching template.");
+    }
+    if (Array.isArray(diagnostics.top_deficiencies) && diagnostics.top_deficiencies.length > 0) {
+      reasons.push(...diagnostics.top_deficiencies.slice(0, 3).map((msg: any) => String(msg)));
+    }
+
+    return reasons.slice(0, 5);
   }, [generationState.quality]);
 
   const suggestedFeedbackTags = useMemo(() => {
@@ -874,10 +924,20 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       const rawText = await file.text();
       setResumeUploadState({ phase: "parsing", progress: 95, message: "Parsing resume for highlights..." });
       const highlights = deriveResumeHighlights(rawText);
-      setDraft((prev) => ({ ...prev, resumeHighlights: highlights.length ? highlights : ["Add one achievement highlight from your resume"] }));
+      const resolvedHighlights = highlights.length ? highlights : ["Add one achievement highlight from your resume"];
+      const signalSummary = deriveResumeSignalSummary(rawText, resolvedHighlights);
+      setDraft((prev) => ({ ...prev, resumeHighlights: resolvedHighlights }));
+      setResumeParseConfidence(signalSummary.confidence);
+      setResumeStrengthSignals(signalSummary.strengths);
+      setResumeGapSignals(signalSummary.gaps);
       setResumeUploadState({ phase: "ready", progress: 100, message: `Parsed ${highlights.length || 1} highlight${highlights.length === 1 ? "" : "s"}.` });
+      trackConversionEvent({ name: "resume_parse_completed", workspaceId: draft.workspaceId, details: { confidence: signalSummary.confidence, highlights: resolvedHighlights.length } });
     } catch (e: any) {
       setResumeUploadState({ phase: "error", progress: 100, message: e?.message || "Could not parse that file. Try .txt, .md, .docx, or paste highlights manually." });
+      setResumeParseConfidence(0);
+      setResumeStrengthSignals([]);
+      setResumeGapSignals(["Paste at least 3 achievement highlights manually to continue."]);
+      trackConversionEvent({ name: "resume_parse_failed", workspaceId: draft.workspaceId, details: { reason: e?.message || "parse_error" } });
     } finally {
       window.clearInterval(timer);
     }
@@ -897,7 +957,21 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
         applicant_name: draft.candidateName || "Candidate",
         applicant_email: draft.candidateEmail || undefined,
         resume_text: draft.resumeFileName,
-        self_assessment_text: [structuredAssessment, "", "Resume-Derived Highlights", ...draft.resumeHighlights.map((item) => `- ${item.trim()}`).filter((line) => line !== "-"), "", "Combined Profile", combinedProfile].join("\n"),
+        self_assessment_text: [
+          structuredAssessment,
+          "",
+          "Resume-Derived Highlights",
+          ...draft.resumeHighlights.map((item) => `- ${item.trim()}`).filter((line) => line !== "-"),
+          "",
+          "Resume strengths",
+          ...resumeStrengthSignals.map((item) => `- ${item.trim()}`).filter((line) => line !== "-"),
+          "",
+          "Resume gaps to close",
+          ...resumeGapSignals.map((item) => `- ${item.trim()}`).filter((line) => line !== "-"),
+          "",
+          "Combined Profile",
+          combinedProfile,
+        ].join("\n"),
         job_links: jobLinks,
         preferences: {
           target_role: draft.targetRole,
@@ -907,7 +981,10 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
           selected_tools: draft.selectedTools,
           resume_profile: {
             file_name: draft.resumeFileName,
+            confidence: resumeParseConfidence,
             highlights: draft.resumeHighlights.map((item) => item.trim()).filter(Boolean),
+            strengths: resumeStrengthSignals.map((item) => item.trim()).filter(Boolean),
+            gaps: resumeGapSignals.map((item) => item.trim()).filter(Boolean),
           },
           combined_profile: combinedProfile,
         },
@@ -1040,6 +1117,11 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       selectedTools: Array.isArray((preferences as any).selected_tools) ? (preferences as any).selected_tools.map((x: any) => String(x)) : prev.selectedTools,
       timelineWeeks: String(preferences.timeline_weeks || prev.timelineWeeks),
     }));
+
+    const resumeProfile = (preferences as any).resume_profile || {};
+    setResumeParseConfidence(Number(resumeProfile.confidence || 0));
+    setResumeStrengthSignals(Array.isArray(resumeProfile.strengths) ? resumeProfile.strengths.map((x: any) => String(x)) : []);
+    setResumeGapSignals(Array.isArray(resumeProfile.gaps) ? resumeProfile.gaps.map((x: any) => String(x)) : []);
 
     setStageState((prev) => ({ ...prev, intakeParsed: true }));
     setActiveStep("resume");
@@ -1600,6 +1682,16 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                         <div>Quality floor: <strong>{String(generationState.quality.quality_diagnostics.floor_score ?? "n/a")}</strong></div>
                         <div>Auto-regenerated for floor: <strong>{generationState.quality.quality_diagnostics.auto_regenerated ? "yes" : "no"}</strong></div>
                         <div>Deficiency count: <strong>{String(generationState.quality.quality_diagnostics.deficiency_count ?? 0)}</strong></div>
+                        {qualityFailureReasons.length > 0 && (
+                          <div>
+                            Clear fail reasons:
+                            <ul style={{ margin: "4px 0 0 18px" }}>
+                              {qualityFailureReasons.map((reason, idx) => (
+                                <li key={`quality-fail-reason-${idx}`}>{reason}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                         {Array.isArray(generationState.quality.missing_sections) && generationState.quality.missing_sections.length > 0 && (
                           <div>
                             Missing sections:
@@ -1689,6 +1781,42 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                   <div className="resume-progress-track"><span style={{ width: `${resumeUploadState.progress}%` }} /></div>
                   {resumeUploadState.message && <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>{resumeUploadState.message}</div>}
                 </div>
+
+                {(resumeUploadState.phase === "ready" || draft.resumeHighlights.some((h) => h.trim())) && (
+                  <div className="card" style={{ padding: 10 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <strong style={{ fontSize: 12 }}>Resume parse confidence</strong>
+                      <span className={`badge ${resumeConfidenceBand.tone}`}>{resumeConfidenceBand.label} ({resumeParseConfidence}%)</span>
+                    </div>
+                    <div style={{ marginTop: 6, fontSize: 11, color: "var(--color-text-muted)" }}>{resumeConfidenceBand.guidance}</div>
+                    <div className="coaching-input-grid" style={{ marginTop: 8 }}>
+                      <div>
+                        <div style={{ fontSize: 11, color: "var(--color-text-muted)", marginBottom: 4 }}><strong>Editable strengths</strong></div>
+                        <div style={{ display: "grid", gap: 6 }}>
+                          {resumeStrengthSignals.length ? resumeStrengthSignals.map((signal, idx) => (
+                            <input
+                              key={`resume-strength-${idx}`}
+                              value={signal}
+                              onChange={(e) => setResumeStrengthSignals((prev) => prev.map((item, i) => i === idx ? e.target.value : item))}
+                            />
+                          )) : <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>No strengths extracted yet.</div>}
+                        </div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 11, color: "var(--color-text-muted)", marginBottom: 4 }}><strong>Editable gaps to close</strong></div>
+                        <div style={{ display: "grid", gap: 6 }}>
+                          {resumeGapSignals.length ? resumeGapSignals.map((signal, idx) => (
+                            <input
+                              key={`resume-gap-${idx}`}
+                              value={signal}
+                              onChange={(e) => setResumeGapSignals((prev) => prev.map((item, i) => i === idx ? e.target.value : item))}
+                            />
+                          )) : <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>No obvious gaps detected.</div>}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div className="card" style={{ padding: 10 }}>
                   <strong style={{ fontSize: 12 }}>Editable parsed highlights</strong>
@@ -1906,16 +2034,23 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                   <div style={{ display: "grid", gap: 10 }}>
                     <div className="card" style={{ padding: 10, border: "1px solid var(--color-border-strong)", background: "color-mix(in srgb, var(--panel-bg) 88%, #10b981 12%)" }}>
                       <strong>Ingestion instruction block</strong>
-                      <div style={{ fontSize: 12, marginTop: 6 }}>Document source owner, refresh cadence, and bronze landing location for every source before build starts.</div>
+                      <div style={{ fontSize: 12, marginTop: 6 }}>For each source, clarify why it exists + exactly how it enters Bronze so reviewers can validate feasibility fast.</div>
                     </div>
-                    {scaffold.dataSources.map((source) => (
+                    {scaffold.dataSources.map((source, idx) => (
                       <div key={`${source.name}-${source.link || "nolink"}`} className="card" style={{ padding: 10 }}>
-                        <div style={{ fontSize: 13 }}>
-                          <strong>{source.name}</strong> <span style={{ color: "var(--color-text-muted)" }}>({source.type})</span>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", fontSize: 13 }}>
+                          <strong>{idx + 1}. {source.name}</strong>
+                          <span className="badge info">{source.type}</span>
                         </div>
-                        <div style={{ fontSize: 12, marginTop: 4 }}><strong>Data purpose:</strong> {source.note}</div>
-                        <div style={{ fontSize: 12, marginTop: 4 }}><strong>Ingestion note:</strong> Define source auth, schema drift handling, and failure alert destination.</div>
-                        <div style={{ fontSize: 12, marginTop: 4 }}>
+                        <div style={{ fontSize: 12, marginTop: 6 }}><strong>Why this source matters:</strong> {source.note}</div>
+                        <div style={{ fontSize: 12, marginTop: 8 }}><strong>Ingestion steps:</strong></div>
+                        <ol style={{ margin: "4px 0 0 18px", padding: 0, fontSize: 12, display: "grid", gap: 2 }}>
+                          <li>Confirm source owner + access method.</li>
+                          <li>Document cadence + SLA target.</li>
+                          <li>Land raw payload in Bronze with schema drift handling.</li>
+                          <li>Route failures to alert channel and runbook owner.</li>
+                        </ol>
+                        <div style={{ fontSize: 12, marginTop: 6 }}>
                           {source.link ? (() => { const safety = safeExternalUrl(source.link); return safety.safe ? <a href={safety.normalized} target="_blank" rel="noreferrer">{source.link}</a> : <span>{source.link} <span className="badge warning">Blocked unsafe link ({safety.reason})</span></span>; })() : <span style={{ color: "var(--color-text-muted)" }}>No external link provided</span>}
                         </div>
                       </div>
@@ -1925,13 +2060,16 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
 
                 {viewerTab === "milestones" && (
                   <div style={{ display: "grid", gap: 10 }}>
-                    {scaffold.milestones.map((m) => (
+                    {scaffold.milestones.map((m, idx) => (
                       <div key={m.title} className="card milestone-card" style={{ padding: 12 }}>
-                        <strong>{m.title}</strong>
+                        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                          <strong>{m.title}</strong>
+                          <span className="badge info">Step {idx + 1} of {scaffold.milestones.length}</span>
+                        </div>
                         <div style={{ fontSize: 13, marginTop: 6, lineHeight: 1.5 }}>{m.outcome}</div>
                         <div style={{ marginTop: 8, fontSize: 12 }}><strong>Expectations</strong></div>
                         <ul style={{ margin: "4px 0 0 18px", padding: 0, fontSize: 12 }}>
-                          {m.expectations.map((item, idx) => <li key={`${m.title}-exp-${idx}`}>{item}</li>)}
+                          {m.expectations.map((item, expIdx) => <li key={`${m.title}-exp-${expIdx}`}>{item}</li>)}
                         </ul>
                         <div style={{ marginTop: 8, fontSize: 12 }}><strong>Deliverables</strong></div>
                         <ul style={{ margin: "4px 0 0 18px", padding: 0, fontSize: 12 }}>
@@ -1939,7 +2077,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                         </ul>
                         <div style={{ marginTop: 8, fontSize: 12 }}><strong>Acceptance checks</strong></div>
                         <ul style={{ margin: "4px 0 0 18px", padding: 0, fontSize: 12 }}>
-                          {m.acceptanceChecks.map((item, idx) => <li key={`${m.title}-acc-${idx}`}>{item}</li>)}
+                          {m.acceptanceChecks.map((item, accIdx) => <li key={`${m.title}-acc-${accIdx}`}>{item}</li>)}
                         </ul>
                       </div>
                     ))}
@@ -2027,7 +2165,27 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                         <div style={{ fontSize: 12 }}><strong>Timeline:</strong> {scaffold.mentoringCta.timeline}</div>
                         {scaffold.mentoringCta.rationale && <div style={{ fontSize: 12, marginTop: 4 }}><strong>Rationale:</strong> {scaffold.mentoringCta.rationale}</div>}
                         {!canBookMentoring && <div style={{ fontSize: 12, color: "var(--color-text-muted)", marginTop: 6 }}>Upgrade to Elite to unlock live booking and 1:1 mentoring sessions.</div>}
-                        <button className="btn-primary" style={{ marginTop: 8 }} disabled={!canBookMentoring} onClick={() => trackConversionEvent({ name: "mentoring_cta_clicked", workspaceId: draft.workspaceId, submissionId: currentSubmissionId || undefined, planTier })}>{canBookMentoring ? scaffold.mentoringCta.ctaText : "Elite required"}</button>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                          <button
+                            className="btn-primary"
+                            disabled={!canBookMentoring}
+                            onClick={() => {
+                              trackConversionEvent({ name: "mentoring_cta_clicked", workspaceId: draft.workspaceId, submissionId: currentSubmissionId || undefined, planTier });
+                              trackConversionEvent({ name: "coaching_plan_checkout_clicked", workspaceId: draft.workspaceId, submissionId: currentSubmissionId || undefined, planTier, details: { offer: scaffold.mentoringCta.offer } });
+                            }}
+                          >
+                            {canBookMentoring ? scaffold.mentoringCta.ctaText : "Elite required"}
+                          </button>
+                          <a
+                            href={DISCORD_COMMUNITY_URL}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={() => trackConversionEvent({ name: "discord_cta_clicked", workspaceId: draft.workspaceId, submissionId: currentSubmissionId || undefined, planTier, details: { location: "mentoring_recommendation" } })}
+                            style={{ alignSelf: "center", fontSize: 12 }}
+                          >
+                            Join Discord coaching channel
+                          </a>
+                        </div>
                       </div>
                     )}
                   </div>
