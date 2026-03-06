@@ -149,6 +149,12 @@ def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
     for k in ["executive_summary", "challenge", "approach", "impact_story"]:
         if not str(story.get(k) or "").strip():
             findings.append({"code": "PROJECT_STORY_MISSING", "message": f"project_story.{k} is required."})
+    story_text = " ".join(str(story.get(k) or "") for k in ["executive_summary", "challenge", "approach", "impact_story"])
+    low_story = story_text.lower()
+    if len(story_text.strip()) < 280:
+        findings.append({"code": "PROJECT_STORY_DEPTH_WEAK", "message": "project_story should include richer executive depth (current state, approach detail, and quantified impact)."})
+    if not any(token in low_story for token in ["kpi", "%", "sla", "minutes", "revenue", "cost", "uptime", "adoption"]):
+        findings.append({"code": "PROJECT_STORY_METRIC_SIGNAL_MISSING", "message": "project_story should reference measurable KPI or operational impact signals."})
 
     business = sow.get("business_outcome") or {}
     data_sources = business.get("data_sources") or []
@@ -300,7 +306,14 @@ def compute_sow_quality_score(sow: dict[str, Any], findings: list[dict[str, str]
     }
 
 
-def build_quality_diagnostics(quality: dict[str, Any], findings: list[dict[str, str]], floor_score: int = 80, auto_regenerated: bool = False) -> dict[str, Any]:
+def build_quality_diagnostics(
+    quality: dict[str, Any],
+    findings: list[dict[str, str]],
+    floor_score: int = 80,
+    auto_regenerated: bool = False,
+    workspace_id: str | None = None,
+    submission_id: str | None = None,
+) -> dict[str, Any]:
     score = int(quality.get("score") or 0)
     codes = [str(f.get("code") or "") for f in findings if str(f.get("code") or "")]
     unique_codes = sorted(set(codes))
@@ -318,6 +331,8 @@ def build_quality_diagnostics(quality: dict[str, Any], findings: list[dict[str, 
         "INGESTION_INSTRUCTIONS_MISSING": "Add explicit ingestion instructions (how/where/frequency) for each data source.",
         "MILESTONE_ACCEPTANCE_CHECKS_MISSING": "Define at least 2 concrete acceptance checks for every milestone.",
         "MILESTONE_ACCEPTANCE_CHECKS_NOT_ACTIONABLE": "Rewrite acceptance checks as measurable verification statements (signed-off, tested, validated, published).",
+        "PROJECT_STORY_DEPTH_WEAK": "Deepen project_story with current-state constraints, implementation tradeoffs, and quantified business outcomes.",
+        "PROJECT_STORY_METRIC_SIGNAL_MISSING": "Add explicit KPI/operational metrics (SLA, adoption, revenue/cost impact) to project_story narrative.",
     }
     targeted_regeneration_hints = [regen_hints_map[c] for c in unique_codes if c in regen_hints_map][:6]
     if int(quality.get("structure_score") or 0) < 90:
@@ -348,6 +363,32 @@ def build_quality_diagnostics(quality: dict[str, Any], findings: list[dict[str, 
             }
         )
 
+    major_prefixes = (
+        "SECTION_",
+        "MISSING_SECTION",
+        "CHARTER_",
+        "DATA_SOURCE_",
+        "INGESTION_",
+        "MILESTONE_",
+        "ROI_",
+        "RESOURCE_LINKS_MISSING",
+    )
+    major_codes = [code for code in unique_codes if code.startswith(major_prefixes)]
+
+    regenerate_payload = {
+        "endpoint": "/coaching/sow/generate",
+        "method": "POST",
+        "body": {
+            "workspace_id": workspace_id,
+            "submission_id": submission_id,
+            "parsed_jobs": [],
+            "regenerate_with_improvements": True,
+        },
+        "requires": ["workspace_id", "submission_id"],
+        "reason_codes": major_codes[:8],
+        "hints": targeted_regeneration_hints[:5],
+    }
+
     return {
         "floor_score": floor_score,
         "score": score,
@@ -355,6 +396,8 @@ def build_quality_diagnostics(quality: dict[str, Any], findings: list[dict[str, 
         "auto_regenerated": bool(auto_regenerated),
         "deficiency_codes": unique_codes,
         "deficiency_count": len(findings),
+        "major_deficiency_codes": major_codes,
+        "major_deficiency_count": len(major_codes),
         "top_deficiencies": [mask_secrets_in_text(str(f.get("message") or "")) for f in findings[:5]],
         "actionable_fail_reasons": actionable_fail_reasons,
         "structure_score": int(quality.get("structure_score") or 0),
@@ -364,4 +407,5 @@ def build_quality_diagnostics(quality: dict[str, Any], findings: list[dict[str, 
         "style_alignment_score": int(quality.get("style_alignment_score") or 0),
         "targeted_regeneration_hints": targeted_regeneration_hints,
         "recommended_regeneration": bool(score < int(floor_score) or len(findings) > 0),
+        "regenerate_payload": regenerate_payload,
     }

@@ -17,30 +17,71 @@ from .constants import (
 from .sow_validation import evaluate_sow_structure, _build_interview_ready_package
 
 
+def _bounded_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except Exception:
+        parsed = default
+    return max(minimum, min(maximum, parsed))
+
+
+def _deterministic_majority(values: list[str], default: str) -> str:
+    if not values:
+        return default
+    counts: dict[str, int] = {}
+    for value in values:
+        counts[value] = counts.get(value, 0) + 1
+    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    return ordered[0][0] if ordered else default
+
+
 def _derive_scope_profile(intake: dict[str, Any], parsed_jobs: list[dict[str, Any]]) -> dict[str, Any]:
     prefs = intake.get("preferences") or {}
     resume_summary = (prefs.get("resume_parse_summary") or {}) if isinstance(prefs, dict) else {}
 
-    role_level = str(resume_summary.get("role_level") or "mid").lower()
-    years_hint = int(resume_summary.get("years_experience_hint") or 0)
-    parse_conf = int(resume_summary.get("parse_confidence") or 0)
-    tool_count = len(resume_summary.get("tools") or [])
+    role_level = str(resume_summary.get("role_level") or "mid").strip().lower()
+    if role_level not in {"junior", "mid", "senior"}:
+        role_level = "mid"
+
+    years_hint = _bounded_int(resume_summary.get("years_experience_hint"), default=0, minimum=0, maximum=40)
+    parse_conf = _bounded_int(resume_summary.get("parse_confidence"), default=0, minimum=0, maximum=100)
+
+    tools = [str(t).strip().lower() for t in (resume_summary.get("tools") or []) if str(t).strip()]
+    domains = [str(d).strip().lower() for d in (resume_summary.get("domains") or []) if str(d).strip()]
+    project_keywords = [str(k).strip().lower() for k in (resume_summary.get("project_experience_keywords") or []) if str(k).strip()]
+    tool_count = len(set(tools))
+    domain_count = len(set(domains))
+    project_signal_count = len(set(project_keywords))
 
     seniority_votes = [str((job.get("signals") or {}).get("seniority") or "").strip().lower() for job in (parsed_jobs or [])]
     seniority_votes = [v for v in seniority_votes if v in {"junior", "mid", "senior"}]
-    target_seniority = max(set(seniority_votes), key=seniority_votes.count) if seniority_votes else role_level
+    target_seniority = _deterministic_majority(seniority_votes, default=role_level)
 
+    capability_index = (tool_count * 2) + domain_count + project_signal_count
     difficulty = "standard"
-    if role_level == "junior" or years_hint <= 2:
+    if role_level == "junior" or years_hint <= 2 or parse_conf < 45:
         difficulty = "foundational"
-    if target_seniority == "senior" and role_level in {"mid", "senior"} and tool_count >= 5:
+    elif target_seniority == "senior" and role_level in {"mid", "senior"} and years_hint >= 5 and capability_index >= 14 and parse_conf >= 60:
         difficulty = "advanced"
 
     suggested_weeks = 6
     if difficulty == "foundational":
-        suggested_weeks = 8
+        suggested_weeks = 8 if parse_conf < 60 else 7
     elif difficulty == "advanced":
         suggested_weeks = 5
+
+    if years_hint >= 10 and difficulty == "advanced" and parse_conf >= 80:
+        suggested_weeks = 4
+
+    preferred_timeline = (prefs.get("timeline_weeks") if isinstance(prefs, dict) else None)
+    if preferred_timeline is not None:
+        preferred = _bounded_int(preferred_timeline, default=suggested_weeks, minimum=1, maximum=52)
+        if difficulty == "foundational":
+            suggested_weeks = max(preferred, 6)
+        elif difficulty == "advanced":
+            suggested_weeks = min(preferred, 8)
+        else:
+            suggested_weeks = preferred
 
     return {
         "current_role_level": role_level,
@@ -48,6 +89,7 @@ def _derive_scope_profile(intake: dict[str, Any], parsed_jobs: list[dict[str, An
         "scope_difficulty": difficulty,
         "parse_confidence": parse_conf,
         "suggested_timeline_weeks": suggested_weeks,
+        "capability_index": capability_index,
     }
 
 
@@ -321,7 +363,7 @@ def build_sow_skeleton(
                 "business_why": "Aligning scope and KPI definitions early prevents rework and accelerates measurable ROI delivery.",
                 "milestone_tags": ["discovery", "architecture", "roi"],
                 "resources": [{"title": "Kimball Dimensional Modeling", "url": "https://www.kimballgroup.com/data-warehouse-business-intelligence-resources/"}],
-                "acceptance_checks": ["Charter signed by sponsor", "KPI dictionary reviewed with coach"],
+                "acceptance_checks": ["Project charter signed by sponsor", "KPI dictionary validated in coach review"],
             },
             {
                 "name": "Bronze/Silver implementation",
@@ -332,7 +374,7 @@ def build_sow_skeleton(
                 "business_why": "Reliable ingestion and conformance reduce reporting defects and improve trust in downstream analytics.",
                 "milestone_tags": ["bronze", "silver", "pipeline"],
                 "resources": [{"title": "Delta Lake Medallion Architecture", "url": "https://docs.databricks.com/en/lakehouse/medallion.html"}],
-                "acceptance_checks": ["Pipeline test suite passes in CI", "DQ threshold report attached"],
+                "acceptance_checks": ["Pipeline test suite passes in CI", "DQ threshold report validated and published"],
             },
             {
                 "name": "Gold + ROI dashboard",
@@ -343,7 +385,7 @@ def build_sow_skeleton(
                 "business_why": "Clear KPI visibility enables faster decisions and proves business impact of the data platform investment.",
                 "milestone_tags": ["gold", "roi", "bi"],
                 "resources": [{"title": "Power BI Design Guidance", "url": "https://learn.microsoft.com/en-us/power-bi/guidance/"}],
-                "acceptance_checks": ["Metric definitions traced to source tables", "Stakeholder review walkthrough recorded"],
+                "acceptance_checks": ["Metric definitions validated against source tables", "Stakeholder review walkthrough recorded"],
             },
             {
                 "name": "Final review + portfolio assets",
@@ -354,7 +396,7 @@ def build_sow_skeleton(
                 "business_why": "Strong communication artifacts increase hiring signal and stakeholder confidence in project value.",
                 "milestone_tags": ["communication", "career"],
                 "resources": [{"title": "GitHub Portfolio Guide", "url": "https://docs.github.com/en/get-started/showcase-your-work/about-your-profile"}],
-                "acceptance_checks": ["Demo script dry-run completed", "Retrospective includes quantified outcomes"],
+                "acceptance_checks": ["Demo script dry-run recorded with feedback", "Retrospective published with quantified outcomes"],
             },
         ],
         "roi_dashboard_requirements": {
@@ -362,7 +404,9 @@ def build_sow_skeleton(
             "required_measures": ["cost_savings", "revenue_impact", "sla_compliance"],
         },
         "resource_plan": {
-            "required": [],
+            "required": [
+                {"title": "Data Engineering Lifecycle Guide", "url": "https://martinfowler.com/articles/data-monolith-to-mesh.html"}
+            ],
             "recommended": [],
             "optional": [],
             "affiliate_disclosure": "Some recommended resources may include affiliate links. Recommendations are selected for project relevance first.",

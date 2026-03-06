@@ -3,6 +3,60 @@
 Last Updated: 2026-03-05
 Owner: ERD Program Team
 
+## Checkpoint Update (2026-03-05 - Sprint 12 Backend Execution: Golden Output Quality + Regeneration Contract)
+
+### Done
+- Added Sprint 12 golden acceptance suite (`apps/api/tests/test_coaching_sprint12_backend.py`) with style-anchored scenarios aligned to GlobalMart and VoltStream exemplars plus a foundational candidate scenario.
+- Improved deterministic resume signal to scope/timeline mapping in `apps/api/coaching/sow_draft.py`:
+  - stable majority vote for target seniority,
+  - capability-index scoring,
+  - confidence/experience-aware difficulty mapping,
+  - bounded preference timeline integration.
+- Tightened generation quality checks in `apps/api/coaching/sow_validation.py` to reduce tone/depth drift:
+  - `PROJECT_STORY_DEPTH_WEAK`
+  - `PROJECT_STORY_METRIC_SIGNAL_MISSING`
+- Added deficiency-aware regenerate guidance payload in quality diagnostics (`regenerate_payload`) with endpoint/method/body contract so frontend can trigger regenerate directly.
+- Added major deficiency summary fields in diagnostics (`major_deficiency_codes`, `major_deficiency_count`) and wired generation endpoint context (`workspace_id`, `submission_id`) from `apps/api/main.py`.
+- Updated auto-revision narrative defaults (`apps/api/coaching/sow_completion.py`) to keep executive charter tone KPI-driven and production-realistic.
+- Added Sprint 12 checkpoint board doc: `docs/coaching-project/SPRINT_12_TASK_BOARD.md`.
+
+### Validation
+- `python -m pytest -q tests/test_coaching_sprint12_backend.py` (apps/api)
+- `python -m pytest -q` (apps/api)
+
+### Risks / Follow-ups
+- Regenerate payload currently returns empty `parsed_jobs` placeholder; frontend should pass latest parsed jobs when available for higher-fidelity regeneration.
+- Story depth checks are heuristic and may need calibration as additional exemplar styles are introduced.
+
+## Checkpoint Update (2026-03-05 - Sprint 12 Security Execution: Webhook Alerting + Next.js Remediation Plan)
+
+### Done
+- Revalidated auth/session/rate-limit/webhook controls after Sprint 12 changes using focused API security regression pack.
+- Implemented repeated invalid-signature alerting path for both:
+  - `POST /coaching/subscription/sync`
+  - `POST /coaching/subscription/webhook`
+- Added in-memory alert tracker module (`apps/api/webhook_alerts.py`) with configurable thresholds:
+  - `WEBHOOK_INVALID_SIG_ALERT_THRESHOLD` (default `5`)
+  - `WEBHOOK_INVALID_SIG_ALERT_WINDOW_SECONDS` (default `300`)
+- Added regression coverage proving alert emission at threshold:
+  - `test_invalid_signature_alert_emits_after_threshold_sync`
+  - `test_invalid_signature_alert_emits_after_threshold_webhook`
+- Authored controlled framework remediation plan for Next.js advisories:
+  - `docs/coaching-project/NEXTJS_VULNERABILITY_REMEDIATION_PLAN.md`
+- Updated pilot hardening checklist with Sprint 12 evidence and refreshed blocker split.
+
+### Validation
+- `python -m pytest -q tests/test_auth_contract_security.py tests/test_auth_sessions.py tests/test_security_rate_limit_webhook.py tests/test_rate_limits_and_webhooks.py tests/test_coaching_subscription.py` (apps/api) → **27 passed, 1 warning**.
+- `python -m py_compile main.py webhook_security.py webhook_alerts.py coaching\sow_validation.py coaching\sow_security.py` (apps/api) → **pass**.
+- `npm run typecheck` (apps/web) → **expected fail-fast** on host runtime mismatch (`Node v24.13.1`, `npm 11.8.0`).
+- `"C:\Program Files\Volta\volta.exe" run --node 20.11.1 --npm 10.8.2 npm run typecheck` (apps/web) → **fail** (`tsc` missing due local install corruption).
+- `"C:\Program Files\Volta\volta.exe" run --node 20.11.1 --npm 10.8.2 npm ci --no-audit --no-fund` (apps/web) → **fail** (`EPERM unlink ... node_modules\csstype\index.js.flow`).
+- `npm audit --omit=dev --json` (apps/web) → **1 high** (`next`; advisories `GHSA-h25m-26qc-wcjf`, `GHSA-9g9p-9gw9-jx7f`; fix path `next@16.1.6`).
+
+### Blocker / Non-blocker Decisions
+- **Blocker:** deterministic web install/build proof remains unresolved on compliant runtime due local filesystem/install instability (`EPERM`/historical `EISDIR` signatures).
+- **Non-blocker:** API auth/session/rate-limit/webhook integrity controls, including invalid-signature alert trigger path, are regression-backed and passing.
+
 ## Checkpoint Update (2026-03-05 - Sprint 11 Security Execution: Resume/Diagnostics Hardening + Rate/Webhook Revalidation)
 
 ### Done

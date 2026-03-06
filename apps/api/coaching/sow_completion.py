@@ -32,10 +32,10 @@ def auto_revise_sow_once(sow: dict[str, Any], findings: list[dict[str, str]]) ->
 
     if not isinstance(out.get("project_story"), dict):
         out["project_story"] = {}
-    out["project_story"].setdefault("executive_summary", "This project builds an end-to-end portfolio-ready data product.")
-    out["project_story"].setdefault("challenge", "Source systems are inconsistent and require governance before business reporting.")
-    out["project_story"].setdefault("approach", "Implement medallion layers, DQ checks, and stakeholder-aligned KPI modeling.")
-    out["project_story"].setdefault("impact_story", "The candidate demonstrates measurable outcomes and technical leadership.")
+    out["project_story"].setdefault("executive_summary", "Current state reporting is delayed by fragmented extracts and manual reconciliation, while the future state is a governed KPI delivery cadence with transparent SLA tracking and stakeholder confidence in decision-grade metrics.")
+    out["project_story"].setdefault("challenge", "Source systems are inconsistent and require governance controls, ingestion standards, and ownership alignment before executive reporting can be trusted for weekly operating reviews.")
+    out["project_story"].setdefault("approach", "Implement medallion layers with automated data quality checks, lineage-aware modeling, and repeatable release evidence so each KPI can be traced from source ingestion through business consumption.")
+    out["project_story"].setdefault("impact_story", "Expected impact includes reducing pipeline SLA misses, improving dashboard adoption, and providing measurable cost and revenue signal clarity for faster leadership decisions.")
 
     if not isinstance(out.get("business_outcome"), dict):
         out["business_outcome"] = {}

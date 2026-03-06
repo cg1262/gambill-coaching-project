@@ -103,6 +103,7 @@ from security import (
 )
 from rate_limits import RateLimitExceeded, enforce_rate_limit, policy_snapshot as rate_limit_policy_snapshot, policy_update as rate_limit_policy_update
 from webhook_security import parse_webhook_body, verify_webhook_signature
+from webhook_alerts import INVALID_WEBHOOK_SIGNATURE_TRACKER
 from admin_runtime_config import runtime_rate_limit_snapshot, runtime_rate_limit_update
 
 class _JsonFormatter(logging.Formatter):
@@ -717,6 +718,31 @@ def _verify_subscription_webhook_signature(req: CoachingSubscriptionSyncRequest)
         headers["x-webhook-signature"] = str(req.webhook_signature)
 
     return verify_webhook_signature(provider=provider, body_bytes=body_bytes, headers=headers)
+
+
+def _record_invalid_webhook_signature_attempt(*, provider: str, source_ip: str, route: str, reason: str, actor: str | None = None, role: str | None = None) -> None:
+    triggered, attempt_count = INVALID_WEBHOOK_SIGNATURE_TRACKER.record_attempt(
+        provider=provider,
+        source_ip=source_ip,
+        route=route,
+    )
+    if not triggered:
+        return
+
+    logger.error(
+        "coaching_webhook_invalid_signature_alert",
+        extra={
+            "provider": provider,
+            "source_ip": source_ip,
+            "route": route,
+            "reason": reason,
+            "attempt_count": attempt_count,
+            "threshold": max(1, int(os.getenv("WEBHOOK_INVALID_SIG_ALERT_THRESHOLD", "5") or 5)),
+            "window_seconds": max(1, int(os.getenv("WEBHOOK_INVALID_SIG_ALERT_WINDOW_SECONDS", "300") or 300)),
+            "actor": actor,
+            "role": role,
+        },
+    )
 
 
 def _derive_subscription_event_id(*, raw_event: dict[str, Any] | None, provider: str, workspace_id: str, email: str, event_type: str, status: str) -> tuple[str, bool]:
@@ -2179,6 +2205,14 @@ def coaching_subscription_sync(req: CoachingSubscriptionSyncRequest, request: Re
                 ),
             },
         )
+        _record_invalid_webhook_signature_attempt(
+            provider=str(req.provider or "generic").strip().lower(),
+            source_ip=str((request.client.host if request.client else "unknown") or "unknown"),
+            route="/coaching/subscription/sync",
+            reason=str(verification.reason or "invalid_signature"),
+            actor=session.username,
+            role=session.role,
+        )
         raise HTTPException(status_code=403, detail="Invalid webhook authentication")
 
     normalized_status = _normalize_subscription_status(req.subscription_status)
@@ -2267,6 +2301,20 @@ async def coaching_subscription_webhook(request: Request) -> dict:
     provider = str(request.headers.get("x-webhook-provider") or payload.get("provider") or "squarespace").strip().lower()
     verification = verify_webhook_signature(provider=provider, body_bytes=raw_body, headers={k: v for k, v in request.headers.items()}, tolerance_seconds=300)
     if not verification.valid:
+        logger.warning(
+            "coaching_subscription_webhook_rejected",
+            extra={
+                "provider": provider,
+                "reason": verification.reason,
+                "source_ip": str((request.client.host if request.client else "unknown") or "unknown"),
+            },
+        )
+        _record_invalid_webhook_signature_attempt(
+            provider=provider,
+            source_ip=str((request.client.host if request.client else "unknown") or "unknown"),
+            route="/coaching/subscription/webhook",
+            reason=str(verification.reason or "invalid_signature"),
+        )
         raise HTTPException(status_code=403, detail={"code": "invalid_webhook_signature", "reason": verification.reason})
 
     event_obj = payload.get("data", {}).get("object", {}) if isinstance(payload.get("data"), dict) else {}
@@ -2585,6 +2633,8 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, request: Request, ses
         findings=final_findings,
         floor_score=quality_floor_score,
         auto_regenerated=auto_regenerated_for_quality_floor,
+        workspace_id=req.workspace_id,
+        submission_id=req.submission_id,
     )
     if masked_feedback_hints:
         existing = quality_diagnostics.get("targeted_regeneration_hints") or []
