@@ -1,7 +1,33 @@
 # POC Deliverables Status
 
-Last Updated: 2026-03-04
+Last Updated: 2026-03-05
 Owner: ERD Program Team
+
+## Checkpoint Update (2026-03-05 - Sprint 11 Security Execution: Resume/Diagnostics Hardening + Rate/Webhook Revalidation)
+
+### Done
+- Validated Sprint 11 quality/resume/conversion changes preserve authorization boundaries and maintain generic denial contract coverage via the API security pack.
+- Added regressions for resume security hygiene:
+  - `test_resume_upload_masks_secret_like_filename_echo`
+  - `test_resume_upload_masks_secret_like_error_message`
+- Added diagnostics safety regression ensuring feedback-loop regeneration hints are masked before response/persistence:
+  - `test_quality_diagnostics_feedback_hints_are_secret_masked`
+- Hardened interview artifact sanitization path so pre-populated interview-ready package fields are re-masked and cannot leak secret-like strings after regeneration.
+- Stabilized security tests against transient DuckDB file-lock contention by mocking feedback/recent-run DB reads in LLM output security tests.
+- Revalidated webhook signature/timestamp controls and route-level throttling remain intact after Sprint 11 updates.
+- Reviewed web dependency posture: `npm audit --omit=dev --json` still reports a high-severity `next` advisory set; remediation path is major upgrade (`next@16.1.6`) and should be executed as a controlled runtime-compliant migration.
+
+### Validation
+- `python -m pytest tests/test_auth_contract_security.py tests/test_llm_output_security.py tests/test_security_sprint2.py tests/test_coaching_security_access.py tests/test_coaching_generation_guardrails.py tests/test_coaching_subscription.py` (apps/api) → **54 passed, 1 warning**.
+- `python -m pytest -q tests/test_security_rate_limit_webhook.py tests/test_rate_limits_and_webhooks.py tests/test_coaching_subscription.py` (apps/api) → **14 passed, 1 warning**.
+- `python -m py_compile main.py coaching\sow_validation.py coaching\sow_security.py` (apps/api) → **pass**.
+- `npm run typecheck` (apps/web) → **expected fail-fast** (runtime gate: host Node `v24.13.1`, npm `11.8.0`; requires Node `20.11.1`, npm `10.x`).
+- `npm audit --omit=dev --json` (apps/web) → **1 high** (`next` advisories; major upgrade required).
+
+### Risks / Follow-ups
+- Controlled Next.js upgrade plan required to clear current high advisory (major-version jump with regression pass under pinned runtime).
+- Web compile/build signoff still blocked on compliant runtime environment execution.
+- Production alerting for repeated invalid webhook signatures remains pending ops wiring.
 
 ## Checkpoint Update (2026-03-04 - Sprint 9 Frontend Execution: Intake UX + Charter Review Flow)
 

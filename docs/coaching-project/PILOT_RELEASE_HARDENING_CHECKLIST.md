@@ -2,9 +2,9 @@
 
 Use this as a go/no-go gate before enabling pilot users.
 
-## Current Gate Status (2026-03-04)
+## Current Gate Status (2026-03-05)
 - **Security pilot gate:** CONDITIONAL GO
-- **Why conditional:** Sprint 8 security pass reconfirmed auth/session denial contract stability, instrumentation/event payload sanitization, generated-output URL safety, diagnostics secrecy, subscription replay safety, webhook signature/timestamp rejection behavior, and route-level throttling for auth + subscription status/sync/webhook surfaces. Runtime policy now has dedicated regression coverage (including secret-like output redaction checks), but pilot remains conditional on (1) deterministic web build success proof under compliant runtime (`Node 20.11.1`, `npm 10.x`) and (2) production alerting for repeated invalid webhook signatures.
+- **Why conditional:** Sprint 11 security execution reconfirmed auth/session denial contract stability, generated-output URL safety, diagnostics secrecy, subscription replay safety, webhook signature/timestamp rejection behavior, and route-level throttling for auth + subscription status/sync/webhook surfaces. New regressions now explicitly guard resume filename/error echo masking and feedback-hint diagnostics masking. Pilot remains conditional on (1) deterministic web build success proof under compliant runtime (`Node 20.11.1`, `npm 10.x`) and (2) production alerting for repeated invalid webhook signatures.
 
 ## 1) Auth + Subscription Enforcement
 - [x] Verify all coaching generation routes require authenticated session + allowed role (`admin`/`editor`).
@@ -36,13 +36,12 @@ Use this as a go/no-go gate before enabling pilot users.
 
 ## 6) Test + Release Evidence
 - [x] Run API security regression tests (auth, RBAC, inactive-subscription denial, logging masks, LLM guardrails).
-- [ ] Run compile/build checks for API + web. *(API compile passes; on this host, web `typecheck`/`build:clean` are intentionally fail-fast due runtime mismatch (`Node v24.13.1`, `npm 11.8.0`) before build execution. Compliant-runtime green proof is still pending.)*
+- [ ] Run compile/build checks for API + web. *(API compile passes; on this host, web `typecheck` is intentionally fail-fast due runtime mismatch (`Node v24.13.1`, `npm 11.8.0`) before build execution. Compliant-runtime green proof is still pending.)*
 - [ ] Attach test/build output + commit SHA to pilot launch notes.
 
-### Evidence Commands (2026-03-04 Security Pilot Gate Refresh)
-- `python -m pytest tests/test_auth_contract_security.py tests/test_llm_output_security.py tests/test_security_sprint2.py tests/test_coaching_security_access.py tests/test_coaching_generation_guardrails.py tests/test_coaching_subscription.py` → **52 passed, 1 warning**
+### Evidence Commands (2026-03-05 Sprint 11 Security Execution)
+- `python -m pytest tests/test_auth_contract_security.py tests/test_llm_output_security.py tests/test_security_sprint2.py tests/test_coaching_security_access.py tests/test_coaching_generation_guardrails.py tests/test_coaching_subscription.py` → **54 passed, 1 warning**
 - `python -m pytest -q tests/test_security_rate_limit_webhook.py tests/test_rate_limits_and_webhooks.py tests/test_coaching_subscription.py` → **14 passed, 1 warning**
-- `python -m compileall -q .` → **pass**
-- `npm run runtime:test` → **pass** (4 tests)
+- `python -m py_compile main.py coaching\sow_validation.py coaching\sow_security.py` → **pass**
 - `npm run typecheck` → **expected fail-fast** on runtime mismatch (`Node v24.13.1`, `npm 11.8.0`)
-- `npm run build:clean` → **expected fail-fast** on runtime mismatch (`Node v24.13.1`, `npm 11.8.0`)
+- `npm audit --omit=dev --json` → **1 high vulnerability (`next`)**; advisories include `GHSA-h25m-26qc-wcjf` and `GHSA-9g9p-9gw9-jx7f`; lockfile reports major upgrade path (`next@16.1.6`) so remediation should be planned as controlled framework upgrade under Node 20.11.1/npm 10.x.

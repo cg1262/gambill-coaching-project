@@ -182,6 +182,9 @@ def test_generated_sow_blocks_unsafe_urls_and_secret_text(monkeypatch, unsafe_ur
         "get_coaching_account_subscription",
         lambda workspace_id, username=None, email=None: {"subscription_status": "active", "email": email},
     )
+    monkeypatch.setattr(main, "list_recent_coaching_feedback_events", lambda submission_id, limit=3: [])
+    monkeypatch.setattr(main, "list_coaching_generation_runs", lambda submission_id, limit=1: [])
+    monkeypatch.setattr(main, "save_coaching_generation_run", lambda **kwargs: None)
 
     def _unsafe_skeleton(intake, parsed_jobs):
         return {
@@ -262,6 +265,9 @@ def test_project_story_narrative_fields_are_secret_masked(monkeypatch):
         lambda workspace_id, username=None, email=None: {"subscription_status": "active", "email": email},
     )
 
+    monkeypatch.setattr(main, "list_recent_coaching_feedback_events", lambda submission_id, limit=3: [])
+    monkeypatch.setattr(main, "list_coaching_generation_runs", lambda submission_id, limit=1: [])
+    monkeypatch.setattr(main, "save_coaching_generation_run", lambda **kwargs: None)
     monkeypatch.setattr(
         main,
         "build_sow_skeleton",
@@ -311,6 +317,7 @@ def test_quality_diagnostics_remain_provider_secret_free(monkeypatch):
         "get_coaching_account_subscription",
         lambda workspace_id, username=None, email=None: {"subscription_status": "active", "email": email},
     )
+    monkeypatch.setattr(main, "list_recent_coaching_feedback_events", lambda submission_id, limit=3: [])
     monkeypatch.setattr(main, "save_coaching_generation_run", lambda **kwargs: None)
     monkeypatch.setattr(main, "list_coaching_generation_runs", lambda submission_id, limit=1: [])
     monkeypatch.setattr(
@@ -343,6 +350,50 @@ def test_quality_diagnostics_remain_provider_secret_free(monkeypatch):
         assert "api_key" not in serialized
         assert "base_url" not in serialized
         assert "tok-secret" not in serialized
+    finally:
+        app.dependency_overrides = {}
+
+
+def test_quality_diagnostics_feedback_hints_are_secret_masked(monkeypatch):
+    app.dependency_overrides[get_current_session] = _override_session("editor")
+    monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: _base_intake(submission_id))
+    monkeypatch.setattr(
+        main,
+        "get_coaching_account_subscription",
+        lambda workspace_id, username=None, email=None: {"subscription_status": "active", "email": email},
+    )
+
+    captured = {}
+    monkeypatch.setattr(main, "save_coaching_generation_run", lambda **kwargs: captured.update(kwargs))
+    monkeypatch.setattr(main, "list_coaching_generation_runs", lambda submission_id, limit=1: [])
+    monkeypatch.setattr(
+        main,
+        "list_recent_coaching_feedback_events",
+        lambda submission_id, limit=3: [{"regeneration_hints_json": ["Use token=super-secret-value and tighten milestones"]}],
+    )
+    monkeypatch.setattr(
+        main,
+        "generate_sow_with_llm",
+        lambda intake, parsed_jobs: {"ok": True, "sow": main.build_sow_skeleton(intake, parsed_jobs), "meta": {"provider": "openai-compatible"}},
+    )
+
+    try:
+        client = TestClient(app)
+        res = client.post(
+            "/coaching/sow/generate",
+            json={"workspace_id": "ws-1", "submission_id": "sub-1", "parsed_jobs": []},
+        )
+        assert res.status_code == 200
+        diagnostics = ((res.json().get("quality") or {}).get("quality_diagnostics") or {})
+        hints = diagnostics.get("targeted_regeneration_hints") or []
+        serialized = str(hints).lower()
+        assert "super-secret-value" not in serialized
+        assert "token=***" in serialized
+
+        persisted = (((captured.get("validation") or {}).get("feedback_loop") or {}).get("regeneration_hints_used") or [])
+        persisted_serialized = str(persisted).lower()
+        assert "super-secret-value" not in persisted_serialized
+        assert "token=***" in persisted_serialized
     finally:
         app.dependency_overrides = {}
 

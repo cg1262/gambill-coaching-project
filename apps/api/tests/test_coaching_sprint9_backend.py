@@ -60,6 +60,40 @@ def test_resume_upload_pdf_fallback_sets_warning(monkeypatch):
     assert "parse_warning" in body["resume_parse_summary"]
 
 
+def test_resume_upload_masks_secret_like_filename_echo(monkeypatch):
+    app.dependency_overrides[get_current_session] = _override_session("editor", "coach-s9")
+    monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: None)
+
+    client = TestClient(app)
+    resp = client.post(
+        "/coaching/intake/resume/upload",
+        data={"workspace_id": "ws-1"},
+        files={"file": ("candidate_token=supersecret_resume.txt", b"Senior engineer", "text/plain")},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    echoed = str((body.get("resume_parse_summary") or {}).get("filename") or "")
+    assert "supersecret" not in echoed.lower()
+    assert "token=***" in echoed.lower()
+
+
+def test_resume_upload_masks_secret_like_error_message(monkeypatch):
+    app.dependency_overrides[get_current_session] = _override_session("editor", "coach-s9")
+    monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: None)
+
+    client = TestClient(app)
+    resp = client.post(
+        "/coaching/intake/resume/upload",
+        data={"workspace_id": "ws-1"},
+        files={"file": ("candidate_token=supersecret_resume.exe", b"MZ", "application/octet-stream")},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert "supersecret" not in str(body.get("message", "")).lower()
+
+
 def test_validator_enforces_globalmart_charter_section_order():
     sow = build_sow_skeleton(intake={"applicant_name": "Alex", "preferences": {}}, parsed_jobs=[])
     findings = validate_sow_payload(sow)
