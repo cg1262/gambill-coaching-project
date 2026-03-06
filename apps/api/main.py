@@ -565,6 +565,7 @@ class CoachingIntakeRequest(BaseModel):
             "years_experience_hint",
             "role_evidence",
             "parse_confidence",
+            "parse_confidence_explainability",
             "parse_strategy",
             "fallback_used",
             "parse_warning",
@@ -3184,11 +3185,38 @@ def coaching_conversion_weekly_summary(
             by_day[day][name] += 1
 
     intake = max(1, counts.get("intake_completed", 0))
+    generated_total = counts.get("sow_generated", 0) + counts.get("sow_regenerated", 0)
+    exported_total = counts.get("sow_exported", 0)
+    cta_total = counts.get("cta_click", 0) + counts.get("mentoring_intent", 0)
     summary_rates = {
-        "generate_rate": round((counts.get("sow_generated", 0) + counts.get("sow_regenerated", 0)) / intake, 3),
-        "export_rate": round(counts.get("sow_exported", 0) / intake, 3),
-        "cta_rate": round((counts.get("cta_click", 0) + counts.get("mentoring_intent", 0)) / intake, 3),
+        "generate_rate": round(generated_total / intake, 3),
+        "export_rate": round(exported_total / intake, 3),
+        "cta_rate": round(cta_total / intake, 3),
     }
+
+    funnel_stages = [
+        ("intake_completed", counts.get("intake_completed", 0)),
+        ("sow_generated_or_regenerated", generated_total),
+        ("sow_exported", exported_total),
+        ("cta_or_intent", cta_total),
+    ]
+    drop_offs: list[dict[str, Any]] = []
+    for idx in range(len(funnel_stages) - 1):
+        stage, current = funnel_stages[idx]
+        next_stage, nxt = funnel_stages[idx + 1]
+        loss = max(0, current - nxt)
+        loss_rate = round((loss / current), 3) if current > 0 else None
+        drop_offs.append(
+            {
+                "from_stage": stage,
+                "to_stage": next_stage,
+                "current_count": current,
+                "next_count": nxt,
+                "drop_off_count": loss,
+                "drop_off_rate": loss_rate,
+            }
+        )
+    top_drop_offs = sorted(drop_offs, key=lambda row: row.get("drop_off_count") or 0, reverse=True)
 
     return {
         "ok": True,
@@ -3198,6 +3226,11 @@ def coaching_conversion_weekly_summary(
         "window": {"since": since, "until": until},
         "counts": counts,
         "conversion_rates": summary_rates,
+        "drop_off_insights": {
+            "stage_sequence": [{"stage": stage, "count": count} for stage, count in funnel_stages],
+            "stage_drop_offs": drop_offs,
+            "top_drop_offs": top_drop_offs[:3],
+        },
         "daily_breakdown": [{"day": day, **vals} for day, vals in sorted(by_day.items())],
         "total_events": len(events),
     }

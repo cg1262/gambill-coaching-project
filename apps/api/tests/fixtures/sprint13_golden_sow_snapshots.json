@@ -1,0 +1,130 @@
+{
+  "globalmart": {
+    "project_title": "Avery Data Engineering Capstone",
+    "scope": {
+      "current_role_level": "senior",
+      "target_role_level": "senior",
+      "scope_difficulty": "advanced",
+      "parse_confidence": 82,
+      "suggested_timeline_weeks": 6,
+      "capability_index": 18
+    },
+    "story": {
+      "executive_summary": "Build a job-aligned medallion data platform project with measurable business outcomes and portfolio-ready artifacts.",
+      "challenge": "Translate fragmented source data into trusted KPI reporting under tight delivery timelines.",
+      "approach": "Implement bronze/silver/gold pipelines, data quality checks, and executive-friendly ROI dashboards.",
+      "impact_story": "Demonstrate end-to-end ownership from ingestion through business narrative and stakeholder-ready metrics."
+    },
+    "charter_exec": {
+      "current_state": "Reporting is delayed and teams reconcile metrics manually.",
+      "future_state": "Decision makers use trusted self-serve KPIs refreshed on a predictable SLA."
+    },
+    "milestone_names": [
+      "Discovery + Business framing",
+      "Bronze/Silver implementation",
+      "Gold + ROI dashboard",
+      "Final review + portfolio assets"
+    ],
+    "data_source_names": [
+      "NYC TLC Trip Record Data",
+      "Bureau of Labor Statistics Public Data API",
+      "Chicago Data Portal"
+    ]
+  },
+  "voltstream": {
+    "project_title": "Morgan Data Engineering Capstone",
+    "scope": {
+      "current_role_level": "mid",
+      "target_role_level": "senior",
+      "scope_difficulty": "advanced",
+      "parse_confidence": 82,
+      "suggested_timeline_weeks": 6,
+      "capability_index": 16
+    },
+    "story": {
+      "executive_summary": "Build a job-aligned medallion data platform project with measurable business outcomes and portfolio-ready artifacts.",
+      "challenge": "Translate fragmented source data into trusted KPI reporting under tight delivery timelines.",
+      "approach": "Implement bronze/silver/gold pipelines, data quality checks, and executive-friendly ROI dashboards.",
+      "impact_story": "Demonstrate end-to-end ownership from ingestion through business narrative and stakeholder-ready metrics."
+    },
+    "charter_exec": {
+      "current_state": "Reporting is delayed and teams reconcile metrics manually.",
+      "future_state": "Decision makers use trusted self-serve KPIs refreshed on a predictable SLA."
+    },
+    "milestone_names": [
+      "Discovery + Business framing",
+      "Bronze/Silver implementation",
+      "Gold + ROI dashboard",
+      "Final review + portfolio assets"
+    ],
+    "data_source_names": [
+      "Bureau of Labor Statistics Public Data API",
+      "Chicago Data Portal",
+      "NYC Open Data (Socrata)"
+    ]
+  },
+  "foundational": {
+    "project_title": "Jordan Data Engineering Capstone",
+    "scope": {
+      "current_role_level": "junior",
+      "target_role_level": "mid",
+      "scope_difficulty": "foundational",
+      "parse_confidence": 82,
+      "suggested_timeline_weeks": 10,
+      "capability_index": 9
+    },
+    "story": {
+      "executive_summary": "Build a job-aligned medallion data platform project with measurable business outcomes and portfolio-ready artifacts.",
+      "challenge": "Translate fragmented source data into trusted KPI reporting under tight delivery timelines.",
+      "approach": "Implement bronze/silver/gold pipelines, data quality checks, and executive-friendly ROI dashboards.",
+      "impact_story": "Demonstrate end-to-end ownership from ingestion through business narrative and stakeholder-ready metrics."
+    },
+    "charter_exec": {
+      "current_state": "Reporting is delayed and teams reconcile metrics manually.",
+      "future_state": "Decision makers use trusted self-serve KPIs refreshed on a predictable SLA."
+    },
+    "milestone_names": [
+      "Discovery + Business framing",
+      "Bronze/Silver implementation",
+      "Gold + ROI dashboard",
+      "Final review + portfolio assets"
+    ],
+    "data_source_names": [
+      "NYC TLC Trip Record Data",
+      "Bureau of Labor Statistics Public Data API",
+      "Chicago Data Portal"
+    ]
+  },
+  "advanced_finops": {
+    "project_title": "Casey Data Engineering Capstone",
+    "scope": {
+      "current_role_level": "senior",
+      "target_role_level": "senior",
+      "scope_difficulty": "advanced",
+      "parse_confidence": 82,
+      "suggested_timeline_weeks": 5,
+      "capability_index": 20
+    },
+    "story": {
+      "executive_summary": "Build a job-aligned medallion data platform project with measurable business outcomes and portfolio-ready artifacts.",
+      "challenge": "Translate fragmented source data into trusted KPI reporting under tight delivery timelines.",
+      "approach": "Implement bronze/silver/gold pipelines, data quality checks, and executive-friendly ROI dashboards.",
+      "impact_story": "Demonstrate end-to-end ownership from ingestion through business narrative and stakeholder-ready metrics."
+    },
+    "charter_exec": {
+      "current_state": "Reporting is delayed and teams reconcile metrics manually.",
+      "future_state": "Decision makers use trusted self-serve KPIs refreshed on a predictable SLA."
+    },
+    "milestone_names": [
+      "Discovery + Business framing",
+      "Bronze/Silver implementation",
+      "Gold + ROI dashboard",
+      "Final review + portfolio assets"
+    ],
+    "data_source_names": [
+      "NYC TLC Trip Record Data",
+      "Bureau of Labor Statistics Public Data API",
+      "Chicago Data Portal"
+    ]
+  }
+}

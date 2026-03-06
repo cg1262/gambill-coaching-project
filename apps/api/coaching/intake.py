@@ -71,6 +71,8 @@ def extract_resume_signals(text: str) -> dict[str, Any]:
     raw = str(text or "")
     low = raw.lower()
 
+    confidence_factors: list[dict[str, Any]] = []
+
     role_level = "mid"
     role_evidence: list[str] = []
     if any(token in low for token in ["principal", "staff", "architect", "head of", "director"]):
@@ -109,13 +111,36 @@ def extract_resume_signals(text: str) -> dict[str, Any]:
     elif years_experience > 0:
         role_evidence.append("years-of-experience marker")
 
+    tool_points = min(25, len(tools) * 4)
+    domain_points = min(20, len(domains) * 5)
+    project_points = min(20, len(project_keywords) * 4)
+    years_points = 10 if years_experience > 0 else 0
+    role_points = 10 if role_evidence else 0
+
     confidence_points = 20
-    confidence_points += min(25, len(tools) * 4)
-    confidence_points += min(20, len(domains) * 5)
-    confidence_points += min(20, len(project_keywords) * 4)
-    confidence_points += 10 if years_experience > 0 else 0
-    confidence_points += 10 if role_evidence else 0
+    confidence_points += tool_points
+    confidence_points += domain_points
+    confidence_points += project_points
+    confidence_points += years_points
+    confidence_points += role_points
     parse_confidence = max(0, min(100, confidence_points))
+
+    confidence_factors.extend([
+        {"label": "Base heuristic prior", "points": 20, "max_points": 20, "evidence_count": 1},
+        {"label": "Tool signals detected", "points": tool_points, "max_points": 25, "evidence_count": len(tools), "evidence": tools[:8]},
+        {"label": "Domain signals detected", "points": domain_points, "max_points": 20, "evidence_count": len(domains), "evidence": domains[:8]},
+        {"label": "Project keyword coverage", "points": project_points, "max_points": 20, "evidence_count": len(project_keywords), "evidence": project_keywords[:8]},
+        {"label": "Years experience marker", "points": years_points, "max_points": 10, "evidence_count": 1 if years_experience > 0 else 0},
+        {"label": "Role-level evidence", "points": role_points, "max_points": 10, "evidence_count": len(role_evidence), "evidence": role_evidence[:6]},
+    ])
+
+    missing_signals = []
+    if not tools:
+        missing_signals.append("No recognizable data tooling keywords found")
+    if not domains:
+        missing_signals.append("No domain keywords found")
+    if len(project_keywords) < 3:
+        missing_signals.append("Project impact keywords are sparse")
 
     return {
         "role_level": role_level,
@@ -127,5 +152,10 @@ def extract_resume_signals(text: str) -> dict[str, Any]:
         "years_experience_hint": years_experience,
         "role_evidence": role_evidence,
         "parse_confidence": parse_confidence,
+        "parse_confidence_explainability": {
+            "factors": confidence_factors,
+            "missing_signals": missing_signals,
+            "confidence_band": "high" if parse_confidence >= 85 else ("medium" if parse_confidence >= 60 else "low"),
+        },
         "parse_strategy": "heuristic",
     }

@@ -237,6 +237,53 @@ def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
         if not isinstance(recruiter_mapping.get(key), list) or len(recruiter_mapping.get(key) or []) == 0:
             findings.append({"code": "INTERVIEW_RECRUITER_MAPPING_INCOMPLETE", "message": f"interview_ready_package.recruiter_mapping.{key} must be non-empty."})
 
+    # Personalization checks: ensure resume/self-assessment evidence actually appears in generated output.
+    candidate_profile = sow.get("candidate_profile") or {}
+    preferences = candidate_profile.get("preferences") or {}
+    resume_summary = preferences.get("resume_parse_summary") or {}
+    parse_conf = int(resume_summary.get("parse_confidence") or 0)
+    resume_tools = [str(t).strip().lower() for t in (resume_summary.get("tools") or []) if str(t).strip()]
+    resume_domains = [str(d).strip().lower() for d in (resume_summary.get("domains") or []) if str(d).strip()]
+    resume_project_terms = [str(k).strip().lower() for k in (resume_summary.get("project_experience_keywords") or []) if str(k).strip()]
+
+    if parse_conf >= 55 and (resume_tools or resume_domains or resume_project_terms):
+        sow_text_parts = [
+            str(sow.get("project_title") or ""),
+            " ".join(str(v or "") for v in (sow.get("project_story") or {}).values()),
+            " ".join(str(m.get("name") or "") + " " + str(m.get("execution_plan") or "") + " " + str(m.get("business_why") or "") for m in (sow.get("milestones") or []) if isinstance(m, dict)),
+            " ".join(str(x or "") for x in ((sow.get("solution_architecture") or {}).get("primary_tools") or [])),
+            " ".join(str(x or "") for x in ((sow.get("business_outcome") or {}).get("domain_focus") or [])),
+        ]
+        sow_text = " ".join(sow_text_parts).lower()
+
+        tracked_signals = list(dict.fromkeys([*resume_tools[:4], *resume_domains[:3], *resume_project_terms[:3]]))
+        matched_signals = [sig for sig in tracked_signals if sig and sig in sow_text]
+
+        architecture_tools = [str(t).strip().lower() for t in ((sow.get("solution_architecture") or {}).get("primary_tools") or []) if str(t).strip()]
+        outcome_domains = [str(d).strip().lower() for d in ((sow.get("business_outcome") or {}).get("domain_focus") or []) if str(d).strip()]
+        explicit_tool_overlap = len(set(resume_tools).intersection(set(architecture_tools)))
+        explicit_domain_overlap = len(set(resume_domains).intersection(set(outcome_domains)))
+
+        weak_signal_match = tracked_signals and len(matched_signals) < max(1, min(2, len(tracked_signals) // 2))
+        weak_explicit_alignment = bool(resume_tools and resume_domains and explicit_tool_overlap == 0 and explicit_domain_overlap == 0)
+        if weak_signal_match and weak_explicit_alignment:
+            findings.append(
+                {
+                    "code": "PERSONALIZATION_SIGNAL_MISSING",
+                    "message": "Generated SOW appears weakly personalized versus resume_parse_summary signals; include explicit tool/domain/project evidence from candidate profile.",
+                }
+            )
+
+        role_level = str(resume_summary.get("role_level") or "").strip().lower()
+        scope = (candidate_profile.get("role_scope_assessment") or {}).get("scope_difficulty")
+        if role_level == "senior" and str(scope or "").strip().lower() == "foundational":
+            findings.append(
+                {
+                    "code": "PERSONALIZATION_SCOPE_MISMATCH",
+                    "message": "role_scope_assessment.scope_difficulty is too low for senior resume signals; adjust milestone depth and scope expectations.",
+                }
+            )
+
     return findings
 
 
@@ -333,6 +380,8 @@ def build_quality_diagnostics(
         "MILESTONE_ACCEPTANCE_CHECKS_NOT_ACTIONABLE": "Rewrite acceptance checks as measurable verification statements (signed-off, tested, validated, published).",
         "PROJECT_STORY_DEPTH_WEAK": "Deepen project_story with current-state constraints, implementation tradeoffs, and quantified business outcomes.",
         "PROJECT_STORY_METRIC_SIGNAL_MISSING": "Add explicit KPI/operational metrics (SLA, adoption, revenue/cost impact) to project_story narrative.",
+        "PERSONALIZATION_SIGNAL_MISSING": "Reference resume_parse_summary evidence directly in tools, domains, and milestone execution choices.",
+        "PERSONALIZATION_SCOPE_MISMATCH": "Rebalance scope_difficulty and timeline so role level, evidence, and milestone depth align.",
     }
     targeted_regeneration_hints = [regen_hints_map[c] for c in unique_codes if c in regen_hints_map][:6]
     if int(quality.get("structure_score") or 0) < 90:
@@ -376,6 +425,7 @@ def build_quality_diagnostics(
     major_codes = [code for code in unique_codes if code.startswith(major_prefixes)]
 
     regenerate_payload = {
+        "contract_version": "2026-03-sprint13",
         "endpoint": "/coaching/sow/generate",
         "method": "POST",
         "body": {
@@ -383,8 +433,14 @@ def build_quality_diagnostics(
             "submission_id": submission_id,
             "parsed_jobs": [],
             "regenerate_with_improvements": True,
+            "deficiency_context": {
+                "deficiency_codes": unique_codes[:12],
+                "major_deficiency_codes": major_codes[:8],
+                "targeted_regeneration_hints": targeted_regeneration_hints[:5],
+            },
         },
         "requires": ["workspace_id", "submission_id"],
+        "optional": ["parsed_jobs", "deficiency_context"],
         "reason_codes": major_codes[:8],
         "hints": targeted_regeneration_hints[:5],
     }
@@ -406,6 +462,6 @@ def build_quality_diagnostics(
         "section_order_valid": bool(quality.get("section_order_valid")),
         "style_alignment_score": int(quality.get("style_alignment_score") or 0),
         "targeted_regeneration_hints": targeted_regeneration_hints,
-        "recommended_regeneration": bool(score < int(floor_score) or len(findings) > 0),
+        "recommended_regeneration": bool(score < int(floor_score) or len(major_codes) > 0),
         "regenerate_payload": regenerate_payload,
     }

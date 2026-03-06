@@ -19,8 +19,8 @@ def _resource_topics(resource: dict[str, Any]) -> set[str]:
 
 
 def auto_revise_sow_once(sow: dict[str, Any], findings: list[dict[str, str]]) -> dict[str, Any]:
-    _ = findings
     out = dict(sow)
+    finding_codes = {str((f or {}).get("code") or "").strip().upper() for f in (findings or [])}
     if not isinstance(out.get("solution_architecture"), dict):
         out["solution_architecture"] = {}
     if not isinstance((out.get("solution_architecture") or {}).get("medallion_plan"), dict):
@@ -36,6 +36,17 @@ def auto_revise_sow_once(sow: dict[str, Any], findings: list[dict[str, str]]) ->
     out["project_story"].setdefault("challenge", "Source systems are inconsistent and require governance controls, ingestion standards, and ownership alignment before executive reporting can be trusted for weekly operating reviews.")
     out["project_story"].setdefault("approach", "Implement medallion layers with automated data quality checks, lineage-aware modeling, and repeatable release evidence so each KPI can be traced from source ingestion through business consumption.")
     out["project_story"].setdefault("impact_story", "Expected impact includes reducing pipeline SLA misses, improving dashboard adoption, and providing measurable cost and revenue signal clarity for faster leadership decisions.")
+    if "PROJECT_STORY_METRIC_SIGNAL_MISSING" in finding_codes:
+        out["project_story"]["impact_story"] = "Expected impact includes a 20-30% reduction in report latency, improved SLA adherence, and measurable KPI adoption gains in weekly operating reviews."
+
+    if "PERSONALIZATION_SIGNAL_MISSING" in finding_codes:
+        profile = ((out.get("candidate_profile") or {}).get("preferences") or {}).get("resume_parse_summary") or {}
+        profile_tools = [str(t).strip() for t in (profile.get("tools") or []) if str(t).strip()]
+        profile_domains = [str(d).strip() for d in (profile.get("domains") or []) if str(d).strip()]
+        if profile_tools:
+            out.setdefault("solution_architecture", {}).setdefault("primary_tools", profile_tools[:6])
+        if profile_domains:
+            out.setdefault("business_outcome", {}).setdefault("domain_focus", profile_domains[:3])
 
     if not isinstance(out.get("business_outcome"), dict):
         out["business_outcome"] = {}
@@ -105,6 +116,12 @@ def auto_revise_sow_once(sow: dict[str, Any], findings: list[dict[str, str]]) ->
         "trust_language",
         "Resource recommendations are optional and do not change coaching feedback or project scoring.",
     )
+
+    if "PERSONALIZATION_SCOPE_MISMATCH" in finding_codes:
+        profile = ((out.get("candidate_profile") or {}).get("role_scope_assessment") or {})
+        if str(profile.get("current_role_level") or "").lower() == "senior":
+            profile["scope_difficulty"] = "advanced"
+            profile["suggested_timeline_weeks"] = min(max(int(profile.get("suggested_timeline_weeks") or 6), 4), 8)
 
     out.setdefault("mentoring_cta", {})
     out["mentoring_cta"].setdefault(

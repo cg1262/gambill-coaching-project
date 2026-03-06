@@ -1,7 +1,39 @@
 # POC Deliverables Status
 
-Last Updated: 2026-03-05
+Last Updated: 2026-03-06
 Owner: ERD Program Team
+
+## Checkpoint Update (2026-03-06 - Sprint 13 Backend Execution: Golden Snapshots + Personalization + Conversion Drop-off)
+
+### Done
+- Added Sprint 13 backend quality regression suite:
+  - `apps/api/tests/test_coaching_sprint13_backend.py`
+  - deterministic golden snapshots in `apps/api/tests/fixtures/sprint13_golden_sow_snapshots.json` (4 scenarios)
+  - assertions fail on major style/structure drift and major deficiency regressions.
+- Improved deficiency-aware regeneration contract in `apps/api/coaching/sow_validation.py`:
+  - `regenerate_payload.contract_version = 2026-03-sprint13`
+  - added `body.deficiency_context` carrying deficiency codes + targeted hints
+  - documented optional regeneration fields (`parsed_jobs`, `deficiency_context`).
+- Improved backend correction logic in `apps/api/coaching/sow_completion.py`:
+  - applies targeted adjustments based on finding codes (story metric signal, personalization signal, scope mismatch).
+- Improved resume confidence explainability in `apps/api/coaching/intake.py`:
+  - added `parse_confidence_explainability` with factorized score contribution and missing-signal diagnostics.
+- Added personalization quality checks in `apps/api/coaching/sow_validation.py`:
+  - `PERSONALIZATION_SIGNAL_MISSING`
+  - `PERSONALIZATION_SCOPE_MISMATCH`
+- Extended weekly conversion endpoint in `apps/api/main.py`:
+  - `drop_off_insights.stage_sequence`
+  - `drop_off_insights.stage_drop_offs`
+  - `drop_off_insights.top_drop_offs`.
+
+### Validation
+- `python -m pytest -q tests/test_coaching_sprint13_backend.py` (apps/api)
+- `python -m pytest -q` (apps/api)
+
+### Risks / Follow-ups
+- Snapshot suite is intentionally strict; fixture updates should be intentional and reviewed.
+- Personalization checks are heuristic keyword matching; continue calibration with additional real submissions.
+- Frontend should consume `deficiency_context` and drop-off insights for full UX benefit.
 
 ## Checkpoint Update (2026-03-05 - Sprint 12 Frontend Execution: Fail-Reason UX + Resume Mapping Visibility)
 
