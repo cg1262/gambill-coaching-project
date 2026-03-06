@@ -10,7 +10,7 @@ from urllib import request as urlrequest
 from urllib.error import URLError, HTTPError
 from urllib.parse import urlparse
 import base64
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import json as _json_stdlib
 import logging
 import logging.config
@@ -68,6 +68,7 @@ from db_lakebase import (
     save_coaching_intake_submission,
     get_coaching_intake_submission,
     list_coaching_intake_submissions,
+    update_coaching_intake_preferences,
     save_coaching_generation_run,
     get_latest_coaching_generation_run,
     list_coaching_generation_runs,
@@ -81,6 +82,7 @@ from db_lakebase import (
     list_recent_coaching_subscription_events,
     save_coaching_conversion_event,
     list_recent_coaching_conversion_events,
+    list_coaching_conversion_events_window,
     save_coaching_feedback_event,
     list_recent_coaching_feedback_events,
 )
@@ -560,6 +562,8 @@ class CoachingIntakeRequest(BaseModel):
             "strengths",
             "gaps",
             "years_experience_hint",
+            "role_evidence",
+            "parse_confidence",
             "parse_strategy",
             "fallback_used",
             "parse_warning",
@@ -591,7 +595,17 @@ class CoachingIntakeRequest(BaseModel):
     @field_validator("preferences")
     @classmethod
     def validate_preferences(cls, value: dict[str, Any]) -> dict[str, Any]:
-        allowed_keys = {"target_role", "preferred_stack", "timeline_weeks"}
+        allowed_keys = {
+            "target_role",
+            "preferred_stack",
+            "timeline_weeks",
+            "resume_profile",
+            "combined_profile",
+            "profile_overrides",
+            "stack_preferences",
+            "tool_preferences",
+            "resume_parse_summary",
+        }
         for key in value.keys():
             if key not in allowed_keys:
                 raise ValueError(f"Unsupported preference field: {key}")
@@ -610,6 +624,14 @@ class CoachingIntakeRequest(BaseModel):
                 raise ValueError("preferences.timeline_weeks must be an integer")
             if timeline < 1 or timeline > 104:
                 raise ValueError("preferences.timeline_weeks must be between 1 and 104")
+
+        for key in ["resume_profile", "combined_profile", "profile_overrides", "resume_parse_summary"]:
+            if key in value and value.get(key) is not None and not isinstance(value.get(key), dict):
+                raise ValueError(f"preferences.{key} must be an object")
+
+        for key in ["stack_preferences", "tool_preferences"]:
+            if key in value and value.get(key) is not None and not isinstance(value.get(key), list):
+                raise ValueError(f"preferences.{key} must be a list")
 
         return value
 
@@ -1280,11 +1302,11 @@ async def coaching_resume_upload(
             max_size_bytes=DEFAULT_MAX_RESUME_BYTES,
         )
     except FileValidationError as e:
-        return {"ok": False, "workspace_id": workspace_id, "message": str(e)}
+        return {"ok": False, "workspace_id": workspace_id, "message": mask_secrets_in_text(str(e))}
 
     resume_text, strategy = _extract_resume_text(filename, data)
     parsed_summary = extract_resume_signals(resume_text)
-    parsed_summary.update({"filename": filename, "parse_strategy": strategy})
+    parsed_summary.update({"filename": mask_secrets_in_text(filename), "parse_strategy": strategy})
     if not str(resume_text or "").strip():
         parsed_summary["fallback_used"] = True
         parsed_summary["parse_warning"] = "Could not reliably extract text; provide pasted resume_text fallback in intake."
@@ -2492,6 +2514,7 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, request: Request, ses
         for h in (event.get("regeneration_hints_json") or [])
         if str(h).strip()
     ][:8]
+    masked_feedback_hints = [mask_secrets_in_text(str(h or "")) for h in feedback_hints if str(h or "").strip()]
 
     llm_result = generate_sow_with_llm(
         intake={
@@ -2563,9 +2586,9 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, request: Request, ses
         floor_score=quality_floor_score,
         auto_regenerated=auto_regenerated_for_quality_floor,
     )
-    if feedback_hints:
+    if masked_feedback_hints:
         existing = quality_diagnostics.get("targeted_regeneration_hints") or []
-        quality_diagnostics["targeted_regeneration_hints"] = list(dict.fromkeys([*feedback_hints, *existing]))[:10]
+        quality_diagnostics["targeted_regeneration_hints"] = list(dict.fromkeys([*masked_feedback_hints, *existing]))[:10]
 
     prior_runs = list_coaching_generation_runs(req.submission_id, limit=1)
     prior_score = None
@@ -2617,14 +2640,13 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, request: Request, ses
             "observability": observability,
             "feedback_loop": {
                 "feedback_event_count": len(feedback_events),
-                "regeneration_hints_used": feedback_hints,
+                "regeneration_hints_used": masked_feedback_hints,
             },
             "quality_flags": {
                 "has_required_contract_fields": len(final_findings) == 0,
                 "used_llm_provider": generation_meta.get("provider") == "openai-compatible",
                 "fallback_used": not bool(llm_result.get("ok")),
                 "auto_regenerated_for_quality_floor": auto_regenerated_for_quality_floor,
-            "hard_quality_gate_triggered": hard_quality_gate_triggered,
                 "hard_quality_gate_triggered": hard_quality_gate_triggered,
             },
             "quality": {
@@ -3076,6 +3098,59 @@ def coaching_conversion_funnel(workspace_id: str, submission_id: str | None = No
     ]
     funnel = [{"event": name, "count": counts.get(name, 0)} for name in ordered]
     return {"ok": True, "workspace_id": workspace_id, "submission_id": submission_id, "funnel": funnel, "total_events": len(events)}
+
+
+@app.get("/coaching/conversion/weekly-summary")
+def coaching_conversion_weekly_summary(
+    workspace_id: str,
+    submission_id: str | None = None,
+    lookback_days: int = 7,
+    session=Depends(get_current_session),
+) -> dict:
+    assert_role(session, {"admin", "editor", "viewer"})
+    days = max(1, min(int(lookback_days or 7), 60))
+    now_utc = datetime.now(timezone.utc)
+    since = (now_utc - timedelta(days=days)).isoformat()
+    until = now_utc.isoformat()
+
+    events = list_coaching_conversion_events_window(
+        workspace_id=workspace_id,
+        submission_id=submission_id,
+        since_iso=since,
+        until_iso=until,
+        limit=10000,
+    )
+
+    tracked = ["intake_completed", "sow_generated", "sow_regenerated", "sow_exported", "cta_click", "mentoring_intent"]
+    counts = {name: 0 for name in tracked}
+    by_day: dict[str, dict[str, int]] = {}
+    for event in events:
+        name = str(event.get("event_name") or "unknown")
+        created_at = str(event.get("created_at") or "")
+        day = created_at[:10] if len(created_at) >= 10 else "unknown"
+        if name in counts:
+            counts[name] += 1
+            by_day.setdefault(day, {k: 0 for k in tracked})
+            by_day[day][name] += 1
+
+    intake = max(1, counts.get("intake_completed", 0))
+    summary_rates = {
+        "generate_rate": round((counts.get("sow_generated", 0) + counts.get("sow_regenerated", 0)) / intake, 3),
+        "export_rate": round(counts.get("sow_exported", 0) / intake, 3),
+        "cta_rate": round((counts.get("cta_click", 0) + counts.get("mentoring_intent", 0)) / intake, 3),
+    }
+
+    return {
+        "ok": True,
+        "workspace_id": workspace_id,
+        "submission_id": submission_id,
+        "lookback_days": days,
+        "window": {"since": since, "until": until},
+        "counts": counts,
+        "conversion_rates": summary_rates,
+        "daily_breakdown": [{"day": day, **vals} for day, vals in sorted(by_day.items())],
+        "total_events": len(events),
+    }
 
 
 @app.get("/coaching/health/readiness")

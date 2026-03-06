@@ -9,14 +9,15 @@ from .sow_security import sanitize_generated_sow, _is_valid_non_placeholder_url
 
 
 def _build_interview_ready_package(project_title: str, story: dict[str, Any], milestones: list[dict[str, Any]], tools: list[str]) -> dict[str, Any]:
-    challenge = str((story or {}).get("challenge") or "Translate ambiguous business requirements into reliable data outcomes.")
-    approach = str((story or {}).get("approach") or "Use iterative delivery with measurable acceptance criteria and stakeholder demos.")
-    impact = str((story or {}).get("impact_story") or "Deliver KPI improvements with reproducible implementation evidence.")
+    safe_title = mask_secrets_in_text(str(project_title or "Project"))
+    challenge = mask_secrets_in_text(str((story or {}).get("challenge") or "Translate ambiguous business requirements into reliable data outcomes."))
+    approach = mask_secrets_in_text(str((story or {}).get("approach") or "Use iterative delivery with measurable acceptance criteria and stakeholder demos."))
+    impact = mask_secrets_in_text(str((story or {}).get("impact_story") or "Deliver KPI improvements with reproducible implementation evidence."))
 
     milestone_names = [str(m.get("name") or "Milestone") for m in (milestones or []) if isinstance(m, dict)]
     star_bullets = [
         f"Situation: {challenge}",
-        f"Task: Own delivery of {project_title} milestones with clear KPI targets.",
+        f"Task: Own delivery of {safe_title} milestones with clear KPI targets.",
         f"Action: {approach}",
         f"Result: {impact}",
     ]
@@ -83,15 +84,25 @@ def ensure_interview_ready_package(sow: dict[str, Any]) -> dict[str, Any]:
 
     if not isinstance(package.get("star_bullets"), list) or len(package.get("star_bullets") or []) < 4:
         package["star_bullets"] = built["star_bullets"]
+    else:
+        package["star_bullets"] = [mask_secrets_in_text(str(x or "")) for x in (package.get("star_bullets") or [])]
     if not isinstance(package.get("portfolio_checklist"), list) or len(package.get("portfolio_checklist") or []) < 3:
         package["portfolio_checklist"] = built["portfolio_checklist"]
+    else:
+        package["portfolio_checklist"] = [mask_secrets_in_text(str(x or "")) for x in (package.get("portfolio_checklist") or [])]
 
     recruiter_mapping = package.get("recruiter_mapping") if isinstance(package.get("recruiter_mapping"), dict) else {}
     built_mapping = built.get("recruiter_mapping") or {}
     for key in ["technical_depth", "business_impact", "communication"]:
         if not isinstance(recruiter_mapping.get(key), list) or len(recruiter_mapping.get(key) or []) == 0:
             recruiter_mapping[key] = built_mapping.get(key) or []
-    recruiter_mapping.setdefault("tooling_keywords", built_mapping.get("tooling_keywords") or [])
+        else:
+            recruiter_mapping[key] = [mask_secrets_in_text(str(x or "")) for x in (recruiter_mapping.get(key) or [])]
+    existing_keywords = recruiter_mapping.get("tooling_keywords")
+    if isinstance(existing_keywords, list) and existing_keywords:
+        recruiter_mapping["tooling_keywords"] = [mask_secrets_in_text(str(x or "")) for x in existing_keywords if str(x or "").strip()]
+    else:
+        recruiter_mapping["tooling_keywords"] = built_mapping.get("tooling_keywords") or []
     package["recruiter_mapping"] = recruiter_mapping
 
     out["interview_ready_package"] = package
@@ -175,8 +186,13 @@ def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
             if not str(ms.get("business_why") or "").strip():
                 findings.append({"code": "MILESTONE_BUSINESS_WHY_MISSING", "message": f"milestones[{i}].business_why is required."})
             checks = ms.get("acceptance_checks") or []
-            if not isinstance(checks, list) or len([c for c in checks if str(c).strip()]) < 2:
+            non_empty_checks = [str(c).strip() for c in checks if str(c).strip()]
+            if not isinstance(checks, list) or len(non_empty_checks) < 2:
                 findings.append({"code": "MILESTONE_ACCEPTANCE_CHECKS_MISSING", "message": f"milestones[{i}].acceptance_checks must include at least 2 concrete checks."})
+            else:
+                measurable = [c for c in non_empty_checks if len(c) >= 12 and any(tok in c.lower() for tok in ["pass", "approved", "signed", "validated", "recorded", "published", "measured"])]
+                if len(measurable) < 2:
+                    findings.append({"code": "MILESTONE_ACCEPTANCE_CHECKS_NOT_ACTIONABLE", "message": f"milestones[{i}].acceptance_checks should be measurable and verification-ready (e.g., signed off, tests passed, metric validated)."})
             ms_resources = ms.get("resources") or []
             if not isinstance(ms_resources, list) or len(ms_resources) == 0:
                 findings.append({"code": "MILESTONE_RESOURCES_MISSING", "message": f"milestones[{i}] must include resources."})
@@ -301,6 +317,7 @@ def build_quality_diagnostics(quality: dict[str, Any], findings: list[dict[str, 
         "RESOURCE_LINKS_MISSING": "Populate required/recommended/optional resource plan links.",
         "INGESTION_INSTRUCTIONS_MISSING": "Add explicit ingestion instructions (how/where/frequency) for each data source.",
         "MILESTONE_ACCEPTANCE_CHECKS_MISSING": "Define at least 2 concrete acceptance checks for every milestone.",
+        "MILESTONE_ACCEPTANCE_CHECKS_NOT_ACTIONABLE": "Rewrite acceptance checks as measurable verification statements (signed-off, tested, validated, published).",
     }
     targeted_regeneration_hints = [regen_hints_map[c] for c in unique_codes if c in regen_hints_map][:6]
     if int(quality.get("structure_score") or 0) < 90:
@@ -313,6 +330,24 @@ def build_quality_diagnostics(quality: dict[str, Any], findings: list[dict[str, 
         targeted_regeneration_hints.append("Raise depth: include production-ready artifact detail (tests, docs, runbooks, demo evidence) instead of generic phrasing.")
     targeted_regeneration_hints = list(dict.fromkeys(targeted_regeneration_hints))[:8]
 
+    actionable_fail_reasons = []
+    for finding in findings[:8]:
+        message = str(finding.get("message") or "")
+        path_match = None
+        try:
+            import re
+            path_match = re.search(r"([A-Za-z_]+\[[0-9]+\]\.[A-Za-z_]+|project_charter\.[A-Za-z_\.]+|data_sources\[[0-9]+\]\.[A-Za-z_]+)", message)
+        except Exception:
+            path_match = None
+        actionable_fail_reasons.append(
+            {
+                "code": str(finding.get("code") or "UNKNOWN"),
+                "field": path_match.group(1) if path_match else "sow",
+                "reason": mask_secrets_in_text(message),
+                "suggested_fix": regen_hints_map.get(str(finding.get("code") or ""), "Address this finding and rerun validation."),
+            }
+        )
+
     return {
         "floor_score": floor_score,
         "score": score,
@@ -321,6 +356,7 @@ def build_quality_diagnostics(quality: dict[str, Any], findings: list[dict[str, 
         "deficiency_codes": unique_codes,
         "deficiency_count": len(findings),
         "top_deficiencies": [mask_secrets_in_text(str(f.get("message") or "")) for f in findings[:5]],
+        "actionable_fail_reasons": actionable_fail_reasons,
         "structure_score": int(quality.get("structure_score") or 0),
         "milestone_specificity_score": int(quality.get("milestone_specificity_score") or 0),
         "missing_sections": quality.get("missing_sections") or [],

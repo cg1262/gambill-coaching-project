@@ -2310,6 +2310,58 @@ def list_recent_coaching_conversion_events(workspace_id: str, submission_id: str
     return out
 
 
+def list_coaching_conversion_events_window(
+    workspace_id: str,
+    submission_id: str | None = None,
+    since_iso: str | None = None,
+    until_iso: str | None = None,
+    limit: int = 5000,
+) -> list[dict[str, Any]]:
+    if not is_configured():
+        return []
+    lim = max(1, min(int(limit or 5000), 20000))
+
+    where_clauses: list[str] = ["workspace_id = ?"] if _using_duckdb() else ["workspace_id = %s"]
+    params: list[Any] = [workspace_id]
+    if submission_id:
+        where_clauses.append("submission_id = ?" if _using_duckdb() else "submission_id = %s")
+        params.append(submission_id)
+    if since_iso:
+        where_clauses.append("created_at >= ?" if _using_duckdb() else "created_at >= %s")
+        params.append(since_iso)
+    if until_iso:
+        where_clauses.append("created_at <= ?" if _using_duckdb() else "created_at <= %s")
+        params.append(until_iso)
+
+    where_sql = " AND ".join(where_clauses)
+
+    if _using_duckdb():
+        with lakebase_connection() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM coaching_conversion_events WHERE {where_sql} ORDER BY created_at DESC LIMIT ?",
+                [*params, lim],
+            ).fetchall()
+            cols = [c[0] for c in conn.description]
+            out = [dict(zip(cols, raw)) for raw in rows]
+    else:
+        import psycopg
+        with lakebase_connection() as conn:
+            with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+                cur.execute(
+                    f"SELECT * FROM coaching_conversion_events WHERE {where_sql} ORDER BY created_at DESC LIMIT %s",
+                    (*params, lim),
+                )
+                out = [dict(r) for r in (cur.fetchall() or [])]
+
+    for row in out:
+        if isinstance(row.get("event_payload_json"), str):
+            try:
+                row["event_payload_json"] = json.loads(row.get("event_payload_json") or "{}")
+            except Exception:
+                row["event_payload_json"] = {}
+    return out
+
+
 def save_coaching_feedback_event(
     feedback_id: str,
     workspace_id: str,
@@ -2356,23 +2408,26 @@ def list_recent_coaching_feedback_events(submission_id: str, limit: int = 5) -> 
         return []
     lim = max(1, min(int(limit or 5), 50))
 
-    if _using_duckdb():
-        with lakebase_connection() as conn:
-            rows = conn.execute(
-                "SELECT * FROM coaching_feedback_events WHERE submission_id = ? ORDER BY created_at DESC LIMIT ?",
-                [submission_id, lim],
-            ).fetchall()
-            cols = [c[0] for c in conn.description]
-            out = [dict(zip(cols, raw)) for raw in rows]
-    else:
-        import psycopg
-        with lakebase_connection() as conn:
-            with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
-                cur.execute(
-                    "SELECT * FROM coaching_feedback_events WHERE submission_id = %s ORDER BY created_at DESC LIMIT %s",
-                    (submission_id, lim),
-                )
-                out = [dict(r) for r in (cur.fetchall() or [])]
+    try:
+        if _using_duckdb():
+            with lakebase_connection() as conn:
+                rows = conn.execute(
+                    "SELECT * FROM coaching_feedback_events WHERE submission_id = ? ORDER BY created_at DESC LIMIT ?",
+                    [submission_id, lim],
+                ).fetchall()
+                cols = [c[0] for c in conn.description]
+                out = [dict(zip(cols, raw)) for raw in rows]
+        else:
+            import psycopg
+            with lakebase_connection() as conn:
+                with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+                    cur.execute(
+                        "SELECT * FROM coaching_feedback_events WHERE submission_id = %s ORDER BY created_at DESC LIMIT %s",
+                        (submission_id, lim),
+                    )
+                    out = [dict(r) for r in (cur.fetchall() or [])]
+    except Exception:
+        return []
 
     for row in out:
         for key in ["review_tags_json", "regeneration_hints_json"]:

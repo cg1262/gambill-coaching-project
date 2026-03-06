@@ -72,12 +72,16 @@ def extract_resume_signals(text: str) -> dict[str, Any]:
     low = raw.lower()
 
     role_level = "mid"
+    role_evidence: list[str] = []
     if any(token in low for token in ["principal", "staff", "architect", "head of", "director"]):
         role_level = "senior"
+        role_evidence.append("leadership/senior-title keywords present")
     elif any(token in low for token in ["senior", "sr ", "sr.", "lead"]):
         role_level = "senior"
+        role_evidence.append("senior-title keywords present")
     elif any(token in low for token in ["entry", "junior", "intern", "new grad", "associate"]):
         role_level = "junior"
+        role_evidence.append("entry-level keywords present")
 
     tools = sorted([tool for tool in RESUME_TOOL_KEYWORDS if tool in low])
     domains = sorted([domain for domain in RESUME_DOMAIN_KEYWORDS if domain in low])
@@ -89,6 +93,8 @@ def extract_resume_signals(text: str) -> dict[str, Any]:
         strengths.append("Core analytics engineering stack (Python + SQL) evidenced")
     if any(t in tools for t in ["dbt", "airflow", "spark", "databricks"]):
         strengths.append("Modern data platform tooling experience")
+    if any(t in tools for t in ["aws", "azure", "gcp"]):
+        strengths.append("Cloud platform experience visible")
     if not any(t in tools for t in ["aws", "azure", "gcp"]):
         gaps.append("Cloud platform depth not explicit (AWS/Azure/GCP)")
     if "data quality" not in project_keywords:
@@ -98,6 +104,18 @@ def extract_resume_signals(text: str) -> dict[str, Any]:
 
     years_match = re.findall(r"(\d{1,2})\+?\s+years", low)
     years_experience = max([int(x) for x in years_match], default=0)
+    if years_experience >= 7:
+        role_evidence.append("7+ years experience marker")
+    elif years_experience > 0:
+        role_evidence.append("years-of-experience marker")
+
+    confidence_points = 20
+    confidence_points += min(25, len(tools) * 4)
+    confidence_points += min(20, len(domains) * 5)
+    confidence_points += min(20, len(project_keywords) * 4)
+    confidence_points += 10 if years_experience > 0 else 0
+    confidence_points += 10 if role_evidence else 0
+    parse_confidence = max(0, min(100, confidence_points))
 
     return {
         "role_level": role_level,
@@ -107,5 +125,7 @@ def extract_resume_signals(text: str) -> dict[str, Any]:
         "strengths": strengths,
         "gaps": gaps,
         "years_experience_hint": years_experience,
+        "role_evidence": role_evidence,
+        "parse_confidence": parse_confidence,
         "parse_strategy": "heuristic",
     }

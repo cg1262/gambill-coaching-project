@@ -17,6 +17,40 @@ from .constants import (
 from .sow_validation import evaluate_sow_structure, _build_interview_ready_package
 
 
+def _derive_scope_profile(intake: dict[str, Any], parsed_jobs: list[dict[str, Any]]) -> dict[str, Any]:
+    prefs = intake.get("preferences") or {}
+    resume_summary = (prefs.get("resume_parse_summary") or {}) if isinstance(prefs, dict) else {}
+
+    role_level = str(resume_summary.get("role_level") or "mid").lower()
+    years_hint = int(resume_summary.get("years_experience_hint") or 0)
+    parse_conf = int(resume_summary.get("parse_confidence") or 0)
+    tool_count = len(resume_summary.get("tools") or [])
+
+    seniority_votes = [str((job.get("signals") or {}).get("seniority") or "").strip().lower() for job in (parsed_jobs or [])]
+    seniority_votes = [v for v in seniority_votes if v in {"junior", "mid", "senior"}]
+    target_seniority = max(set(seniority_votes), key=seniority_votes.count) if seniority_votes else role_level
+
+    difficulty = "standard"
+    if role_level == "junior" or years_hint <= 2:
+        difficulty = "foundational"
+    if target_seniority == "senior" and role_level in {"mid", "senior"} and tool_count >= 5:
+        difficulty = "advanced"
+
+    suggested_weeks = 6
+    if difficulty == "foundational":
+        suggested_weeks = 8
+    elif difficulty == "advanced":
+        suggested_weeks = 5
+
+    return {
+        "current_role_level": role_level,
+        "target_role_level": target_seniority,
+        "scope_difficulty": difficulty,
+        "parse_confidence": parse_conf,
+        "suggested_timeline_weeks": suggested_weeks,
+    }
+
+
 def _safe_json_loads(raw: str) -> dict[str, Any]:
     text = str(raw or "").strip()
     if text.startswith("```"):
@@ -243,6 +277,7 @@ def build_sow_skeleton(
     all_domains = sorted({s for p in parsed_jobs for s in p.get("signals", {}).get("domains", [])})
 
     project_title = f"{(intake.get('applicant_name') or 'Candidate')} Data Engineering Capstone"
+    scope_profile = _derive_scope_profile(intake=intake, parsed_jobs=parsed_jobs)
 
     return {
         "schema_version": "0.2",
@@ -250,6 +285,7 @@ def build_sow_skeleton(
         "candidate_profile": {
             "applicant_name": intake.get("applicant_name"),
             "preferences": intake.get("preferences") or {},
+            "role_scope_assessment": scope_profile,
         },
         "business_outcome": {
             "problem_statement": "Define a measurable business problem and target KPI uplift.",
@@ -333,8 +369,8 @@ def build_sow_skeleton(
             "trust_language": "Resource recommendations are optional and do not change coaching feedback or project scoring.",
         },
         "mentoring_cta": {
-            "recommended_tier": "TBD",
-            "reason": "Finalize after validation and skill-gap scoring.",
+            "recommended_tier": "starter" if scope_profile.get("scope_difficulty") == "foundational" else ("elite" if scope_profile.get("scope_difficulty") == "advanced" else "core"),
+            "reason": f"Mapped from resume/job signals: current={scope_profile.get('current_role_level')} target={scope_profile.get('target_role_level')} scope={scope_profile.get('scope_difficulty')}.",
             "trust_language": "Mentoring recommendations are guidance-only and should align with the candidate's goals and budget.",
         },
         "project_charter": {

@@ -21,19 +21,26 @@ def _resource_topics(resource: dict[str, Any]) -> set[str]:
 def auto_revise_sow_once(sow: dict[str, Any], findings: list[dict[str, str]]) -> dict[str, Any]:
     _ = findings
     out = dict(sow)
-    out.setdefault("solution_architecture", {}).setdefault("medallion_plan", {})
+    if not isinstance(out.get("solution_architecture"), dict):
+        out["solution_architecture"] = {}
+    if not isinstance((out.get("solution_architecture") or {}).get("medallion_plan"), dict):
+        out["solution_architecture"]["medallion_plan"] = {}
     med = out["solution_architecture"]["medallion_plan"]
     med.setdefault("bronze", "Raw ingestion and CDC capture.")
     med.setdefault("silver", "Conformance, quality checks, and SCD handling.")
     med.setdefault("gold", "KPI marts and executive analytics consumption layer.")
 
-    out.setdefault("project_story", {})
+    if not isinstance(out.get("project_story"), dict):
+        out["project_story"] = {}
     out["project_story"].setdefault("executive_summary", "This project builds an end-to-end portfolio-ready data product.")
     out["project_story"].setdefault("challenge", "Source systems are inconsistent and require governance before business reporting.")
     out["project_story"].setdefault("approach", "Implement medallion layers, DQ checks, and stakeholder-aligned KPI modeling.")
     out["project_story"].setdefault("impact_story", "The candidate demonstrates measurable outcomes and technical leadership.")
 
-    out.setdefault("business_outcome", {})
+    if not isinstance(out.get("business_outcome"), dict):
+        out["business_outcome"] = {}
+    if not isinstance((out.get("business_outcome") or {}).get("data_sources"), list):
+        out["business_outcome"]["data_sources"] = []
     if not (out["business_outcome"].get("data_sources") or []):
         out["business_outcome"]["data_sources"] = [
             {
@@ -49,13 +56,16 @@ def auto_revise_sow_once(sow: dict[str, Any], findings: list[dict[str, str]]) ->
         if isinstance(ds, dict) and not str(ds.get("selection_rationale") or "").strip():
             ds["selection_rationale"] = "Selected as a public, documentation-backed source aligned to the target business outcome and delivery timeline."
 
-    if not out.get("milestones"):
+    if not isinstance(out.get("milestones"), list) or not out.get("milestones"):
         out["milestones"] = [
             {"name": "Planning", "duration_weeks": 1, "deliverables": ["scope"], "milestone_tags": ["discovery"], "resources": [{"title": "Discovery checklist", "url": "https://www.atlassian.com/software/jira/guides"}]},
             {"name": "Build", "duration_weeks": 2, "deliverables": ["pipelines"], "milestone_tags": ["bronze", "silver"], "resources": [{"title": "Airflow docs", "url": "https://airflow.apache.org/docs/"}]},
             {"name": "Report", "duration_weeks": 1, "deliverables": ["dashboard"], "milestone_tags": ["gold", "roi"], "resources": [{"title": "Looker modeling", "url": "https://cloud.google.com/looker/docs"}]},
         ]
+    normalized_milestones: list[dict[str, Any]] = []
     for ms in (out.get("milestones") or []):
+        if not isinstance(ms, dict):
+            continue
         if not str(ms.get("execution_plan") or "").strip():
             ms["execution_plan"] = "Break work into implementation tasks, owners, and checkpoints with explicit acceptance criteria."
         if not str(ms.get("expected_deliverable") or "").strip():
@@ -69,6 +79,8 @@ def auto_revise_sow_once(sow: dict[str, Any], findings: list[dict[str, str]]) ->
                 "Demo evidence recorded and linked in README",
                 "Coach validates milestone quality against completion criteria",
             ]
+        normalized_milestones.append(ms)
+    out["milestones"] = normalized_milestones
 
     out.setdefault("roi_dashboard_requirements", {})
     out["roi_dashboard_requirements"].setdefault("required_dimensions", ["time", "business_unit"])
