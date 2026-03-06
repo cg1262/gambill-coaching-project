@@ -21,6 +21,14 @@ type SubscriptionStatus = "unknown" | "inactive" | "active";
 type PlanTier = "starter" | "pro" | "elite";
 type MemberLaunchState = "memberHome" | "launchRequested" | "handoffPending" | "landed";
 type ExportFormat = "markdown" | "json";
+type ViewerTabId = "charter" | "summary" | "dataSources" | "architecture" | "milestones" | "story" | "roi" | "resources" | "interview";
+
+type QualityActionableReason = {
+  code: string;
+  field: string;
+  reason: string;
+  suggested_fix: string;
+};
 
 type IntakeDraft = {
   workspaceId: string;
@@ -203,6 +211,27 @@ function buildCombinedProfile(draft: IntakeDraft): string {
     highlights.length ? `Resume signals: ${highlights.join(" | ")}` : "",
   ].filter(Boolean);
   return summaryBits.join("\n");
+}
+
+function mapFailReasonToViewerTab(reason: QualityActionableReason): ViewerTabId {
+  const code = String(reason.code || "").toUpperCase();
+  const field = String(reason.field || "").toLowerCase();
+
+  if (code.includes("MILESTONE") || field.includes("milestone")) return "milestones";
+  if (code.includes("DATA_SOURCE") || code.includes("INGESTION") || field.includes("data_source")) return "dataSources";
+  if (code.includes("RESOURCE") || field.includes("resource")) return "resources";
+  if (code.includes("CHARTER") || code.includes("SECTION") || field.includes("project_charter")) return "charter";
+  if (code.includes("STYLE") || code.includes("NARRATIVE") || field.includes("story")) return "story";
+  return "summary";
+}
+
+function viewerTabCtaLabel(tab: ViewerTabId): string {
+  if (tab === "milestones") return "Open milestone cards";
+  if (tab === "dataSources") return "Open data sources";
+  if (tab === "resources") return "Open resource links";
+  if (tab === "charter") return "Open project charter";
+  if (tab === "story") return "Open story narrative";
+  return "Open executive summary";
 }
 
 function buildProjectScaffold(draft: IntakeDraft): ProjectScaffold {
@@ -484,7 +513,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   const [resumeGapSignals, setResumeGapSignals] = useState<string[]>([]);
   const resumeFileInputRef = useRef<HTMLInputElement | null>(null);
   const [scaffold, setScaffold] = useState<ProjectScaffold | null>(null);
-  const [viewerTab, setViewerTab] = useState<"charter" | "summary" | "dataSources" | "architecture" | "milestones" | "story" | "roi" | "resources" | "interview">("charter");
+  const [viewerTab, setViewerTab] = useState<ViewerTabId>("charter");
   const [stageState, setStageState] = useState<Record<StageId, boolean>>({
     intakeParsed: false,
     sowGenerated: false,
@@ -638,6 +667,20 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
     return reasons.slice(0, 5);
   }, [generationState.quality]);
 
+  const qualityActionableReasons = useMemo((): Array<QualityActionableReason & { targetTab: ViewerTabId }> => {
+    const diagnostics = ((generationState.quality || {}).quality_diagnostics || {}) as Record<string, any>;
+    const rows = Array.isArray(diagnostics.actionable_fail_reasons) ? diagnostics.actionable_fail_reasons : [];
+    return rows.slice(0, 6).map((row: any) => {
+      const normalized: QualityActionableReason = {
+        code: String(row?.code || "UNKNOWN"),
+        field: String(row?.field || "sow"),
+        reason: String(row?.reason || "Quality issue requires correction."),
+        suggested_fix: String(row?.suggested_fix || "Address this issue and regenerate."),
+      };
+      return { ...normalized, targetTab: mapFailReasonToViewerTab(normalized) };
+    });
+  }, [generationState.quality]);
+
   const suggestedFeedbackTags = useMemo(() => {
     const q = generationState.quality || {};
     const diagnostics = (q.quality_diagnostics || {}) as Record<string, any>;
@@ -661,6 +704,17 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
     const labels = suggestedFeedbackTags.map((t) => FEEDBACK_TAG_LABELS[t] || t).join(", ");
     return `Coach focus: ${labels}. Ask for one concrete milestone-level correction per flagged area and require evidence links before approve/send.`;
   }, [suggestedFeedbackTags]);
+
+  const reviewProfileSnapshot = useMemo(() => {
+    const prefs = ((selectedSubmission?.preferences_json || {}) as Record<string, any>) || {};
+    const resumeProfile = ((prefs.resume_profile || {}) as Record<string, any>) || {};
+    const highlights = Array.isArray(resumeProfile.highlights) ? resumeProfile.highlights.map((x: any) => String(x)).filter(Boolean) : [];
+    const strengths = Array.isArray(resumeProfile.strengths) ? resumeProfile.strengths.map((x: any) => String(x)).filter(Boolean) : [];
+    const gaps = Array.isArray(resumeProfile.gaps) ? resumeProfile.gaps.map((x: any) => String(x)).filter(Boolean) : [];
+    const confidence = Number(resumeProfile.confidence || 0);
+    const combinedProfile = String(prefs.combined_profile || "").trim();
+    return { highlights, strengths, gaps, confidence, combinedProfile };
+  }, [selectedSubmission]);
 
   const submissionTimeline = useMemo(() => {
     const events: TimelineEvent[] = [];
@@ -1544,6 +1598,42 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                       </div>
 
                       <div className="card" style={{ padding: 8 }}>
+                        <strong>Resume/Profile Mapping Snapshot</strong>
+                        <div style={{ marginTop: 6, fontSize: 12 }}>
+                          Parse confidence: <span className={`badge ${reviewProfileSnapshot.confidence >= 85 ? "success" : reviewProfileSnapshot.confidence >= 60 ? "warning" : "error"}`}>{reviewProfileSnapshot.confidence || 0}%</span>
+                        </div>
+                        <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
+                          <div>
+                            <strong>Highlights ({reviewProfileSnapshot.highlights.length})</strong>
+                            <ul style={{ margin: "4px 0 0 18px", padding: 0 }}>
+                              {reviewProfileSnapshot.highlights.slice(0, 5).map((item, idx) => <li key={`review-highlight-${idx}`}>{item}</li>)}
+                              {reviewProfileSnapshot.highlights.length === 0 && <li style={{ color: "var(--color-text-muted)" }}>No highlights saved in intake preferences.</li>}
+                            </ul>
+                          </div>
+                          <div>
+                            <strong>Strengths → role evidence ({reviewProfileSnapshot.strengths.length})</strong>
+                            <ul style={{ margin: "4px 0 0 18px", padding: 0 }}>
+                              {reviewProfileSnapshot.strengths.slice(0, 4).map((item, idx) => <li key={`review-strength-${idx}`}>{item}</li>)}
+                              {reviewProfileSnapshot.strengths.length === 0 && <li style={{ color: "var(--color-text-muted)" }}>No mapped strengths captured.</li>}
+                            </ul>
+                          </div>
+                          <div>
+                            <strong>Gaps to close ({reviewProfileSnapshot.gaps.length})</strong>
+                            <ul style={{ margin: "4px 0 0 18px", padding: 0 }}>
+                              {reviewProfileSnapshot.gaps.slice(0, 4).map((item, idx) => <li key={`review-gap-${idx}`}>{item}</li>)}
+                              {reviewProfileSnapshot.gaps.length === 0 && <li style={{ color: "var(--color-text-muted)" }}>No explicit gaps captured.</li>}
+                            </ul>
+                          </div>
+                          {reviewProfileSnapshot.combinedProfile && (
+                            <div>
+                              <strong>Combined profile narrative</strong>
+                              <div style={{ marginTop: 4, whiteSpace: "pre-wrap", color: "var(--color-text-muted)" }}>{reviewProfileSnapshot.combinedProfile}</div>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="card" style={{ padding: 8 }}>
                         <strong>Coach Status + Notes</strong>
                         <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap", alignItems: "center" }}>
                           <select value={selectedSubmissionStatus} onChange={(e) => setSelectedSubmissionStatus(e.target.value)}>
@@ -1692,6 +1782,29 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                             </ul>
                           </div>
                         )}
+                        {qualityActionableReasons.length > 0 && (
+                          <div style={{ marginTop: 6 }}>
+                            Actionable fixes (one-click):
+                            <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
+                              {qualityActionableReasons.map((item, idx) => (
+                                <div key={`quality-actionable-${idx}`} className="card" style={{ padding: 8, border: "1px solid var(--color-border-strong)" }}>
+                                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                                    <span className="badge warning">{item.code}</span>
+                                    <span style={{ fontSize: 11, color: "var(--color-text-muted)" }}>Field: {item.field}</span>
+                                  </div>
+                                  <div style={{ marginTop: 4 }}>{item.reason}</div>
+                                  <div style={{ marginTop: 4, fontSize: 12, color: "var(--color-text-muted)" }}><strong>Suggested fix:</strong> {item.suggested_fix}</div>
+                                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
+                                    <button type="button" onClick={() => setViewerTab(item.targetTab)}>{viewerTabCtaLabel(item.targetTab)}</button>
+                                    <button type="button" className="btn-primary" onClick={() => generateSow(true)} disabled={generationState.running}>
+                                      {generationState.running ? "Regenerating..." : `Regenerate for ${item.code}`}
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                         {Array.isArray(generationState.quality.missing_sections) && generationState.quality.missing_sections.length > 0 && (
                           <div>
                             Missing sections:
@@ -1794,29 +1907,44 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                         <div style={{ fontSize: 11, color: "var(--color-text-muted)", marginBottom: 4 }}><strong>Editable strengths</strong></div>
                         <div style={{ display: "grid", gap: 6 }}>
                           {resumeStrengthSignals.length ? resumeStrengthSignals.map((signal, idx) => (
-                            <input
-                              key={`resume-strength-${idx}`}
-                              value={signal}
-                              onChange={(e) => setResumeStrengthSignals((prev) => prev.map((item, i) => i === idx ? e.target.value : item))}
-                            />
+                            <div key={`resume-strength-${idx}`} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 6 }}>
+                              <input
+                                value={signal}
+                                onChange={(e) => setResumeStrengthSignals((prev) => prev.map((item, i) => i === idx ? e.target.value : item))}
+                              />
+                              <button type="button" onClick={() => setResumeStrengthSignals((prev) => prev.filter((_, i) => i !== idx))}>Remove</button>
+                            </div>
                           )) : <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>No strengths extracted yet.</div>}
+                          <button type="button" onClick={() => setResumeStrengthSignals((prev) => [...prev, ""])}>Add strength signal</button>
                         </div>
                       </div>
                       <div>
                         <div style={{ fontSize: 11, color: "var(--color-text-muted)", marginBottom: 4 }}><strong>Editable gaps to close</strong></div>
                         <div style={{ display: "grid", gap: 6 }}>
                           {resumeGapSignals.length ? resumeGapSignals.map((signal, idx) => (
-                            <input
-                              key={`resume-gap-${idx}`}
-                              value={signal}
-                              onChange={(e) => setResumeGapSignals((prev) => prev.map((item, i) => i === idx ? e.target.value : item))}
-                            />
+                            <div key={`resume-gap-${idx}`} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 6 }}>
+                              <input
+                                value={signal}
+                                onChange={(e) => setResumeGapSignals((prev) => prev.map((item, i) => i === idx ? e.target.value : item))}
+                              />
+                              <button type="button" onClick={() => setResumeGapSignals((prev) => prev.filter((_, i) => i !== idx))}>Remove</button>
+                            </div>
                           )) : <div style={{ fontSize: 11, color: "var(--color-text-muted)" }}>No obvious gaps detected.</div>}
+                          <button type="button" onClick={() => setResumeGapSignals((prev) => [...prev, ""])}>Add gap to close</button>
                         </div>
                       </div>
                     </div>
                   </div>
                 )}
+
+                <div className="card" style={{ padding: 10, border: "1px solid var(--color-border-strong)" }}>
+                  <strong style={{ fontSize: 12 }}>Intake mapping preview</strong>
+                  <div style={{ marginTop: 4, fontSize: 11, color: "var(--color-text-muted)" }}>What reviewers will see from your resume profile payload.</div>
+                  <div style={{ marginTop: 6, fontSize: 12 }}><strong>Strength signals:</strong> {resumeStrengthSignals.filter((x) => x.trim()).length || 0}</div>
+                  <div style={{ marginTop: 2, fontSize: 12 }}><strong>Gap signals:</strong> {resumeGapSignals.filter((x) => x.trim()).length || 0}</div>
+                  <div style={{ marginTop: 2, fontSize: 12 }}><strong>Highlight bullets:</strong> {draft.resumeHighlights.filter((x) => x.trim()).length || 0}</div>
+                  {buildCombinedProfile(draft) && <div style={{ marginTop: 6, fontSize: 11, color: "var(--color-text-muted)", whiteSpace: "pre-wrap" }}>{buildCombinedProfile(draft)}</div>}
+                </div>
 
                 <div className="card" style={{ padding: 10 }}>
                   <strong style={{ fontSize: 12 }}>Editable parsed highlights</strong>

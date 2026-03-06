@@ -39,3 +39,30 @@ From `apps/api`:
 ## Notes
 - Regenerate payload is intentionally response-native and backend-authenticated to keep frontend orchestration simple.
 - Major deficiency rollup is additive; no breaking contract removal for existing diagnostics consumers.
+
+---
+
+## Frontend Execution Addendum (2026-03-05)
+
+### Completed
+- Finalized quality fail-reason UX in `apps/web/src/components/coaching/CoachingProjectWorkbench.tsx`:
+  - introduced actionable deficiency cards sourced from `quality_diagnostics.actionable_fail_reasons`
+  - mapped deficiency codes/fields to specific output tabs (`charter`, `milestones`, `dataSources`, `resources`, `story`)
+  - added one-click path buttons to jump directly to impacted section and one-click targeted regenerate (`regenerate_with_improvements=true`)
+- Improved resume confidence/edit UX polish:
+  - strengths/gaps are now fully editable with add/remove controls
+  - added intake mapping preview panel showing what review sees from resume profile payload
+- Improved review visibility for intake/review mapping:
+  - added `Resume/Profile Mapping Snapshot` card in submission detail showing confidence, highlights, strengths, gaps, and combined profile narrative.
+- Preserved readability upgrades for charter/milestone/source sections (no structural rollback; output viewer tab structure unchanged).
+- Hardened `apps/web/scripts/build-clean.ps1` runtime detection to use `npm_node_execpath` fallback so Node version parsing does not null-fail under packaged runtime invocations.
+
+### Validation Evidence
+From `apps/web`:
+- `npx -y -p node@20.11.1 -p npm@10.8.2 -c "npm ci --no-audit --no-fund"` → pass
+- `npx -y -p node@20.11.1 -c "node ./scripts/require-runtime.cjs && node ./node_modules/typescript/bin/tsc --noEmit"` → pass
+- `npx -y -p node@20.11.1 -c "node ./scripts/require-runtime.cjs && node ./node_modules/next/dist/bin/next build"` → fail with persistent environment signature: `EISDIR: illegal operation on a directory, readlink ... node_modules/next/dist/pages/_app.js`
+- `npm run build:clean` under compliant runtime wrapper now executes parity checks and recovery path correctly, but retry still fails with same persistent `EISDIR` signature.
+
+### Open Blocker
+- Required acceptance item "two consecutive successful typecheck+build runs on Node 20.11.1/npm 10.x" remains blocked by persistent host filesystem/module corruption signature (`EISDIR readlink ... next/dist/pages/_app.js`) despite clean install and scripted recovery retries.

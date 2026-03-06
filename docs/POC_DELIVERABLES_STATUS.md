@@ -3,6 +3,31 @@
 Last Updated: 2026-03-05
 Owner: ERD Program Team
 
+## Checkpoint Update (2026-03-05 - Sprint 12 Frontend Execution: Fail-Reason UX + Resume Mapping Visibility)
+
+### Done
+- Finalized deficiency-aware fail-reason UX in `apps/web/src/components/coaching/CoachingProjectWorkbench.tsx`:
+  - consumed `quality_diagnostics.actionable_fail_reasons`
+  - added code/field-aware action cards with explicit suggested fixes
+  - mapped each deficiency to a specific viewer section (charter/milestones/data sources/resources/story)
+  - added one-click "open impacted section" plus one-click targeted regenerate (`regenerate_with_improvements=true`).
+- Improved resume confidence/edit UX in intake:
+  - strengths and gaps are now add/remove editable (not just inline mutate)
+  - added intake mapping preview card showing counts + combined profile narrative visibility before submit.
+- Improved review confidence in intake-to-review mapping:
+  - new "Resume/Profile Mapping Snapshot" card in submission detail (confidence, highlights, strengths, gaps, combined profile text).
+- Kept charter/milestone/source readability structure intact (no tab/view regressions).
+- Fixed `apps/web/scripts/build-clean.ps1` null-runtime parsing by resolving Node version from `npm_node_execpath` when direct `node` lookup is unavailable in wrapped runtime sessions.
+
+### Validation
+- `npx -y -p node@20.11.1 -p npm@10.8.2 -c "npm ci --no-audit --no-fund"` (apps/web) → **pass**.
+- `npx -y -p node@20.11.1 -c "node ./scripts/require-runtime.cjs && node ./node_modules/typescript/bin/tsc --noEmit"` (apps/web) → **pass**.
+- `npx -y -p node@20.11.1 -c "node ./scripts/require-runtime.cjs && node ./node_modules/next/dist/bin/next build"` (apps/web) → **fail** with persistent deterministic corruption signature: `EISDIR: illegal operation on a directory, readlink ... node_modules/next/dist/pages/_app.js`.
+- `npx -y -p node@20.11.1 -p npm@10.8.2 -c "npm run build:clean"` (apps/web) → parity/recovery path executes; retry still fails with same `EISDIR` signature.
+
+### Blocker / Follow-up
+- **Blocker remains:** could not yet produce required two consecutive successful `typecheck + build` runs under compliant runtime (`Node 20.11.1`, `npm 10.x`) due persistent host-level `EISDIR` build corruption signature even after clean install + scripted recovery.
+
 ## Checkpoint Update (2026-03-05 - Sprint 12 Backend Execution: Golden Output Quality + Regeneration Contract)
 
 ### Done

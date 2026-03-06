@@ -10,15 +10,22 @@ function Remove-PathSafe([string]$path) {
   }
 }
 
+function Get-NodeVersionString() {
+  if ($env:npm_node_execpath -and (Test-Path $env:npm_node_execpath)) {
+    return (& $env:npm_node_execpath -v) 2>$null
+  }
+  return (node -v) 2>$null
+}
+
 function Print-VersionGuidance() {
-  $nodeVersion = (node -v) 2>$null
+  $nodeVersion = Get-NodeVersionString
   $npmVersion = (npm -v) 2>$null
   Write-Host "[build-clean] detected node=$nodeVersion npm=$npmVersion"
   Write-Host "[build-clean] required baseline: Node >=20.11.1 <21 and npm 10.x"
 }
 
 function Assert-RuntimeParity() {
-  $nodeRaw = (node -v) 2>$null
+  $nodeRaw = Get-NodeVersionString
   $npmRaw = (npm -v) 2>$null
   $node = [regex]::Match([string]$nodeRaw, '(\d+)\.(\d+)\.(\d+)')
   $npm = [regex]::Match([string]$npmRaw, '(\d+)\.(\d+)\.(\d+)')
