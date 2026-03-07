@@ -2,6 +2,7 @@
 
 Last Updated: 2026-03-07 (frontend live-review pass)
 Sprint Goal: Final pilot launch readiness pass with live UX review fixes, golden quality acceptance, and operational go/no-go summary.
+Latest frontend evidence: `docs/coaching-project/evidence/sprint15-frontend-live-review.log`
 
 ## Epic A — Sprint 14 Consolidation & Workspace Hygiene (P0)
 

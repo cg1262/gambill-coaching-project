@@ -1,0 +1,51 @@
+[sprint15-frontend] start 2026-03-07T07:33:00-05:00
+
+Scope: live-review UX pass for intake -> generate -> regenerate -> batch-review -> export, plus deterministic runtime command revalidation.
+
+## Commands + outputs
+
+### 1) Runtime deterministic checks
+$ cd apps/web
+$ npm run runtime:test
+- PASS (5 tests)
+
+$ npm run runtime:check
+- EXPECTED FAIL in current host runtime:
+  - required Node >=20.11.1 <21 and npm 10.x
+  - detected Node v24.13.1 / npm 11.8.0
+  - script prints deterministic remediation steps
+
+### 2) Frontend compile safety
+$ npx tsc --noEmit
+- PASS
+
+### 3) Lint attempt
+$ npm run lint
+- Next.js interactive ESLint setup prompt shown (no existing config), command exits without runnable lint baseline.
+
+## UX blockers found + patched
+
+1) **Plan-tier lock blocked review productivity flow validation**
+   - Issue: plan tier was hard-coded to starter (`const [planTier] = useState("starter")`), permanently locking coach review + mentoring booking paths in UI.
+   - Fix: made plan tier mutable and added a visible selector in launch/access panel (starter/pro/elite).
+   - Impact: reviewers can live-test coach queue access gates, batch actions, regenerate recipes, and mentoring CTA behavior in one session.
+
+2) **Timeline desync between intake sections caused submission drift**
+   - Issue: timeline in preferences (`draft.timelineWeeks`) and self-assessment (`questionnaire.timelineWeeks`) could diverge; submit path prioritized questionnaire value, creating confusing stale timeline output.
+   - Fix: added shared `setTimelineWeeks()` helper that updates both fields; wired both timeline controls to it; also synced loadSubmissionIntoDraft to hydrate questionnaire timeline.
+   - Impact: intake -> generate payload timeline is now consistent regardless of which tab edits it.
+
+3) **Fail-reason one-click regenerate lacked context carryover**
+   - Issue: actionable fail reasons could open tab + regenerate but did not capture suggested fix into coach notes.
+   - Fix: added `applyActionableFixAndRegenerate()` to append reason-specific fix text to coach notes, jump to target viewer tab, then regenerate.
+   - Impact: fail-reason UX now creates an auditable correction trail and reduces coach rework friction.
+
+4) **Regenerate spam/race risk**
+   - Issue: `generateSow()` had no early guard against concurrent invocations from multiple CTA paths.
+   - Fix: added fast guard: return when `generationState.running`.
+   - Impact: prevents duplicate generate requests under rapid-click/live review conditions.
+
+## Files changed
+- apps/web/src/components/coaching/CoachingProjectWorkbench.tsx
+
+[sprint15-frontend] end 2026-03-07T07:38:00-05:00

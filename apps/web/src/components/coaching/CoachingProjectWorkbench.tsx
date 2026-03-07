@@ -551,7 +551,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
 
   const [authState, setAuthState] = useState<CoachingAuthState>("signedOut");
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus>("unknown");
-  const [planTier] = useState<PlanTier>("starter");
+  const [planTier, setPlanTier] = useState<PlanTier>("starter");
   const [memberLaunchState, setMemberLaunchState] = useState<MemberLaunchState>("memberHome");
   const [acceptedLaunchTerms, setAcceptedLaunchTerms] = useState(false);
 
@@ -1036,6 +1036,24 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
     setActiveStep(previous);
   }
 
+  function setTimelineWeeks(value: string) {
+    setDraft((prev) => ({
+      ...prev,
+      timelineWeeks: value,
+      questionnaire: {
+        ...prev.questionnaire,
+        timelineWeeks: value,
+      },
+    }));
+  }
+
+  function applyActionableFixAndRegenerate(reason: QualityActionableReason & { targetTab: ViewerTabId }) {
+    setViewerTab(reason.targetTab);
+    const fixLine = `Actionable fix (${reason.code}): ${reason.suggested_fix}`;
+    setCoachNotes((prev) => (prev.trim() ? `${prev.trim()}\n\n${fixLine}` : fixLine));
+    void generateSow(true);
+  }
+
   function mapSowToScaffold(sow: Record<string, any>): ProjectScaffold {
     const businessOutcome = sow.business_outcome || {};
     const projectStory = sow.project_story || {};
@@ -1208,7 +1226,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   }
 
   async function generateSow(useImprovements = false) {
-    if (!canAccessWorkbench) return;
+    if (!canAccessWorkbench || generationState.running) return;
     if (!currentSubmissionId) {
       setScaffold(buildProjectScaffold(draft));
       setStageState((prev) => ({ ...prev, sowGenerated: true }));
@@ -1322,6 +1340,10 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       selectedPlatforms: Array.isArray((preferences as any).selected_platforms) ? (preferences as any).selected_platforms.map((x: any) => String(x)) : prev.selectedPlatforms,
       selectedTools: Array.isArray((preferences as any).selected_tools) ? (preferences as any).selected_tools.map((x: any) => String(x)) : prev.selectedTools,
       timelineWeeks: String(preferences.timeline_weeks || prev.timelineWeeks),
+      questionnaire: {
+        ...prev.questionnaire,
+        timelineWeeks: String(preferences.timeline_weeks || prev.questionnaire.timelineWeeks || prev.timelineWeeks),
+      },
     }));
 
     const resumeProfile = (preferences as any).resume_profile || {};
@@ -1559,6 +1581,15 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
           <button onClick={() => setSubscriptionStatus("unknown")}>Set Unknown Sub</button>
           <button onClick={resetLaunchFlow}>Reset Launch</button>
         </div>
+
+        <label style={{ display: "grid", gap: 4, fontSize: 12, marginBottom: 8, maxWidth: 220 }}>
+          Plan tier
+          <select value={planTier} onChange={(e) => setPlanTier(e.target.value as PlanTier)}>
+            <option value="starter">starter</option>
+            <option value="pro">pro</option>
+            <option value="elite">elite</option>
+          </select>
+        </label>
 
         <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, marginBottom: 8 }}>
           <input type="checkbox" checked={acceptedLaunchTerms} onChange={(e) => setAcceptedLaunchTerms(e.target.checked)} />
@@ -2002,8 +2033,8 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                                   <div style={{ marginTop: 4, fontSize: 12, color: "var(--color-text-muted)" }}><strong>Suggested fix:</strong> {item.suggested_fix}</div>
                                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
                                     <button type="button" onClick={() => setViewerTab(item.targetTab)}>{viewerTabCtaLabel(item.targetTab)}</button>
-                                    <button type="button" className="btn-primary" onClick={() => generateSow(true)} disabled={generationState.running}>
-                                      {generationState.running ? "Regenerating..." : `Regenerate for ${item.code}`}
+                                    <button type="button" className="btn-primary" onClick={() => applyActionableFixAndRegenerate(item)} disabled={generationState.running}>
+                                      {generationState.running ? "Regenerating..." : `Apply fix + regenerate (${item.code})`}
                                     </button>
                                   </div>
                                 </div>
@@ -2245,7 +2276,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                     <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Hours available per week</label>
                     <input value={draft.questionnaire.weeklyHours} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, weeklyHours: e.target.value } }))} placeholder="e.g., 6" />
                     <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Target timeline (weeks)</label>
-                    <input value={draft.questionnaire.timelineWeeks} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, timelineWeeks: e.target.value } }))} placeholder="e.g., 8" />
+                    <input value={draft.questionnaire.timelineWeeks} onChange={(e) => setTimelineWeeks(e.target.value)} placeholder="e.g., 8" />
                     <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Support needed from coach</label>
                     <input value={draft.questionnaire.supportNeeded} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, supportNeeded: e.target.value } }))} placeholder="e.g., architecture reviews, interview drills, accountability" />
                   </div>
@@ -2272,7 +2303,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                 <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Tools</label>
                 <div>{TOOL_OPTIONS.map((option) => <label key={option} style={{ display: "inline-flex", marginRight: 8 }}><input type="checkbox" checked={draft.selectedTools.includes(option)} onChange={(e) => setDraft((prev) => ({ ...prev, selectedTools: e.target.checked ? [...prev.selectedTools, option] : prev.selectedTools.filter((x) => x !== option) }))} />{option}</label>)}</div>
                 <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Timeline target</label>
-                <select value={draft.timelineWeeks} onChange={(e) => setDraft((prev) => ({ ...prev, timelineWeeks: e.target.value }))}><option value="4">4 weeks</option><option value="6">6 weeks</option><option value="8">8 weeks</option><option value="12">12 weeks</option></select>
+                <select value={draft.timelineWeeks} onChange={(e) => setTimelineWeeks(e.target.value)}><option value="4">4 weeks</option><option value="6">6 weeks</option><option value="8">8 weeks</option><option value="12">12 weeks</option></select>
               </>
             )}
 
