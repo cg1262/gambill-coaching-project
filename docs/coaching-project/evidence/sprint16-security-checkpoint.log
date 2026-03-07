@@ -1,0 +1,40 @@
+Sprint 16 Security Checkpoint Evidence
+Date: 2026-03-07
+Repo: E:\gde_git\gambill-coaching-project
+
+[1] API focused security pack
+Command:
+python -m pytest tests/test_auth_contract_security.py tests/test_auth_sessions.py tests/test_security_rate_limit_webhook.py tests/test_rate_limits_and_webhooks.py tests/test_coaching_subscription.py tests/test_llm_output_security.py
+Result:
+43 passed, 1 warning in 7.76s
+
+[2] Webhook invalid-signature alert routing contract
+Command:
+python -m pytest -q tests/test_security_rate_limit_webhook.py::test_invalid_signature_alert_routes_to_configured_webhook
+Result:
+pass (1 test), warning unchanged (pydantic TableNode.schema shadow)
+
+[3] API compile check
+Command:
+python -m py_compile main.py webhook_security.py webhook_alerts.py coaching\sow_validation.py coaching\sow_security.py
+Result:
+PASS
+
+[4] Runtime diagnostic secret-safe regression tests
+Command:
+node --test scripts/require-runtime.test.cjs
+Result:
+5 passed, 0 failed
+
+[5] Web dependency audit checkpoint
+Command:
+npm audit --omit=dev --json
+Result:
+1 high vulnerability (next)
+- GHSA-h25m-26qc-wcjf (high)
+- GHSA-9g9p-9gw9-jx7f (moderate)
+Fix path: next@16.1.6 (semver-major)
+
+Checkpoint decision:
+- API/webhook security controls: revalidated (green)
+- Next/web release gate: still blocked pending deterministic compliant-runtime build evidence and remediation decision

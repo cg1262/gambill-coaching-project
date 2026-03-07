@@ -3,6 +3,25 @@
 Last Updated: 2026-03-07
 Owner: ERD Program Team
 
+## Checkpoint Update (2026-03-07 - Sprint 16 Security Execution: Revalidation + Bounded-Risk Go/No-Go Refresh)
+
+### Done
+- Revalidated auth/session/rate-limit/webhook controls after Sprint 16 changes using the focused API security regression pack.
+- Revalidated webhook invalid-signature alert routing contract remains operational and secret-safe.
+- Executed Sprint 16 Next.js remediation checkpoint and reaffirmed explicit bounded-risk posture with dated no-release gates in `docs/coaching-project/NEXTJS_VULNERABILITY_REMEDIATION_PLAN.md`.
+- Refreshed pilot hardening checklist + Sprint 16 task board and published one-page go/no-go summary.
+
+### Validation
+- `python -m pytest tests/test_auth_contract_security.py tests/test_auth_sessions.py tests/test_security_rate_limit_webhook.py tests/test_rate_limits_and_webhooks.py tests/test_coaching_subscription.py tests/test_llm_output_security.py` (apps/api) → **43 passed, 1 warning**.
+- `python -m pytest -q tests/test_security_rate_limit_webhook.py::test_invalid_signature_alert_routes_to_configured_webhook` (apps/api) → **pass**.
+- `python -m py_compile main.py webhook_security.py webhook_alerts.py coaching\sow_validation.py coaching\sow_security.py` (apps/api) → **pass**.
+- `node --test scripts/require-runtime.test.cjs` (apps/web) → **5 passed**.
+- `npm audit --omit=dev --json` (apps/web) → **1 high vulnerability** (`next`, major fix path `16.1.6`).
+
+### Blocker / Non-blocker Decisions
+- **Blocker:** deterministic compliant-runtime web compile/build proof + Next.js remediation closure remain open release gates.
+- **Non-blocker:** API auth/session/rate-limit/webhook controls and webhook invalid-signature alert trigger/routing path remain regression-backed and passing.
+
 ## Checkpoint Update (2026-03-07 - Sprint 15 Security Execution: Revalidation + Alert Routing Operational Evidence)
 
 ### Done
