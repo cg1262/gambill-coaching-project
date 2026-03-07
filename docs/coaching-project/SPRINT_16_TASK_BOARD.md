@@ -1,15 +1,16 @@
 # Sprint 16 Task Board — Gambill Coaching Project Creation
 
-Last Updated: 2026-03-07 (security + backend checkpoint)
+Last Updated: 2026-03-07 (security + backend + frontend checkpoint)
 Sprint Goal: Pilot go/no-go closeout, production-quality output gating, and coach/conversion operational readiness.
 Latest security evidence: `docs/coaching-project/evidence/sprint16-security-checkpoint.log`
 Latest backend evidence: `docs/coaching-project/evidence/sprint16-backend-checkpoint.log`
+Latest frontend deterministic evidence: `docs/coaching-project/evidence-sprint16-web-verify-run1-20260307-103822.log`, `docs/coaching-project/evidence-sprint16-web-verify-run2-20260307-104831.log`
 
 ## Epic A — Pilot Go/No-Go Closeout (P0)
 
 ### A1. Deterministic build evidence finalization
 - Owner: Frontend + Security
-- Status: **In progress (security dependency unchanged)**
+- Status: **Done (compliant-runtime deterministic proof captured x2)**
 - Scope:
   - capture compliant-runtime deterministic build evidence from clean shell
   - ensure startup/runtime path is reproducible and documented
@@ -74,6 +75,7 @@ Latest backend evidence: `docs/coaching-project/evidence/sprint16-backend-checkp
 
 ### D2. CTA effectiveness instrumentation
 - Owner: Frontend
+- Status: **Done (event hooks validated via backend + workbench event wiring checks)**
 - Scope:
   - validate Discord/coaching CTA event capture and reporting hooks
 - Acceptance:
@@ -111,6 +113,9 @@ Latest backend evidence: `docs/coaching-project/evidence/sprint16-backend-checkp
   - Revalidated invalid-signature alert routing path and confirmed routed payload remains secret-safe.
   - Re-ran runtime diagnostic security tests and refreshed pilot checklist + POC status with Sprint 16 evidence.
   - Documented explicit bounded-risk/no-release posture for unresolved Next.js remediation dependency.
+  - Frontend: captured two consecutive compliant-runtime deterministic verify runs under `node 20.11.1` + `npm 10.8.2` using `volta run` wrapper, with clean-shell evidence logs committed.
+  - Frontend: reduced runtime drift in deterministic/startup path by replacing nested `npm run runtime:check` pre-hooks with direct node runtime guard invocation and by making `verify:deterministic` run explicit deterministic commands.
+  - Frontend: improved 10+ submission review throughput UX with quick-selection controls and selected-status mix summary in the coach queue batch action card.
 - Validation:
   - `python -m pytest -q apps/api/tests/test_coaching_sprint14_quality_gates.py apps/api/tests/test_coaching_sprint14_seeded_artifacts.py apps/api/tests/test_coaching_sprint14_throughput_and_alerts.py apps/api/tests/test_coaching_sprint11_backend.py apps/api/tests/test_coaching_sprint13_backend.py apps/api/tests/test_coaching_sprint16_backend.py` (repo root) → **17 passed, 1 warning**.
   - `python -m pytest` (apps/api) → **167 passed, 4 skipped, 1 warning**.
@@ -119,10 +124,15 @@ Latest backend evidence: `docs/coaching-project/evidence/sprint16-backend-checkp
   - `python -m py_compile main.py webhook_security.py webhook_alerts.py coaching\sow_validation.py coaching\sow_security.py` (apps/api) → **pass**.
   - `node --test scripts/require-runtime.test.cjs` (apps/web) → **5 passed**.
   - `npm audit --omit=dev --json` (apps/web) → **1 high vulnerability (`next`)**.
+  - `volta run --node 20.11.1 --npm 10.8.2 npm run verify:deterministic` (apps/web) → **pass**, captured at `docs/coaching-project/evidence-sprint16-web-verify-run1-20260307-103822.log`.
+  - `volta run --node 20.11.1 --npm 10.8.2 npm run verify:deterministic` (apps/web, consecutive rerun) → **pass**, captured at `docs/coaching-project/evidence-sprint16-web-verify-run2-20260307-104831.log`.
+  - `volta run --node 20.11.1 --npm 10.8.2 npm run runtime:test` (apps/web) → **5 passed**.
+  - `python -m pytest -q tests/test_coaching_sprint14_throughput_and_alerts.py tests/test_coaching_review_endpoints.py tests/test_coaching_sprint12_backend.py tests/test_coaching_sprint11_backend.py` (apps/api) → **17 passed, 1 warning**.
 - Risks:
-  - Deterministic compliant-runtime web build proof remains blocker; current host still exhibits install/build instability signatures and unresolved `next` advisory requires major migration path.
+  - `next` vulnerability remains open and still requires planned remediation decision/upgrade path; deterministic proof is no longer the blocker.
+  - Some operators may still launch from host Node 24/npm 11 unless shell defaults are aligned; explicit `volta run` path currently mitigates this.
 - Needs from others:
-  - Frontend owner: complete clean-runner deterministic `npm ci -> typecheck -> build` x2 under Node `20.11.1` / npm `10.x`.
   - Product/Ops sponsor: maintain explicit time-bounded risk acceptance until remediation timeline date gates are met.
 - Next:
-  - Execute Phase A clean-runner proof by 2026-03-13; complete remediation decision (secure patch/major upgrade or approved extension) by 2026-03-20.
+  - Add optional frontend wrapper script for one-command compliant deterministic proof (Volta-pinned) to remove manual CLI flags.
+  - Complete remediation decision (secure patch/major upgrade or approved extension) by 2026-03-20.

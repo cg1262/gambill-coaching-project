@@ -1921,3 +1921,33 @@ _Status refresh: checkpoint finalized with tests + docs updates in this pass._
 1. Add dedicated LLM deficiency-revision prompt path (feature-flagged) for higher fidelity remediation vs deterministic fallback.
 2. Add typed nested models for data sources/resources to shift more validation into schema-level contracts.
 3. Fix `apps/web` build path issue (`src/app/page.tsx` directory/file mismatch) so diagnostics UI changes can be CI-verified.
+
+## Checkpoint Update (2026-03-07 - Sprint 16 Frontend Deterministic Proof + Throughput UX Polish)
+
+### Done
+- Reproduced deterministic compliant-runtime web verification twice under pinned runtime using Volta:
+  - Node `20.11.1`, npm `10.8.2`
+  - command: `volta run --node 20.11.1 --npm 10.8.2 npm run verify:deterministic`
+- Captured evidence logs:
+  - `docs/coaching-project/evidence-sprint16-web-verify-run1-20260307-103822.log`
+  - `docs/coaching-project/evidence-sprint16-web-verify-run2-20260307-104831.log`
+- Hardened runtime/startup diagnostics path in `apps/web/package.json`:
+  - changed `predev/pretypecheck/prebuild/prebuild:clean` to call runtime guard directly (`node ./scripts/require-runtime.cjs`) instead of nested `npm run runtime:check`
+  - updated `verify:deterministic` to execute explicit deterministic sequence (runtime check + install-ci + typecheck + build + build) to reduce nested npm drift.
+- Polished coach queue throughput UX for 10+ submissions in `CoachingProjectWorkbench`:
+  - added quick-select controls (`Select first 10`, `Select all loaded`)
+  - added selected counter `selected/total`
+  - added selected status-mix summary to improve batch-action confidence before execute.
+
+### Validation
+- `volta run --node 20.11.1 --npm 10.8.2 npm run verify:deterministic` (apps/web) x2 consecutive -> **pass**.
+- `volta run --node 20.11.1 --npm 10.8.2 npm run runtime:test` (apps/web) -> **5 passed**.
+- `python -m pytest -q tests/test_coaching_sprint14_throughput_and_alerts.py tests/test_coaching_review_endpoints.py tests/test_coaching_sprint12_backend.py tests/test_coaching_sprint11_backend.py` (apps/api) -> **17 passed, 1 warning**.
+
+### Risks
+- Next.js security advisory remains open and still requires remediation decision timeline; deterministic proof is no longer blocked.
+- Volta-pinned command works, but host default shell may still resolve to Node 24/npm 11 unless user shell profile is aligned.
+
+### Next
+1. Optionally add a dedicated `verify-deterministic-volta.ps1` helper so operators can run compliant proof in one command.
+2. Follow remediation decision for `next` advisory by sprint timeline gate.

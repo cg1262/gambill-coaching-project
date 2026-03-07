@@ -778,6 +778,19 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
     return { highlights, strengths, gaps, confidence, combinedProfile };
   }, [selectedSubmission]);
 
+  const selectedSubmissionStatusSummary = useMemo(() => {
+    const selected = submissions.filter((row) => selectedSubmissionIds.includes(row.submission_id));
+    const statusCounts = selected.reduce((acc, row) => {
+      const key = String(row.status || "submitted").toLowerCase();
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    return Object.entries(statusCounts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([status, count]) => `${status}: ${count}`);
+  }, [submissions, selectedSubmissionIds]);
+
   const submissionTimeline = useMemo(() => {
     const events: TimelineEvent[] = [];
     if (selectedSubmission) {
@@ -1703,13 +1716,32 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                 <div className="card" style={{ padding: 8, marginBottom: 8 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                     <strong style={{ fontSize: 12 }}>Batch review actions</strong>
-                    <span className="badge info">Selected: {selectedSubmissionIds.length}</span>
+                    <span className="badge info">Selected: {selectedSubmissionIds.length}/{submissions.length}</span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedSubmissionIds(submissions.slice(0, 10).map((row) => row.submission_id))}
+                      disabled={batchReviewState.running || batchRegenerateState.running || submissions.length === 0}
+                    >
+                      Select first 10
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedSubmissionIds(submissions.map((row) => row.submission_id))}
+                      disabled={batchReviewState.running || batchRegenerateState.running || submissions.length === 0}
+                    >
+                      Select all loaded
+                    </button>
                     <button type="button" onClick={() => runBatchReviewAction("in_review")} disabled={batchReviewState.running || selectedSubmissionIds.length === 0}>Batch → in_review</button>
                     <button type="button" onClick={() => runBatchReviewAction("needs_revision")} disabled={batchReviewState.running || selectedSubmissionIds.length === 0}>Batch → needs_revision</button>
                     <button type="button" className="btn-success" onClick={() => runBatchReviewAction("ready")} disabled={batchReviewState.running || batchRegenerateState.running || selectedSubmissionIds.length === 0}>Batch → ready</button>
                     <button type="button" className="btn-primary" onClick={runBatchRegenerateSelected} disabled={batchReviewState.running || batchRegenerateState.running || selectedSubmissionIds.length === 0}>{batchRegenerateState.running ? "Regenerating..." : "Batch regenerate"}</button>
                     <button type="button" onClick={() => setSelectedSubmissionIds([])} disabled={batchReviewState.running || batchRegenerateState.running || selectedSubmissionIds.length === 0}>Clear selection</button>
                   </div>
+                  {selectedSubmissionStatusSummary.length > 0 && (
+                    <div style={{ marginTop: 6, fontSize: 12, color: "var(--color-text-muted)" }}>
+                      Status mix: {selectedSubmissionStatusSummary.join(" | ")}
+                    </div>
+                  )}
                   {batchReviewState.message && <div style={{ marginTop: 6 }}><span className="badge success">{batchReviewState.message}</span></div>}
                   {batchReviewState.error && <div style={{ marginTop: 6 }}><span className="badge error">{batchReviewState.error}</span></div>}
                   {batchRegenerateState.message && <div style={{ marginTop: 6 }}><span className="badge success">{batchRegenerateState.message}</span></div>}
