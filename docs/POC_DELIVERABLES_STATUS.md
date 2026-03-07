@@ -3,6 +3,53 @@
 Last Updated: 2026-03-06
 Owner: ERD Program Team
 
+## Checkpoint Update (2026-03-06 - Sprint 14 Backend Execution: Required Golden Gate + Seeded Artifacts + Throughput APIs)
+
+### Done
+- Promoted golden snapshot quality checks into an explicit required CI gate:
+  - added `apps/api/tests/test_coaching_sprint14_quality_gates.py`
+  - updated `.github/workflows/ci.yml` to run Sprint 14 quality gates before full API pytest suite.
+- Added deterministic seeded sample artifact generation for three fake intake scenarios:
+  - generator: `apps/api/coaching/sprint14_artifacts.py`
+  - reviewable committed output bundle: `apps/api/tests/fixtures/sprint14_seeded_artifacts_bundle.json`
+  - quality/parity assertions: `apps/api/tests/test_coaching_sprint14_seeded_artifacts.py`.
+- Added backend coach throughput APIs:
+  - `POST /coaching/review/batch-status`
+  - `POST /coaching/sow/batch-regenerate`
+  - endpoint coverage in `apps/api/tests/test_coaching_sprint14_throughput_and_alerts.py`.
+- Surfaced invalid webhook-signature alerts operationally:
+  - tracker now stores recent triggered alerts (in-memory)
+  - admin visibility endpoint `GET /admin/security/webhook-alerts`
+  - optional best-effort outbound routing via `WEBHOOK_INVALID_SIG_ALERT_WEBHOOK_URL`.
+
+### Validation
+- `python -m pytest -q tests/test_coaching_sprint14_quality_gates.py tests/test_coaching_sprint14_seeded_artifacts.py tests/test_coaching_sprint14_throughput_and_alerts.py` (apps/api)
+- `python -m pytest -q` (apps/api)
+
+### Risks / Follow-ups
+- Alert routing uses best-effort webhook delivery; end-to-end reliability depends on downstream receiver and ops monitoring.
+- Batch regenerate currently processes sequentially within request scope; consider async job queue if submission volume grows.
+
+## Checkpoint Update (2026-03-06 - Sprint 14 Security Execution: Alert Routing Revalidation + Risk Posture Finalization)
+
+### Done
+- Revalidated auth/session/rate-limit/webhook controls after Sprint 14 backend changes with the focused API security regression pack.
+- Finalized Next.js remediation decision with explicit bounded-risk posture and dated timeline in `docs/coaching-project/NEXTJS_VULNERABILITY_REMEDIATION_PLAN.md`.
+- Revalidated invalid-signature alert routing end-to-end for configured operational webhook destination (`WEBHOOK_INVALID_SIG_ALERT_WEBHOOK_URL`) and confirmed triggered payload remains secret-safe.
+- Expanded security regression coverage in `apps/api/tests/test_security_rate_limit_webhook.py`:
+  - `test_invalid_signature_alert_routes_to_configured_webhook`
+  - proves threshold-triggered alert webhook dispatch and validates no raw webhook secret/signature leakage in routed payload.
+- Updated pilot hardening checklist + sprint board with Sprint 14 evidence and blocker/non-blocker framing.
+
+### Validation
+- `python -m pytest tests/test_auth_contract_security.py tests/test_auth_sessions.py tests/test_security_rate_limit_webhook.py tests/test_rate_limits_and_webhooks.py tests/test_coaching_subscription.py tests/test_llm_output_security.py` (apps/api) → **43 passed, 1 warning**.
+- `python -m py_compile main.py webhook_security.py webhook_alerts.py coaching\sow_validation.py coaching\sow_security.py` (apps/api) → **pass**.
+- `node --test scripts/require-runtime.test.cjs` (apps/web) → **5 passed**.
+
+### Blocker / Non-blocker Decisions
+- **Blocker:** deterministic compliant-runtime web compile/build proof remains unresolved due local Windows package extraction/install instability (`npm ci` TAR/ENOENT warnings with follow-on missing `tsc`/`next`).
+- **Non-blocker:** API auth/session/rate-limit/webhook integrity controls, including invalid-signature alert trigger + routing path, are regression-backed and passing.
+
 ## Checkpoint Update (2026-03-06 - Sprint 13 Security Execution: Runtime Safety + Diagnostics Leakage Regressions)
 
 ### Done

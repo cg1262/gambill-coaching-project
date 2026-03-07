@@ -16,7 +16,8 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install -r requirements.txt
-      - run: python -m py_compile main.py models.py services.py config.py db_lakebase.py uc_client.py
+      - run: python -m py_compile main.py models.py services.py config.py db_lakebase.py uc_client.py webhook_alerts.py coaching\sprint14_artifacts.py
+      - run: pytest -q tests/test_coaching_sprint14_quality_gates.py tests/test_coaching_sprint14_seeded_artifacts.py
       - run: pytest -q
 
   web:

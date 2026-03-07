@@ -103,7 +103,7 @@ from security import (
 )
 from rate_limits import RateLimitExceeded, enforce_rate_limit, policy_snapshot as rate_limit_policy_snapshot, policy_update as rate_limit_policy_update
 from webhook_security import parse_webhook_body, verify_webhook_signature
-from webhook_alerts import INVALID_WEBHOOK_SIGNATURE_TRACKER
+from webhook_alerts import INVALID_WEBHOOK_SIGNATURE_TRACKER, InvalidSignatureAlertEvent, dispatch_invalid_webhook_signature_alert
 from admin_runtime_config import runtime_rate_limit_snapshot, runtime_rate_limit_update
 
 class _JsonFormatter(logging.Formatter):
@@ -722,27 +722,35 @@ def _verify_subscription_webhook_signature(req: CoachingSubscriptionSyncRequest)
 
 
 def _record_invalid_webhook_signature_attempt(*, provider: str, source_ip: str, route: str, reason: str, actor: str | None = None, role: str | None = None) -> None:
+    threshold = max(1, int(os.getenv("WEBHOOK_INVALID_SIG_ALERT_THRESHOLD", "5") or 5))
+    window_seconds = max(1, int(os.getenv("WEBHOOK_INVALID_SIG_ALERT_WINDOW_SECONDS", "300") or 300))
     triggered, attempt_count = INVALID_WEBHOOK_SIGNATURE_TRACKER.record_attempt(
         provider=provider,
         source_ip=source_ip,
         route=route,
+        threshold=threshold,
+        window_seconds=window_seconds,
     )
     if not triggered:
         return
 
+    event = InvalidSignatureAlertEvent(
+        provider=provider,
+        source_ip=source_ip,
+        route=route,
+        reason=reason,
+        attempt_count=attempt_count,
+        threshold=threshold,
+        window_seconds=window_seconds,
+        actor=actor,
+        role=role,
+        created_at=int(time.time()),
+    )
+    alert_payload = INVALID_WEBHOOK_SIGNATURE_TRACKER.record_alert(event)
+    routed = dispatch_invalid_webhook_signature_alert(alert_payload)
     logger.error(
         "coaching_webhook_invalid_signature_alert",
-        extra={
-            "provider": provider,
-            "source_ip": source_ip,
-            "route": route,
-            "reason": reason,
-            "attempt_count": attempt_count,
-            "threshold": max(1, int(os.getenv("WEBHOOK_INVALID_SIG_ALERT_THRESHOLD", "5") or 5)),
-            "window_seconds": max(1, int(os.getenv("WEBHOOK_INVALID_SIG_ALERT_WINDOW_SECONDS", "300") or 300)),
-            "actor": actor,
-            "role": role,
-        },
+        extra={**alert_payload, "routed": routed},
     )
 
 
@@ -860,6 +868,20 @@ class CoachingMentoringIntentRequest(BaseModel):
     submission_id: str
     intent_type: str = "mentoring_intent"  # mentoring_intent | cta_click
     cta_context: str | None = None
+
+
+class CoachingBatchReviewStatusUpdateRequest(BaseModel):
+    workspace_id: str
+    submission_ids: list[str] = Field(default_factory=list, min_length=1, max_length=100)
+    coach_review_status: str
+    coach_notes: str | None = None
+
+
+class CoachingBatchRegenerateRequest(BaseModel):
+    workspace_id: str
+    submission_ids: list[str] = Field(default_factory=list, min_length=1, max_length=50)
+    parsed_jobs: list[dict] = Field(default_factory=list)
+    regenerate_with_improvements: bool = True
 
 
 def _require_active_coaching_subscription(workspace_id: str, session: Session, email: str | None = None) -> dict:
@@ -3082,6 +3104,94 @@ def coaching_review_status_update(req: CoachingReviewStatusUpdateRequest, reques
     }
 
 
+@app.post("/coaching/review/batch-status")
+def coaching_review_batch_status_update(req: CoachingBatchReviewStatusUpdateRequest, request: Request, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    _apply_rate_limit(policy_name="review_actions", request=request, session=session, workspace_id=req.workspace_id)
+
+    updated: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
+    for submission_id in list(dict.fromkeys(req.submission_ids or [])):
+        submission = get_coaching_intake_submission(submission_id)
+        if not submission:
+            failed.append({"submission_id": submission_id, "error": "submission not found"})
+            continue
+        try:
+            _require_active_coaching_subscription(
+                workspace_id=req.workspace_id,
+                session=session,
+                email=str(submission.get("applicant_email") or "").strip().lower() or None,
+            )
+        except HTTPException as exc:
+            failed.append({"submission_id": submission_id, "error": str(exc.detail)})
+            continue
+
+        persist = _persist_review_state_with_retry(
+            submission_id=submission_id,
+            coach_review_status=req.coach_review_status,
+            coach_notes=req.coach_notes,
+        )
+        if not persist.get("ok"):
+            failed.append(
+                {
+                    "submission_id": submission_id,
+                    "error": persist.get("error") or "failed to persist review status",
+                    "attempts": persist.get("attempts"),
+                }
+            )
+            continue
+        updated.append({"submission_id": submission_id, "submission": persist.get("submission"), "attempts": persist.get("attempts")})
+
+    return {
+        "ok": len(failed) == 0,
+        "workspace_id": req.workspace_id,
+        "coach_review_status": req.coach_review_status,
+        "updated": updated,
+        "failed": failed,
+        "counts": {"updated": len(updated), "failed": len(failed), "requested": len(req.submission_ids or [])},
+    }
+
+
+@app.post("/coaching/sow/batch-regenerate")
+def coaching_batch_regenerate(req: CoachingBatchRegenerateRequest, request: Request, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor"})
+    _apply_rate_limit(policy_name="generation", request=request, session=session, workspace_id=req.workspace_id)
+
+    runs: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = []
+    for submission_id in list(dict.fromkeys(req.submission_ids or [])):
+        out = coaching_generate_sow(
+            CoachingGenerateSowRequest(
+                workspace_id=req.workspace_id,
+                submission_id=submission_id,
+                parsed_jobs=req.parsed_jobs or [],
+                regenerate_with_improvements=bool(req.regenerate_with_improvements),
+            ),
+            request,
+            session,
+        )
+        if not out.get("ok"):
+            failed.append({"submission_id": submission_id, "error": out.get("message") or "generation failed"})
+            continue
+        runs.append(
+            {
+                "submission_id": submission_id,
+                "run_id": out.get("run_id"),
+                "quality_score": ((out.get("quality") or {}).get("score")),
+                "findings_count": len(out.get("findings") or []),
+                "hard_quality_gate_triggered": bool((out.get("quality_flags") or {}).get("hard_quality_gate_triggered")),
+            }
+        )
+
+    return {
+        "ok": len(failed) == 0,
+        "workspace_id": req.workspace_id,
+        "runs": runs,
+        "failed": failed,
+        "counts": {"completed": len(runs), "failed": len(failed), "requested": len(req.submission_ids or [])},
+    }
+
+
 @app.post("/coaching/review/feedback")
 def coaching_review_feedback(req: CoachingFeedbackCaptureRequest, request: Request, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor"})
@@ -3364,6 +3474,13 @@ def admin_runtime_rate_limit_config_get(session=Depends(get_current_session)) ->
 def admin_runtime_rate_limit_config_update(payload: dict[str, Any], session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin"})
     return runtime_rate_limit_update(payload)
+
+
+@app.get("/admin/security/webhook-alerts")
+def admin_webhook_invalid_signature_alerts(limit: int = 50, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin"})
+    alerts = INVALID_WEBHOOK_SIGNATURE_TRACKER.recent_alerts(limit=limit)
+    return {"ok": True, "alerts": alerts, "total": len(alerts)}
 
 
 @app.get("/admin/users")

@@ -1,0 +1,1120 @@
+{
+  "bundle_version": "2026-03-sprint14",
+  "scenario_count": 3,
+  "artifacts": [
+    {
+      "scenario": "retail_platform_modernization",
+      "applicant_name": "Avery",
+      "project_title": "Avery Data Engineering Capstone",
+      "quality": {
+        "score": 100,
+        "style_alignment_score": 100,
+        "major_deficiency_count": 0,
+        "deficiency_codes": []
+      },
+      "sow": {
+        "schema_version": "0.2",
+        "project_title": "Avery Data Engineering Capstone",
+        "candidate_profile": {
+          "applicant_name": "Avery",
+          "preferences": {
+            "timeline_weeks": 6,
+            "resume_parse_summary": {
+              "role_level": "senior",
+              "years_experience_hint": 10,
+              "parse_confidence": 86,
+              "tools": [
+                "python",
+                "sql",
+                "dbt",
+                "airflow",
+                "aws",
+                "power bi"
+              ],
+              "domains": [
+                "retail",
+                "ecommerce"
+              ],
+              "project_experience_keywords": [
+                "kpi",
+                "forecasting",
+                "data quality"
+              ]
+            }
+          },
+          "role_scope_assessment": {
+            "current_role_level": "senior",
+            "target_role_level": "senior",
+            "scope_difficulty": "advanced",
+            "parse_confidence": 86,
+            "suggested_timeline_weeks": 6,
+            "capability_index": 17
+          }
+        },
+        "business_outcome": {
+          "problem_statement": "Define a measurable business problem and target KPI uplift.",
+          "target_metrics": [
+            {
+              "metric": "pipeline_sla_minutes",
+              "target": "<60"
+            },
+            {
+              "metric": "dashboard_adoption_rate",
+              "target": ">=60%"
+            }
+          ],
+          "domain_focus": [
+            "retail"
+          ],
+          "data_sources": [
+            {
+              "name": "Bureau of Labor Statistics Public Data API",
+              "url": "https://www.bls.gov/data/",
+              "ingestion_doc_url": "https://www.bls.gov/developers/home.htm",
+              "selection_rationale": "Provides real API ingestion practice plus documented schemas for incremental loads and trend dashboards.",
+              "ingestion_instructions": "Use documented API/file endpoint, land raw extract to bronze with run metadata, then apply conformance tests in silver before publishing gold KPIs."
+            },
+            {
+              "name": "NYC TLC Trip Record Data",
+              "url": "https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page",
+              "ingestion_doc_url": "https://www.nyc.gov/assets/tlc/downloads/pdf/data_dictionary_trip_records_yellow.pdf",
+              "selection_rationale": "Public trip-level facts are excellent for building medallion pipelines and KPI reporting exercises.",
+              "ingestion_instructions": "Use documented API/file endpoint, land raw extract to bronze with run metadata, then apply conformance tests in silver before publishing gold KPIs."
+            },
+            {
+              "name": "Chicago Data Portal",
+              "url": "https://data.cityofchicago.org/",
+              "ingestion_doc_url": "https://dev.socrata.com/foundry/data.cityofchicago.org",
+              "selection_rationale": "Good source for reproducible city analytics projects with clear ingestion endpoints and metadata.",
+              "ingestion_instructions": "Use documented API/file endpoint, land raw extract to bronze with run metadata, then apply conformance tests in silver before publishing gold KPIs."
+            }
+          ]
+        },
+        "solution_architecture": {
+          "medallion_plan": {
+            "bronze": "Ingest raw source data with schema drift handling.",
+            "silver": "Apply cleaning, conformance, and quality checks.",
+            "gold": "Publish curated marts and KPI-ready tables."
+          },
+          "primary_tools": [
+            "dbt"
+          ],
+          "target_skills": [
+            "python",
+            "sql"
+          ]
+        },
+        "project_story": {
+          "executive_summary": "Build a job-aligned medallion data platform project with measurable business outcomes and portfolio-ready artifacts.",
+          "challenge": "Translate fragmented source data into trusted KPI reporting under tight delivery timelines.",
+          "approach": "Implement bronze/silver/gold pipelines, data quality checks, and executive-friendly ROI dashboards.",
+          "impact_story": "Demonstrate end-to-end ownership from ingestion through business narrative and stakeholder-ready metrics."
+        },
+        "milestones": [
+          {
+            "name": "Discovery + Business framing",
+            "duration_weeks": 1,
+            "deliverables": [
+              "scope brief",
+              "KPI definitions"
+            ],
+            "execution_plan": "Interview stakeholders, map source systems, and define KPI ownership with acceptance criteria.",
+            "expected_deliverable": "Signed project charter with KPI dictionary, source inventory, and scope boundaries approved by sponsor.",
+            "business_why": "Aligning scope and KPI definitions early prevents rework and accelerates measurable ROI delivery.",
+            "milestone_tags": [
+              "discovery",
+              "architecture",
+              "roi"
+            ],
+            "resources": [
+              {
+                "title": "Kimball Dimensional Modeling",
+                "url": "https://www.kimballgroup.com/data-warehouse-business-intelligence-resources/"
+              }
+            ],
+            "acceptance_checks": [
+              "Project charter signed by sponsor",
+              "KPI dictionary validated in coach review"
+            ]
+          },
+          {
+            "name": "Bronze/Silver implementation",
+            "duration_weeks": 2,
+            "deliverables": [
+              "ingestion jobs",
+              "DQ checks"
+            ],
+            "execution_plan": "Build incremental ingestion pipelines, apply schema evolution handling, and implement automated data quality gates.",
+            "expected_deliverable": "Production-ready bronze/silver DAGs with tests, monitoring, and documented failure handling.",
+            "business_why": "Reliable ingestion and conformance reduce reporting defects and improve trust in downstream analytics.",
+            "milestone_tags": [
+              "bronze",
+              "silver",
+              "pipeline"
+            ],
+            "resources": [
+              {
+                "title": "Delta Lake Medallion Architecture",
+                "url": "https://docs.databricks.com/en/lakehouse/medallion.html"
+              }
+            ],
+            "acceptance_checks": [
+              "Pipeline test suite passes in CI",
+              "DQ threshold report validated and published"
+            ]
+          },
+          {
+            "name": "Gold + ROI dashboard",
+            "duration_weeks": 1,
+            "deliverables": [
+              "semantic model",
+              "executive dashboard"
+            ],
+            "execution_plan": "Model gold marts for executive questions, define semantic layer metrics, and build ROI dashboard narratives.",
+            "expected_deliverable": "Validated KPI dashboard with traceable metric definitions and stakeholder walkthrough recording.",
+            "business_why": "Clear KPI visibility enables faster decisions and proves business impact of the data platform investment.",
+            "milestone_tags": [
+              "gold",
+              "roi",
+              "bi"
+            ],
+            "resources": [
+              {
+                "title": "Power BI Design Guidance",
+                "url": "https://learn.microsoft.com/en-us/power-bi/guidance/"
+              }
+            ],
+            "acceptance_checks": [
+              "Metric definitions validated against source tables",
+              "Stakeholder review walkthrough recorded"
+            ]
+          },
+          {
+            "name": "Final review + portfolio assets",
+            "duration_weeks": 1,
+            "deliverables": [
+              "architecture narrative",
+              "repo walkthrough"
+            ],
+            "execution_plan": "Package architecture decisions, demo script, and retrospective into a portfolio-quality delivery artifact set.",
+            "expected_deliverable": "Publish-ready repo and presentation assets that communicate technical depth and business outcomes.",
+            "business_why": "Strong communication artifacts increase hiring signal and stakeholder confidence in project value.",
+            "milestone_tags": [
+              "communication",
+              "career"
+            ],
+            "resources": [
+              {
+                "title": "GitHub Portfolio Guide",
+                "url": "https://docs.github.com/en/get-started/showcase-your-work/about-your-profile"
+              }
+            ],
+            "acceptance_checks": [
+              "Demo script dry-run recorded with feedback",
+              "Retrospective published with quantified outcomes"
+            ]
+          }
+        ],
+        "roi_dashboard_requirements": {
+          "required_dimensions": [
+            "time",
+            "business_unit",
+            "product"
+          ],
+          "required_measures": [
+            "cost_savings",
+            "revenue_impact",
+            "sla_compliance"
+          ]
+        },
+        "resource_plan": {
+          "required": [
+            {
+              "title": "Data Engineering Lifecycle Guide",
+              "url": "https://martinfowler.com/articles/data-monolith-to-mesh.html"
+            }
+          ],
+          "recommended": [],
+          "optional": [],
+          "affiliate_disclosure": "Some recommended resources may include affiliate links. Recommendations are selected for project relevance first.",
+          "trust_language": "Resource recommendations are optional and do not change coaching feedback or project scoring."
+        },
+        "mentoring_cta": {
+          "recommended_tier": "elite",
+          "reason": "Mapped from resume/job signals: current=senior target=senior scope=advanced.",
+          "trust_language": "Mentoring recommendations are guidance-only and should align with the candidate's goals and budget."
+        },
+        "project_charter": {
+          "section_order": [
+            "prerequisites_resources",
+            "executive_summary",
+            "technical_architecture",
+            "implementation_plan",
+            "deliverables_acceptance_criteria",
+            "risks_assumptions",
+            "stretch_goals"
+          ],
+          "sections": {
+            "prerequisites_resources": {
+              "summary": "Repo scaffold, environment setup, and source access prerequisites.",
+              "resources": [
+                {
+                  "title": "GitHub Flow",
+                  "url": "https://docs.github.com/en/get-started/using-github/github-flow"
+                },
+                {
+                  "title": "dbt Documentation",
+                  "url": "https://docs.getdbt.com/docs/introduction"
+                }
+              ]
+            },
+            "executive_summary": {
+              "current_state": "Reporting is delayed and teams reconcile metrics manually.",
+              "future_state": "Decision makers use trusted self-serve KPIs refreshed on a predictable SLA."
+            },
+            "technical_architecture": {
+              "platform": "Medallion architecture with orchestration, quality gates, and semantic layer.",
+              "data_sources": [
+                {
+                  "name": "Bureau of Labor Statistics Public Data API",
+                  "url": "https://www.bls.gov/data/",
+                  "ingestion_doc_url": "https://www.bls.gov/developers/home.htm",
+                  "selection_rationale": "Provides real API ingestion practice plus documented schemas for incremental loads and trend dashboards.",
+                  "ingestion_instructions": "Use documented API/file endpoint, land raw extract to bronze with run metadata, then apply conformance tests in silver before publishing gold KPIs."
+                },
+                {
+                  "name": "NYC TLC Trip Record Data",
+                  "url": "https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page",
+                  "ingestion_doc_url": "https://www.nyc.gov/assets/tlc/downloads/pdf/data_dictionary_trip_records_yellow.pdf",
+                  "selection_rationale": "Public trip-level facts are excellent for building medallion pipelines and KPI reporting exercises.",
+                  "ingestion_instructions": "Use documented API/file endpoint, land raw extract to bronze with run metadata, then apply conformance tests in silver before publishing gold KPIs."
+                }
+              ]
+            },
+            "implementation_plan": {
+              "milestones": [
+                {
+                  "name": "Foundation + source onboarding",
+                  "expectations": "Ingestion contracts, pipeline scaffolding, and CI checks merged.",
+                  "completion_criteria": [
+                    "Source landed in bronze",
+                    "Automated tests green",
+                    "Runbook checked in"
+                  ]
+                },
+                {
+                  "name": "Modeling + KPI layer",
+                  "expectations": "Silver/gold transformations with business metric definitions.",
+                  "completion_criteria": [
+                    "Critical KPI SQL reviewed",
+                    "DQ thresholds enforced",
+                    "Stakeholder sign-off recorded"
+                  ]
+                }
+              ]
+            },
+            "deliverables_acceptance_criteria": {
+              "deliverables": [
+                "Architecture diagram",
+                "Pipelines + tests",
+                "Executive dashboard",
+                "Demo narrative"
+              ],
+              "acceptance_criteria": [
+                "Reproducible run evidence",
+                "KPI definitions trace to source",
+                "Business impact narrative is quantified"
+              ]
+            },
+            "risks_assumptions": {
+              "risks": [
+                "Source schema drift",
+                "Unclear KPI ownership",
+                "Timeline compression due to stakeholder availability"
+              ],
+              "assumptions": [
+                "Public source APIs remain available",
+                "Candidate can dedicate weekly build cadence"
+              ]
+            },
+            "stretch_goals": {
+              "items": [
+                "Add near-real-time ingestion path",
+                "Implement semantic metric layer tests",
+                "Publish interview walkthrough video"
+              ]
+            }
+          }
+        },
+        "interview_ready_package": {
+          "star_bullets": [
+            "Situation: Translate fragmented source data into trusted KPI reporting under tight delivery timelines.",
+            "Task: Own delivery of Avery Data Engineering Capstone milestones with clear KPI targets.",
+            "Action: Implement bronze/silver/gold pipelines, data quality checks, and executive-friendly ROI dashboards.",
+            "Result: Demonstrate end-to-end ownership from ingestion through business narrative and stakeholder-ready metrics."
+          ],
+          "portfolio_checklist": [
+            "Architecture diagram exported and narrated in README",
+            "Pipeline tests + data quality checks committed with run evidence",
+            "Executive KPI dashboard with metric dictionary and assumptions",
+            "Demo script + retrospective including trade-offs and next steps"
+          ],
+          "recruiter_mapping": {
+            "technical_depth": [],
+            "business_impact": [
+              "Demonstrate end-to-end ownership from ingestion through business narrative and stakeholder-ready metrics."
+            ],
+            "communication": [
+              "Executive summary",
+              "STAR narrative",
+              "Demo walkthrough"
+            ],
+            "tooling_keywords": [
+              "dbt"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "scenario": "utilities_reliability_program",
+      "applicant_name": "Morgan",
+      "project_title": "Morgan Data Engineering Capstone",
+      "quality": {
+        "score": 100,
+        "style_alignment_score": 100,
+        "major_deficiency_count": 0,
+        "deficiency_codes": []
+      },
+      "sow": {
+        "schema_version": "0.2",
+        "project_title": "Morgan Data Engineering Capstone",
+        "candidate_profile": {
+          "applicant_name": "Morgan",
+          "preferences": {
+            "timeline_weeks": 7,
+            "resume_parse_summary": {
+              "role_level": "mid",
+              "years_experience_hint": 6,
+              "parse_confidence": 81,
+              "tools": [
+                "python",
+                "sql",
+                "spark",
+                "databricks",
+                "azure"
+              ],
+              "domains": [
+                "energy",
+                "utilities"
+              ],
+              "project_experience_keywords": [
+                "sla",
+                "monitoring",
+                "orchestration"
+              ]
+            }
+          },
+          "role_scope_assessment": {
+            "current_role_level": "mid",
+            "target_role_level": "mid",
+            "scope_difficulty": "standard",
+            "parse_confidence": 81,
+            "suggested_timeline_weeks": 7,
+            "capability_index": 15
+          }
+        },
+        "business_outcome": {
+          "problem_statement": "Define a measurable business problem and target KPI uplift.",
+          "target_metrics": [
+            {
+              "metric": "pipeline_sla_minutes",
+              "target": "<60"
+            },
+            {
+              "metric": "dashboard_adoption_rate",
+              "target": ">=60%"
+            }
+          ],
+          "domain_focus": [
+            "energy"
+          ],
+          "data_sources": [
+            {
+              "name": "Bureau of Labor Statistics Public Data API",
+              "url": "https://www.bls.gov/data/",
+              "ingestion_doc_url": "https://www.bls.gov/developers/home.htm",
+              "selection_rationale": "Provides real API ingestion practice plus documented schemas for incremental loads and trend dashboards.",
+              "ingestion_instructions": "Use documented API/file endpoint, land raw extract to bronze with run metadata, then apply conformance tests in silver before publishing gold KPIs."
+            },
+            {
+              "name": "Chicago Data Portal",
+              "url": "https://data.cityofchicago.org/",
+              "ingestion_doc_url": "https://dev.socrata.com/foundry/data.cityofchicago.org",
+              "selection_rationale": "Good source for reproducible city analytics projects with clear ingestion endpoints and metadata.",
+              "ingestion_instructions": "Use documented API/file endpoint, land raw extract to bronze with run metadata, then apply conformance tests in silver before publishing gold KPIs."
+            },
+            {
+              "name": "NYC Open Data (Socrata)",
+              "url": "https://opendata.cityofnewyork.us/",
+              "ingestion_doc_url": "https://dev.socrata.com/docs/",
+              "selection_rationale": "Offers diverse public datasets with API docs suited for data quality checks and stakeholder-facing reporting.",
+              "ingestion_instructions": "Use documented API/file endpoint, land raw extract to bronze with run metadata, then apply conformance tests in silver before publishing gold KPIs."
+            }
+          ]
+        },
+        "solution_architecture": {
+          "medallion_plan": {
+            "bronze": "Ingest raw source data with schema drift handling.",
+            "silver": "Apply cleaning, conformance, and quality checks.",
+            "gold": "Publish curated marts and KPI-ready tables."
+          },
+          "primary_tools": [
+            "databricks"
+          ],
+          "target_skills": [
+            "spark"
+          ]
+        },
+        "project_story": {
+          "executive_summary": "Build a job-aligned medallion data platform project with measurable business outcomes and portfolio-ready artifacts.",
+          "challenge": "Translate fragmented source data into trusted KPI reporting under tight delivery timelines.",
+          "approach": "Implement bronze/silver/gold pipelines, data quality checks, and executive-friendly ROI dashboards.",
+          "impact_story": "Demonstrate end-to-end ownership from ingestion through business narrative and stakeholder-ready metrics."
+        },
+        "milestones": [
+          {
+            "name": "Discovery + Business framing",
+            "duration_weeks": 1,
+            "deliverables": [
+              "scope brief",
+              "KPI definitions"
+            ],
+            "execution_plan": "Interview stakeholders, map source systems, and define KPI ownership with acceptance criteria.",
+            "expected_deliverable": "Signed project charter with KPI dictionary, source inventory, and scope boundaries approved by sponsor.",
+            "business_why": "Aligning scope and KPI definitions early prevents rework and accelerates measurable ROI delivery.",
+            "milestone_tags": [
+              "discovery",
+              "architecture",
+              "roi"
+            ],
+            "resources": [
+              {
+                "title": "Kimball Dimensional Modeling",
+                "url": "https://www.kimballgroup.com/data-warehouse-business-intelligence-resources/"
+              }
+            ],
+            "acceptance_checks": [
+              "Project charter signed by sponsor",
+              "KPI dictionary validated in coach review"
+            ]
+          },
+          {
+            "name": "Bronze/Silver implementation",
+            "duration_weeks": 2,
+            "deliverables": [
+              "ingestion jobs",
+              "DQ checks"
+            ],
+            "execution_plan": "Build incremental ingestion pipelines, apply schema evolution handling, and implement automated data quality gates.",
+            "expected_deliverable": "Production-ready bronze/silver DAGs with tests, monitoring, and documented failure handling.",
+            "business_why": "Reliable ingestion and conformance reduce reporting defects and improve trust in downstream analytics.",
+            "milestone_tags": [
+              "bronze",
+              "silver",
+              "pipeline"
+            ],
+            "resources": [
+              {
+                "title": "Delta Lake Medallion Architecture",
+                "url": "https://docs.databricks.com/en/lakehouse/medallion.html"
+              }
+            ],
+            "acceptance_checks": [
+              "Pipeline test suite passes in CI",
+              "DQ threshold report validated and published"
+            ]
+          },
+          {
+            "name": "Gold + ROI dashboard",
+            "duration_weeks": 1,
+            "deliverables": [
+              "semantic model",
+              "executive dashboard"
+            ],
+            "execution_plan": "Model gold marts for executive questions, define semantic layer metrics, and build ROI dashboard narratives.",
+            "expected_deliverable": "Validated KPI dashboard with traceable metric definitions and stakeholder walkthrough recording.",
+            "business_why": "Clear KPI visibility enables faster decisions and proves business impact of the data platform investment.",
+            "milestone_tags": [
+              "gold",
+              "roi",
+              "bi"
+            ],
+            "resources": [
+              {
+                "title": "Power BI Design Guidance",
+                "url": "https://learn.microsoft.com/en-us/power-bi/guidance/"
+              }
+            ],
+            "acceptance_checks": [
+              "Metric definitions validated against source tables",
+              "Stakeholder review walkthrough recorded"
+            ]
+          },
+          {
+            "name": "Final review + portfolio assets",
+            "duration_weeks": 1,
+            "deliverables": [
+              "architecture narrative",
+              "repo walkthrough"
+            ],
+            "execution_plan": "Package architecture decisions, demo script, and retrospective into a portfolio-quality delivery artifact set.",
+            "expected_deliverable": "Publish-ready repo and presentation assets that communicate technical depth and business outcomes.",
+            "business_why": "Strong communication artifacts increase hiring signal and stakeholder confidence in project value.",
+            "milestone_tags": [
+              "communication",
+              "career"
+            ],
+            "resources": [
+              {
+                "title": "GitHub Portfolio Guide",
+                "url": "https://docs.github.com/en/get-started/showcase-your-work/about-your-profile"
+              }
+            ],
+            "acceptance_checks": [
+              "Demo script dry-run recorded with feedback",
+              "Retrospective published with quantified outcomes"
+            ]
+          }
+        ],
+        "roi_dashboard_requirements": {
+          "required_dimensions": [
+            "time",
+            "business_unit",
+            "product"
+          ],
+          "required_measures": [
+            "cost_savings",
+            "revenue_impact",
+            "sla_compliance"
+          ]
+        },
+        "resource_plan": {
+          "required": [
+            {
+              "title": "Data Engineering Lifecycle Guide",
+              "url": "https://martinfowler.com/articles/data-monolith-to-mesh.html"
+            }
+          ],
+          "recommended": [],
+          "optional": [],
+          "affiliate_disclosure": "Some recommended resources may include affiliate links. Recommendations are selected for project relevance first.",
+          "trust_language": "Resource recommendations are optional and do not change coaching feedback or project scoring."
+        },
+        "mentoring_cta": {
+          "recommended_tier": "core",
+          "reason": "Mapped from resume/job signals: current=mid target=mid scope=standard.",
+          "trust_language": "Mentoring recommendations are guidance-only and should align with the candidate's goals and budget."
+        },
+        "project_charter": {
+          "section_order": [
+            "prerequisites_resources",
+            "executive_summary",
+            "technical_architecture",
+            "implementation_plan",
+            "deliverables_acceptance_criteria",
+            "risks_assumptions",
+            "stretch_goals"
+          ],
+          "sections": {
+            "prerequisites_resources": {
+              "summary": "Repo scaffold, environment setup, and source access prerequisites.",
+              "resources": [
+                {
+                  "title": "GitHub Flow",
+                  "url": "https://docs.github.com/en/get-started/using-github/github-flow"
+                },
+                {
+                  "title": "dbt Documentation",
+                  "url": "https://docs.getdbt.com/docs/introduction"
+                }
+              ]
+            },
+            "executive_summary": {
+              "current_state": "Reporting is delayed and teams reconcile metrics manually.",
+              "future_state": "Decision makers use trusted self-serve KPIs refreshed on a predictable SLA."
+            },
+            "technical_architecture": {
+              "platform": "Medallion architecture with orchestration, quality gates, and semantic layer.",
+              "data_sources": [
+                {
+                  "name": "Bureau of Labor Statistics Public Data API",
+                  "url": "https://www.bls.gov/data/",
+                  "ingestion_doc_url": "https://www.bls.gov/developers/home.htm",
+                  "selection_rationale": "Provides real API ingestion practice plus documented schemas for incremental loads and trend dashboards.",
+                  "ingestion_instructions": "Use documented API/file endpoint, land raw extract to bronze with run metadata, then apply conformance tests in silver before publishing gold KPIs."
+                },
+                {
+                  "name": "Chicago Data Portal",
+                  "url": "https://data.cityofchicago.org/",
+                  "ingestion_doc_url": "https://dev.socrata.com/foundry/data.cityofchicago.org",
+                  "selection_rationale": "Good source for reproducible city analytics projects with clear ingestion endpoints and metadata.",
+                  "ingestion_instructions": "Use documented API/file endpoint, land raw extract to bronze with run metadata, then apply conformance tests in silver before publishing gold KPIs."
+                }
+              ]
+            },
+            "implementation_plan": {
+              "milestones": [
+                {
+                  "name": "Foundation + source onboarding",
+                  "expectations": "Ingestion contracts, pipeline scaffolding, and CI checks merged.",
+                  "completion_criteria": [
+                    "Source landed in bronze",
+                    "Automated tests green",
+                    "Runbook checked in"
+                  ]
+                },
+                {
+                  "name": "Modeling + KPI layer",
+                  "expectations": "Silver/gold transformations with business metric definitions.",
+                  "completion_criteria": [
+                    "Critical KPI SQL reviewed",
+                    "DQ thresholds enforced",
+                    "Stakeholder sign-off recorded"
+                  ]
+                }
+              ]
+            },
+            "deliverables_acceptance_criteria": {
+              "deliverables": [
+                "Architecture diagram",
+                "Pipelines + tests",
+                "Executive dashboard",
+                "Demo narrative"
+              ],
+              "acceptance_criteria": [
+                "Reproducible run evidence",
+                "KPI definitions trace to source",
+                "Business impact narrative is quantified"
+              ]
+            },
+            "risks_assumptions": {
+              "risks": [
+                "Source schema drift",
+                "Unclear KPI ownership",
+                "Timeline compression due to stakeholder availability"
+              ],
+              "assumptions": [
+                "Public source APIs remain available",
+                "Candidate can dedicate weekly build cadence"
+              ]
+            },
+            "stretch_goals": {
+              "items": [
+                "Add near-real-time ingestion path",
+                "Implement semantic metric layer tests",
+                "Publish interview walkthrough video"
+              ]
+            }
+          }
+        },
+        "interview_ready_package": {
+          "star_bullets": [
+            "Situation: Translate fragmented source data into trusted KPI reporting under tight delivery timelines.",
+            "Task: Own delivery of Morgan Data Engineering Capstone milestones with clear KPI targets.",
+            "Action: Implement bronze/silver/gold pipelines, data quality checks, and executive-friendly ROI dashboards.",
+            "Result: Demonstrate end-to-end ownership from ingestion through business narrative and stakeholder-ready metrics."
+          ],
+          "portfolio_checklist": [
+            "Architecture diagram exported and narrated in README",
+            "Pipeline tests + data quality checks committed with run evidence",
+            "Executive KPI dashboard with metric dictionary and assumptions",
+            "Demo script + retrospective including trade-offs and next steps"
+          ],
+          "recruiter_mapping": {
+            "technical_depth": [],
+            "business_impact": [
+              "Demonstrate end-to-end ownership from ingestion through business narrative and stakeholder-ready metrics."
+            ],
+            "communication": [
+              "Executive summary",
+              "STAR narrative",
+              "Demo walkthrough"
+            ],
+            "tooling_keywords": [
+              "databricks"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "scenario": "healthcare_analytics_foundation",
+      "applicant_name": "Jordan",
+      "project_title": "Jordan Data Engineering Capstone",
+      "quality": {
+        "score": 100,
+        "style_alignment_score": 100,
+        "major_deficiency_count": 0,
+        "deficiency_codes": []
+      },
+      "sow": {
+        "schema_version": "0.2",
+        "project_title": "Jordan Data Engineering Capstone",
+        "candidate_profile": {
+          "applicant_name": "Jordan",
+          "preferences": {
+            "timeline_weeks": 10,
+            "resume_parse_summary": {
+              "role_level": "junior",
+              "years_experience_hint": 2,
+              "parse_confidence": 78,
+              "tools": [
+                "python",
+                "sql",
+                "postgres"
+              ],
+              "domains": [
+                "healthcare"
+              ],
+              "project_experience_keywords": [
+                "dashboarding",
+                "quality checks"
+              ]
+            }
+          },
+          "role_scope_assessment": {
+            "current_role_level": "junior",
+            "target_role_level": "mid",
+            "scope_difficulty": "foundational",
+            "parse_confidence": 78,
+            "suggested_timeline_weeks": 10,
+            "capability_index": 9
+          }
+        },
+        "business_outcome": {
+          "problem_statement": "Define a measurable business problem and target KPI uplift.",
+          "target_metrics": [
+            {
+              "metric": "pipeline_sla_minutes",
+              "target": "<60"
+            },
+            {
+              "metric": "dashboard_adoption_rate",
+              "target": ">=60%"
+            }
+          ],
+          "domain_focus": [
+            "healthcare"
+          ],
+          "data_sources": [
+            {
+              "name": "NYC TLC Trip Record Data",
+              "url": "https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page",
+              "ingestion_doc_url": "https://www.nyc.gov/assets/tlc/downloads/pdf/data_dictionary_trip_records_yellow.pdf",
+              "selection_rationale": "Public trip-level facts are excellent for building medallion pipelines and KPI reporting exercises.",
+              "ingestion_instructions": "Use documented API/file endpoint, land raw extract to bronze with run metadata, then apply conformance tests in silver before publishing gold KPIs."
+            },
+            {
+              "name": "Bureau of Labor Statistics Public Data API",
+              "url": "https://www.bls.gov/data/",
+              "ingestion_doc_url": "https://www.bls.gov/developers/home.htm",
+              "selection_rationale": "Provides real API ingestion practice plus documented schemas for incremental loads and trend dashboards.",
+              "ingestion_instructions": "Use documented API/file endpoint, land raw extract to bronze with run metadata, then apply conformance tests in silver before publishing gold KPIs."
+            },
+            {
+              "name": "Chicago Data Portal",
+              "url": "https://data.cityofchicago.org/",
+              "ingestion_doc_url": "https://dev.socrata.com/foundry/data.cityofchicago.org",
+              "selection_rationale": "Good source for reproducible city analytics projects with clear ingestion endpoints and metadata.",
+              "ingestion_instructions": "Use documented API/file endpoint, land raw extract to bronze with run metadata, then apply conformance tests in silver before publishing gold KPIs."
+            }
+          ]
+        },
+        "solution_architecture": {
+          "medallion_plan": {
+            "bronze": "Ingest raw source data with schema drift handling.",
+            "silver": "Apply cleaning, conformance, and quality checks.",
+            "gold": "Publish curated marts and KPI-ready tables."
+          },
+          "primary_tools": [
+            "airflow"
+          ],
+          "target_skills": [
+            "sql"
+          ]
+        },
+        "project_story": {
+          "executive_summary": "Build a job-aligned medallion data platform project with measurable business outcomes and portfolio-ready artifacts.",
+          "challenge": "Translate fragmented source data into trusted KPI reporting under tight delivery timelines.",
+          "approach": "Implement bronze/silver/gold pipelines, data quality checks, and executive-friendly ROI dashboards.",
+          "impact_story": "Demonstrate end-to-end ownership from ingestion through business narrative and stakeholder-ready metrics."
+        },
+        "milestones": [
+          {
+            "name": "Discovery + Business framing",
+            "duration_weeks": 1,
+            "deliverables": [
+              "scope brief",
+              "KPI definitions"
+            ],
+            "execution_plan": "Interview stakeholders, map source systems, and define KPI ownership with acceptance criteria.",
+            "expected_deliverable": "Signed project charter with KPI dictionary, source inventory, and scope boundaries approved by sponsor.",
+            "business_why": "Aligning scope and KPI definitions early prevents rework and accelerates measurable ROI delivery.",
+            "milestone_tags": [
+              "discovery",
+              "architecture",
+              "roi"
+            ],
+            "resources": [
+              {
+                "title": "Kimball Dimensional Modeling",
+                "url": "https://www.kimballgroup.com/data-warehouse-business-intelligence-resources/"
+              }
+            ],
+            "acceptance_checks": [
+              "Project charter signed by sponsor",
+              "KPI dictionary validated in coach review"
+            ]
+          },
+          {
+            "name": "Bronze/Silver implementation",
+            "duration_weeks": 2,
+            "deliverables": [
+              "ingestion jobs",
+              "DQ checks"
+            ],
+            "execution_plan": "Build incremental ingestion pipelines, apply schema evolution handling, and implement automated data quality gates.",
+            "expected_deliverable": "Production-ready bronze/silver DAGs with tests, monitoring, and documented failure handling.",
+            "business_why": "Reliable ingestion and conformance reduce reporting defects and improve trust in downstream analytics.",
+            "milestone_tags": [
+              "bronze",
+              "silver",
+              "pipeline"
+            ],
+            "resources": [
+              {
+                "title": "Delta Lake Medallion Architecture",
+                "url": "https://docs.databricks.com/en/lakehouse/medallion.html"
+              }
+            ],
+            "acceptance_checks": [
+              "Pipeline test suite passes in CI",
+              "DQ threshold report validated and published"
+            ]
+          },
+          {
+            "name": "Gold + ROI dashboard",
+            "duration_weeks": 1,
+            "deliverables": [
+              "semantic model",
+              "executive dashboard"
+            ],
+            "execution_plan": "Model gold marts for executive questions, define semantic layer metrics, and build ROI dashboard narratives.",
+            "expected_deliverable": "Validated KPI dashboard with traceable metric definitions and stakeholder walkthrough recording.",
+            "business_why": "Clear KPI visibility enables faster decisions and proves business impact of the data platform investment.",
+            "milestone_tags": [
+              "gold",
+              "roi",
+              "bi"
+            ],
+            "resources": [
+              {
+                "title": "Power BI Design Guidance",
+                "url": "https://learn.microsoft.com/en-us/power-bi/guidance/"
+              }
+            ],
+            "acceptance_checks": [
+              "Metric definitions validated against source tables",
+              "Stakeholder review walkthrough recorded"
+            ]
+          },
+          {
+            "name": "Final review + portfolio assets",
+            "duration_weeks": 1,
+            "deliverables": [
+              "architecture narrative",
+              "repo walkthrough"
+            ],
+            "execution_plan": "Package architecture decisions, demo script, and retrospective into a portfolio-quality delivery artifact set.",
+            "expected_deliverable": "Publish-ready repo and presentation assets that communicate technical depth and business outcomes.",
+            "business_why": "Strong communication artifacts increase hiring signal and stakeholder confidence in project value.",
+            "milestone_tags": [
+              "communication",
+              "career"
+            ],
+            "resources": [
+              {
+                "title": "GitHub Portfolio Guide",
+                "url": "https://docs.github.com/en/get-started/showcase-your-work/about-your-profile"
+              }
+            ],
+            "acceptance_checks": [
+              "Demo script dry-run recorded with feedback",
+              "Retrospective published with quantified outcomes"
+            ]
+          }
+        ],
+        "roi_dashboard_requirements": {
+          "required_dimensions": [
+            "time",
+            "business_unit",
+            "product"
+          ],
+          "required_measures": [
+            "cost_savings",
+            "revenue_impact",
+            "sla_compliance"
+          ]
+        },
+        "resource_plan": {
+          "required": [
+            {
+              "title": "Data Engineering Lifecycle Guide",
+              "url": "https://martinfowler.com/articles/data-monolith-to-mesh.html"
+            }
+          ],
+          "recommended": [],
+          "optional": [],
+          "affiliate_disclosure": "Some recommended resources may include affiliate links. Recommendations are selected for project relevance first.",
+          "trust_language": "Resource recommendations are optional and do not change coaching feedback or project scoring."
+        },
+        "mentoring_cta": {
+          "recommended_tier": "starter",
+          "reason": "Mapped from resume/job signals: current=junior target=mid scope=foundational.",
+          "trust_language": "Mentoring recommendations are guidance-only and should align with the candidate's goals and budget."
+        },
+        "project_charter": {
+          "section_order": [
+            "prerequisites_resources",
+            "executive_summary",
+            "technical_architecture",
+            "implementation_plan",
+            "deliverables_acceptance_criteria",
+            "risks_assumptions",
+            "stretch_goals"
+          ],
+          "sections": {
+            "prerequisites_resources": {
+              "summary": "Repo scaffold, environment setup, and source access prerequisites.",
+              "resources": [
+                {
+                  "title": "GitHub Flow",
+                  "url": "https://docs.github.com/en/get-started/using-github/github-flow"
+                },
+                {
+                  "title": "dbt Documentation",
+                  "url": "https://docs.getdbt.com/docs/introduction"
+                }
+              ]
+            },
+            "executive_summary": {
+              "current_state": "Reporting is delayed and teams reconcile metrics manually.",
+              "future_state": "Decision makers use trusted self-serve KPIs refreshed on a predictable SLA."
+            },
+            "technical_architecture": {
+              "platform": "Medallion architecture with orchestration, quality gates, and semantic layer.",
+              "data_sources": [
+                {
+                  "name": "NYC TLC Trip Record Data",
+                  "url": "https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page",
+                  "ingestion_doc_url": "https://www.nyc.gov/assets/tlc/downloads/pdf/data_dictionary_trip_records_yellow.pdf",
+                  "selection_rationale": "Public trip-level facts are excellent for building medallion pipelines and KPI reporting exercises.",
+                  "ingestion_instructions": "Use documented API/file endpoint, land raw extract to bronze with run metadata, then apply conformance tests in silver before publishing gold KPIs."
+                },
+                {
+                  "name": "Bureau of Labor Statistics Public Data API",
+                  "url": "https://www.bls.gov/data/",
+                  "ingestion_doc_url": "https://www.bls.gov/developers/home.htm",
+                  "selection_rationale": "Provides real API ingestion practice plus documented schemas for incremental loads and trend dashboards.",
+                  "ingestion_instructions": "Use documented API/file endpoint, land raw extract to bronze with run metadata, then apply conformance tests in silver before publishing gold KPIs."
+                }
+              ]
+            },
+            "implementation_plan": {
+              "milestones": [
+                {
+                  "name": "Foundation + source onboarding",
+                  "expectations": "Ingestion contracts, pipeline scaffolding, and CI checks merged.",
+                  "completion_criteria": [
+                    "Source landed in bronze",
+                    "Automated tests green",
+                    "Runbook checked in"
+                  ]
+                },
+                {
+                  "name": "Modeling + KPI layer",
+                  "expectations": "Silver/gold transformations with business metric definitions.",
+                  "completion_criteria": [
+                    "Critical KPI SQL reviewed",
+                    "DQ thresholds enforced",
+                    "Stakeholder sign-off recorded"
+                  ]
+                }
+              ]
+            },
+            "deliverables_acceptance_criteria": {
+              "deliverables": [
+                "Architecture diagram",
+                "Pipelines + tests",
+                "Executive dashboard",
+                "Demo narrative"
+              ],
+              "acceptance_criteria": [
+                "Reproducible run evidence",
+                "KPI definitions trace to source",
+                "Business impact narrative is quantified"
+              ]
+            },
+            "risks_assumptions": {
+              "risks": [
+                "Source schema drift",
+                "Unclear KPI ownership",
+                "Timeline compression due to stakeholder availability"
+              ],
+              "assumptions": [
+                "Public source APIs remain available",
+                "Candidate can dedicate weekly build cadence"
+              ]
+            },
+            "stretch_goals": {
+              "items": [
+                "Add near-real-time ingestion path",
+                "Implement semantic metric layer tests",
+                "Publish interview walkthrough video"
+              ]
+            }
+          }
+        },
+        "interview_ready_package": {
+          "star_bullets": [
+            "Situation: Translate fragmented source data into trusted KPI reporting under tight delivery timelines.",
+            "Task: Own delivery of Jordan Data Engineering Capstone milestones with clear KPI targets.",
+            "Action: Implement bronze/silver/gold pipelines, data quality checks, and executive-friendly ROI dashboards.",
+            "Result: Demonstrate end-to-end ownership from ingestion through business narrative and stakeholder-ready metrics."
+          ],
+          "portfolio_checklist": [
+            "Architecture diagram exported and narrated in README",
+            "Pipeline tests + data quality checks committed with run evidence",
+            "Executive KPI dashboard with metric dictionary and assumptions",
+            "Demo script + retrospective including trade-offs and next steps"
+          ],
+          "recruiter_mapping": {
+            "technical_depth": [],
+            "business_impact": [
+              "Demonstrate end-to-end ownership from ingestion through business narrative and stakeholder-ready metrics."
+            ],
+            "communication": [
+              "Executive summary",
+              "STAR narrative",
+              "Demo walkthrough"
+            ],
+            "tooling_keywords": [
+              "airflow"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
