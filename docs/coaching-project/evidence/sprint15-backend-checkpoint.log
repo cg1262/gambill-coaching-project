@@ -1,0 +1,23 @@
+﻿[sprint15-backend] start 2026-03-07T07:25:11.0036785-05:00
+
+# Focused quality + regenerate + conversion suites
+....................                                                     [100%]
+============================== warnings summary ===============================
+C:\Users\cgamb\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\site-packages\pydantic\_internal\_fields.py:198
+  C:\Users\cgamb\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\site-packages\pydantic\_internal\_fields.py:198: UserWarning: Field name "schema" in "TableNode" shadows an attribute in parent "BaseModel"
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+
+# Full backend suite
+........................................................................ [ 42%]
+........................................................................ [ 85%]
+..........ssss..........                                                 [100%]
+============================== warnings summary ===============================
+C:\Users\cgamb\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\site-packages\pydantic\_internal\_fields.py:198
+  C:\Users\cgamb\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\LocalCache\local-packages\Python311\site-packages\pydantic\_internal\_fields.py:198: UserWarning: Field name "schema" in "TableNode" shadows an attribute in parent "BaseModel"
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+
+[sprint15-backend] end 2026-03-07T07:25:29.7170996-05:00

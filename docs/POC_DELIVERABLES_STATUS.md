@@ -23,6 +23,31 @@ Owner: ERD Program Team
 - **Blocker:** deterministic compliant-runtime web compile/build proof remains unresolved due local Windows package extraction/install instability (TAR/ENOENT warnings and follow-on missing local `tsc`/`next` in compliant-runtime attempts).
 - **Non-blocker:** API auth/session/rate-limit/webhook controls, invalid-signature alert trigger+routing path, and diagnostics/personalization/runtime output secret-masking controls are regression-backed and passing.
 
+## Checkpoint Update (2026-03-07 - Sprint 15 Backend Execution: Golden Acceptance + Regenerate Loop + Conversion Accuracy)
+
+### Done
+- Executed Sprint 15 backend acceptance pass for output quality, correction loop reliability, and conversion reporting integrity.
+- Revalidated golden scenario quality gates across 4 deterministic fixtures with zero major deficiency regressions:
+  - `apps/api/tests/test_coaching_sprint12_backend.py`
+  - `apps/api/tests/test_coaching_sprint13_backend.py`
+  - `apps/api/tests/test_coaching_sprint14_quality_gates.py`
+- Revalidated backend deficiency correction / one-click regenerate contract behavior:
+  - `apps/api/tests/test_coaching_generation_guardrails.py`
+  - `apps/api/tests/test_coaching_sprint7_backend.py`
+  - `apps/api/tests/test_coaching_sprint14_throughput_and_alerts.py`
+- Revalidated weekly conversion summary + drop-off insight calculations:
+  - `apps/api/tests/test_coaching_sprint13_backend.py::test_sprint13_weekly_summary_includes_drop_off_insights`
+- Captured consolidated backend evidence log:
+  - `docs/coaching-project/evidence/sprint15-backend-checkpoint.log`
+
+### Validation
+- `python -m pytest apps/api/tests/test_coaching_sprint12_backend.py apps/api/tests/test_coaching_sprint13_backend.py apps/api/tests/test_coaching_sprint14_quality_gates.py apps/api/tests/test_coaching_sprint14_throughput_and_alerts.py apps/api/tests/test_coaching_generation_guardrails.py apps/api/tests/test_coaching_sprint7_backend.py -q` (repo root) → **20 passed, 1 warning**.
+- `python -m pytest -q` (apps/api) → **full backend suite passed, 4 skipped, 1 warning**.
+
+### Risks / Follow-ups
+- No backend code changes were required in this checkpoint; continue monitoring live pilot runs for quality drift and refresh heuristics only when regression evidence appears.
+- Existing pydantic warning (`TableNode.schema` field shadow) remains non-blocking and unchanged.
+
 ## Checkpoint Update (2026-03-06 - Sprint 14 Backend Execution: Required Golden Gate + Seeded Artifacts + Throughput APIs)
 
 ### Done
