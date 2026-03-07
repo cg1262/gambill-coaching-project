@@ -370,3 +370,62 @@ def test_invalid_signature_alert_emits_after_threshold_webhook(monkeypatch):
     alerts = [extra for msg, extra in calls if msg == "coaching_webhook_invalid_signature_alert"]
     assert len(alerts) == 1
     assert alerts[0].get("route") == "/coaching/subscription/webhook"
+
+
+def test_invalid_signature_alert_routes_to_configured_webhook(monkeypatch):
+    monkeypatch.setenv("COACHING_WEBHOOK_SECRET", "whsec_alert_secret")
+    monkeypatch.setenv("WEBHOOK_INVALID_SIG_ALERT_THRESHOLD", "2")
+    monkeypatch.setenv("WEBHOOK_INVALID_SIG_ALERT_WEBHOOK_URL", "https://alerts.example/webhook")
+
+    posted: list[dict] = []
+
+    class _Resp:
+        status = 204
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    def _fake_urlopen(req, timeout=0):
+        posted.append(
+            {
+                "url": req.full_url,
+                "timeout": timeout,
+                "payload": json.loads(req.data.decode("utf-8")),
+            }
+        )
+        return _Resp()
+
+    monkeypatch.setattr("webhook_alerts.urllib.request.urlopen", _fake_urlopen)
+
+    payload = {
+        "id": "evt_wh_alert_route_1",
+        "workspace_id": "ws-1",
+        "provider": "squarespace",
+        "event_type": "subscription.updated",
+        "email": "member@example.com",
+        "plan_tier": "core",
+        "subscription_status": "active",
+    }
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    now_ts = int(time.time())
+    bad_headers = {
+        "x-webhook-provider": "squarespace",
+        "x-webhook-timestamp": str(now_ts),
+        "x-webhook-signature": "bad",
+        "content-type": "application/json",
+    }
+
+    client = TestClient(app)
+    client.post("/coaching/subscription/webhook", content=body, headers=bad_headers)
+    client.post("/coaching/subscription/webhook", content=body, headers=bad_headers)
+
+    assert len(posted) == 1
+    assert posted[0]["url"] == "https://alerts.example/webhook"
+    routed = posted[0]["payload"]
+    assert routed["route"] == "/coaching/subscription/webhook"
+    serialized = str(routed).lower()
+    assert "webhook_signature" not in serialized
+    assert "whsec_" not in serialized
