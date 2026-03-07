@@ -2,9 +2,9 @@
 
 Use this as a go/no-go gate before enabling pilot users.
 
-## Current Gate Status (2026-03-06)
+## Current Gate Status (2026-03-07)
 - **Security pilot gate:** CONDITIONAL GO
-- **Why conditional:** Sprint 14 security revalidation confirms auth/session/rate-limit/webhook controls remain intact, and invalid-signature alert routing now has explicit end-to-end regression evidence for configured ops webhook delivery. Remaining blocker is deterministic web compile/build proof on compliant runtime (`Node 20.11.1`, `npm 10.x`) because local install/runtime path still presents Windows filesystem/toolchain instability (`npm ci` TAR/ENOENT extraction corruption; follow-on missing local `tsc`/`next`).
+- **Why conditional:** Sprint 15 security revalidation confirms auth/session/rate-limit/webhook controls remain intact, invalid-signature alert routing remains operational for configured webhook delivery, and diagnostics/personalization/runtime error outputs remain secret-safe under regression coverage. Remaining blocker is deterministic web compile/build proof on compliant runtime (`Node 20.11.1`, `npm 10.x`) because local install/runtime path still presents Windows filesystem/toolchain instability (`npm ci` TAR/ENOENT extraction corruption; follow-on missing local `tsc`/`next`).
 
 ## 1) Auth + Subscription Enforcement
 - [x] Verify all coaching generation routes require authenticated session + allowed role (`admin`/`editor`).
@@ -39,7 +39,7 @@ Use this as a go/no-go gate before enabling pilot users.
 - [ ] Run compile/build checks for API + web. *(API compile passes. Web remains blocked pending deterministic runner hygiene: host runtime gate intentionally fails (`Node v24.13.1`, `npm 11.8.0`), and compliant-runtime attempt (`Volta Node 20.11.1/npm 10.8.2`) still hit local filesystem/install instability (`npm ci` EPERM unlink in `node_modules`).)*
 - [ ] Attach test/build output + commit SHA to pilot launch notes.
 
-### Evidence Commands (2026-03-06 Sprint 14 Security Revalidation)
+### Evidence Commands (2026-03-07 Sprint 15 Security Revalidation)
 - `python -m pytest tests/test_auth_contract_security.py tests/test_auth_sessions.py tests/test_security_rate_limit_webhook.py tests/test_rate_limits_and_webhooks.py tests/test_coaching_subscription.py tests/test_llm_output_security.py` → **43 passed, 1 warning**
 - `python -m pytest -q tests/test_security_rate_limit_webhook.py::test_invalid_signature_alert_routes_to_configured_webhook` → **pass**
 - `python -m py_compile main.py webhook_security.py webhook_alerts.py coaching\sow_validation.py coaching\sow_security.py` → **pass**

@@ -1,7 +1,27 @@
 # POC Deliverables Status
 
-Last Updated: 2026-03-06
+Last Updated: 2026-03-07
 Owner: ERD Program Team
+
+## Checkpoint Update (2026-03-07 - Sprint 15 Security Execution: Revalidation + Alert Routing Operational Evidence)
+
+### Done
+- Revalidated auth/session/rate-limit/webhook controls after Sprint 15 updates using the focused API security regression pack.
+- Revalidated invalid webhook-signature alert operational routing path for configured webhook destination and reconfirmed routed payload remains secret-safe.
+- Revalidated diagnostics/personalization/runtime error output masking:
+  - API diagnostics/output regressions remained green (`tests/test_llm_output_security.py`).
+  - Runtime mismatch diagnostics remained secret-safe (`apps/web/scripts/require-runtime.test.cjs`).
+- Refreshed pilot hardening checklist and sprint board security checkpoint with blocker/non-blocker and go/no-go framing.
+
+### Validation
+- `python -m pytest tests/test_auth_contract_security.py tests/test_auth_sessions.py tests/test_security_rate_limit_webhook.py tests/test_rate_limits_and_webhooks.py tests/test_coaching_subscription.py tests/test_llm_output_security.py` (apps/api) → **43 passed, 1 warning**.
+- `python -m pytest -q tests/test_security_rate_limit_webhook.py::test_invalid_signature_alert_routes_to_configured_webhook` (apps/api) → **pass**.
+- `python -m py_compile main.py webhook_security.py webhook_alerts.py coaching\sow_validation.py coaching\sow_security.py` (apps/api) → **pass**.
+- `node --test scripts/require-runtime.test.cjs` (apps/web) → **5 passed**.
+
+### Blocker / Non-blocker Decisions
+- **Blocker:** deterministic compliant-runtime web compile/build proof remains unresolved due local Windows package extraction/install instability (TAR/ENOENT warnings and follow-on missing local `tsc`/`next` in compliant-runtime attempts).
+- **Non-blocker:** API auth/session/rate-limit/webhook controls, invalid-signature alert trigger+routing path, and diagnostics/personalization/runtime output secret-masking controls are regression-backed and passing.
 
 ## Checkpoint Update (2026-03-06 - Sprint 14 Backend Execution: Required Golden Gate + Seeded Artifacts + Throughput APIs)
 
