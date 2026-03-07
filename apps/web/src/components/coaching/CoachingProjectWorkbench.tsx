@@ -545,10 +545,21 @@ type CoachingProjectWorkbenchProps = {
   projectId?: string;
 };
 
+type ThemeMode = "light" | "dark";
+const THEME_STORAGE_KEY = "coaching-theme-mode";
+
+function resolvePreferredTheme(): ThemeMode {
+  if (typeof window === "undefined") return "light";
+  const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
+  if (saved === "light" || saved === "dark") return saved;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
 export default function CoachingProjectWorkbench({ mode = "all", projectId }: CoachingProjectWorkbenchProps) {
   const searchParams = useSearchParams();
   const showInternalAdminPanel = searchParams.get("internal") === "1" || searchParams.get("admin") === "1";
 
+  const [themeMode, setThemeMode] = useState<ThemeMode>("light");
   const [authState, setAuthState] = useState<CoachingAuthState>("signedOut");
   const [subscriptionStatus, setSubscriptionStatus] = useState<SubscriptionStatus>("unknown");
   const [planTier, setPlanTier] = useState<PlanTier>("starter");
@@ -601,6 +612,30 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   const submissionsLoadRef = useRef(0);
   const submissionDetailReqRef = useRef(0);
   const readinessReqRef = useRef(0);
+
+  useEffect(() => {
+    setThemeMode(resolvePreferredTheme());
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const themeAttr = themeMode === "dark" ? "dark-premium" : "clean-enterprise";
+    document.documentElement.setAttribute("data-theme", themeAttr);
+    window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+  }, [themeMode]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const handler = () => {
+      const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
+      if (saved !== "light" && saved !== "dark") {
+        setThemeMode(media.matches ? "dark" : "light");
+      }
+    };
+    media.addEventListener("change", handler);
+    return () => media.removeEventListener("change", handler);
+  }, []);
 
   useEffect(() => {
     setRateLimitConfig(loadRateLimitUiConfig());
@@ -1499,7 +1534,17 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
             <p>Generate portfolio-ready, business-outcome-driven data engineering projects from resume + job targets.</p>
           </div>
         </div>
-        <span className="badge info">Coaching App</span>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className="coaching-theme-toggle"
+            onClick={() => setThemeMode((prev) => (prev === "dark" ? "light" : "dark"))}
+            aria-label={`Switch to ${themeMode === "dark" ? "light" : "dark"} mode`}
+          >
+            {themeMode === "dark" ? "🌙 Dark" : "☀️ Light"}
+          </button>
+          <span className="badge info">Coaching App</span>
+        </div>
       </div>
       {sessionBanner && <div className="card" style={{ border: "1px solid #f59e0b", background: "#fffbeb", color: "#92400e" }}>{sessionBanner}</div>}
       {(reviewError || readinessState.error || (generationState.message && generationState.message.toLowerCase().includes("retry"))) && (
@@ -1568,7 +1613,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
         </div>
       )}
 
-      <div className="card" style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <div className="card coaching-panel coaching-topnav" style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
         <Link href="/intake"><button className={mode === "intake" ? "btn-primary" : undefined}>Intake</button></Link>
         <Link href="/review"><button className={mode === "review" ? "btn-primary" : undefined}>Review</button></Link>
         <Link href={currentSubmissionId ? `/project/${currentSubmissionId}` : "/project/demo"}><button className={mode === "project" ? "btn-primary" : undefined}>Project</button></Link>
@@ -1953,7 +1998,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                         {quickActionState.error && <div style={{ marginTop: 6 }}><span className="badge error">{quickActionState.error}</span></div>}
                         {quickActionState.launchToken && (
                           <div style={{ marginTop: 6, fontSize: 11, color: "var(--color-text-muted)" }}>
-                            Launch token (preview): <code>{quickActionState.launchToken.slice(0, 24)}…</code>
+                            Launch token generated and stored for handoff. Preview hidden for security.
                           </div>
                         )}
                       </div>
@@ -1994,7 +2039,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                 <button
                   key={step}
                   onClick={() => setActiveStep(step)}
-                  className={activeStep === step ? "btn-primary" : undefined}
+                  className={`coaching-step-btn ${activeStep === step ? "is-active" : ""} ${completion[step] ? "is-complete" : ""}`.trim()}
                   style={{ fontSize: 12, padding: "6px 8px" }}
                 >
                   {STEP_LABELS[step]} {completion[step] ? "✓" : ""}

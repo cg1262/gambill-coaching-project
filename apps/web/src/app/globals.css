@@ -1,4 +1,5 @@
 :root,
+:root[data-theme="light"],
 :root[data-theme="clean-enterprise"] {
   --color-primary: #0F172A;
   --color-secondary: #334155;
@@ -33,8 +34,16 @@
   --canvas-grad-start: #ffffff;
   --canvas-grad-mid: #f8fafc;
   --canvas-grad-end: #eff6ff;
+
+  --coaching-panel-bg: #ffffff;
+  --coaching-panel-bg-soft: #f8fbff;
+  --coaching-panel-border: #d7e3f2;
+  --coaching-header-bg: #eef4ff;
+  --coaching-progress-bg: #dbeafe;
+  --coaching-progress-fill: #3b82f6;
 }
 
+:root[data-theme="dark"],
 :root[data-theme="dark-premium"] {
   --color-primary: #020617;
   --color-secondary: #1e293b;
@@ -69,6 +78,13 @@
   --canvas-grad-start: #0b1220;
   --canvas-grad-mid: #111827;
   --canvas-grad-end: #0f172a;
+
+  --coaching-panel-bg: #0d1728;
+  --coaching-panel-bg-soft: #111f35;
+  --coaching-panel-border: #2c3f5a;
+  --coaching-header-bg: #15243b;
+  --coaching-progress-bg: #203553;
+  --coaching-progress-fill: #60a5fa;
 }
 
 * { box-sizing: border-box; }
@@ -200,10 +216,11 @@ button:active { transform: translateY(1px); }
   border-color: #b91c1c;
   color: #fff;
 }
-input:focus, select:focus, button:focus {
-  outline: none;
+input:focus-visible, select:focus-visible, button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--color-info) 78%, #ffffff 22%);
+  outline-offset: 2px;
   border-color: var(--color-info);
-  box-shadow: 0 0 0 3px rgba(59,130,246,0.18);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-info) 28%, transparent);
 }
 
 .top-menu-bar button {
@@ -300,21 +317,55 @@ input:focus, select:focus, button:focus {
 .badge.error { background: #fee2e2; color: #991b1b; }
 .badge.info { background: #dbeafe; color: #1e40af; }
 
+:root[data-theme="dark"] .badge.success,
 :root[data-theme="dark-premium"] .badge.success { background: rgba(16,185,129,0.2); color: #6ee7b7; }
+:root[data-theme="dark"] .badge.warning,
 :root[data-theme="dark-premium"] .badge.warning { background: rgba(249,115,22,0.2); color: #fdba74; }
+:root[data-theme="dark"] .badge.error,
 :root[data-theme="dark-premium"] .badge.error { background: rgba(220,38,38,0.2); color: #fca5a5; }
+:root[data-theme="dark"] .badge.info,
 :root[data-theme="dark-premium"] .badge.info { background: rgba(59,130,246,0.2); color: #93c5fd; }
 
 /* Coaching app polish */
 .coaching-shell {
   display: grid;
-  gap: 8px;
+  gap: 10px;
+}
+
+.coaching-shell > h4 {
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--coaching-panel-border);
+  background: linear-gradient(120deg, var(--coaching-header-bg), transparent 70%);
+  font-size: 13px;
+  letter-spacing: 0.02em;
 }
 
 .coaching-input-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 8px;
+  gap: 10px;
+}
+
+.coaching-panel,
+.coaching-shell .card {
+  background: var(--coaching-panel-bg);
+  border: 1px solid var(--coaching-panel-border);
+  box-shadow: var(--shadow-soft);
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+}
+
+.coaching-panel:hover,
+.coaching-shell .card:hover {
+  border-color: var(--color-info);
+  box-shadow: var(--shadow-medium);
+}
+
+.coaching-topnav {
+  position: sticky;
+  top: 8px;
+  z-index: 3;
 }
 
 .coaching-hero {
@@ -324,8 +375,8 @@ input:focus, select:focus, button:focus {
   gap: 12px;
   padding: 14px 16px;
   border-radius: 14px;
-  border: 1px solid var(--panel-border-strong);
-  background: linear-gradient(130deg, color-mix(in srgb, var(--panel-bg) 88%, #3b82f6 12%) 0%, var(--panel-bg) 100%);
+  border: 1px solid var(--coaching-panel-border);
+  background: linear-gradient(130deg, color-mix(in srgb, var(--coaching-panel-bg) 84%, #3b82f6 16%) 0%, var(--coaching-panel-bg) 100%);
   box-shadow: var(--shadow-soft);
 }
 
@@ -358,7 +409,7 @@ input:focus, select:focus, button:focus {
 }
 
 .resume-dropzone {
-  border: 1px dashed var(--color-border-strong);
+  border: 1px dashed var(--panel-border-strong);
   border-radius: 12px;
   padding: 14px;
   display: grid;
@@ -381,12 +432,40 @@ input:focus, select:focus, button:focus {
 
 .milestone-card {
   line-height: 1.58;
-  border: 1px solid color-mix(in srgb, var(--color-border-strong) 58%, transparent);
+  border: 1px solid color-mix(in srgb, var(--panel-border-strong) 58%, transparent);
   background: color-mix(in srgb, var(--panel-bg) 94%, #2563eb 6%);
 }
 
 .milestone-card ul li {
   margin-bottom: 2px;
+}
+
+.coaching-theme-toggle {
+  min-width: 96px;
+  font-weight: 700;
+}
+
+.coaching-step-btn {
+  border-color: var(--coaching-panel-border);
+  background: var(--coaching-panel-bg-soft);
+}
+
+.coaching-step-btn.is-active {
+  background: linear-gradient(90deg, var(--color-info), #2563eb);
+  border-color: #2563eb;
+  color: #fff;
+}
+
+.coaching-step-btn.is-complete {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-success) 45%, transparent);
+}
+
+.resume-progress-track {
+  background: var(--coaching-progress-bg);
+}
+
+.resume-progress-track > span {
+  background: linear-gradient(90deg, var(--coaching-progress-fill), #10b981);
 }
 
 .card h4,

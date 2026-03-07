@@ -3,6 +3,60 @@
 Last Updated: 2026-03-07
 Owner: ERD Program Team
 
+## Checkpoint Update (2026-03-07 - Sprint 17 Frontend Execution: Dark Mode + Panel-Based Workbench)
+
+### Done
+- Implemented light/dark theme token support in `apps/web/src/app/globals.css` with compatibility for existing theme ids (`clean-enterprise` / `dark-premium`).
+- Added coaching workbench theme control in `apps/web/src/components/coaching/CoachingProjectWorkbench.tsx` with:
+  - persisted preference (`localStorage: coaching-theme-mode`),
+  - default to system preference (`prefers-color-scheme`) on first load,
+  - system-theme change sync when no explicit user override exists.
+- Refined coaching page hierarchy and engagement styling:
+  - section header emphasis,
+  - panelized card surfaces + hover/focus affordances,
+  - sticky route navigation panel,
+  - improved intake progress cue styling.
+- Kept end-to-end workflows (intake, generate/regenerate, review queue, export) intact while improving readability in both themes.
+
+### Validation
+- `npm run typecheck` (apps/web) → **pass**.
+- `npm run build` (apps/web) → **pass**.
+
+### Risks / Follow-ups
+- Consider a follow-up visual regression pass for dense table and badge contrast calibration in dark mode.
+
+## Checkpoint Update (2026-03-07 - Sprint 17 Backend Support Pass: Dark Mode/Panel Contract Verification)
+
+### Done
+- Executed Sprint 17 backend support pass against frontend dark mode/paneling updates.
+- Verified Sprint 17 UI changes in `CoachingProjectWorkbench` are presentation/client-state improvements only (selection helpers, selected/total indicator, selected-status summary).
+- Confirmed no backend contract deltas are required for current panel readability enhancements; existing review queue/list payload already provides required fields (`submission_id`, `status`).
+- Added backend evidence log: `docs/coaching-project/evidence/sprint17-backend-contract-check.log`.
+
+### Validation
+- `python -m pytest tests/test_coaching_sprint16_backend.py tests/test_coaching_sprint14_throughput_and_alerts.py tests/test_coaching_review_endpoints.py tests/test_coaching_sprint13_backend.py` (apps/api) → **16 passed, 1 warning**.
+
+### Risks / Follow-ups
+- Existing pydantic warning (`TableNode.schema` field shadow) remains non-blocking and unchanged.
+- If later Sprint 17 paneling asks for server-side aggregates (e.g., pre-grouped status cohorts across paged datasets), add additive response fields only and keep current contracts backward-compatible.
+
+## Checkpoint Update (2026-03-07 - Sprint 17 Frontend Security/Accessibility Pass: Dark Theme + Panel Safety)
+
+### Done
+- Reviewed Sprint 17 dark mode + panel UX deltas for accessibility/security regressions.
+- Fixed undefined border token references in panelized surfaces (`resume-dropzone`, `milestone-card`) by switching to `--panel-border-strong` so borders render consistently in both themes.
+- Strengthened keyboard focus visibility by moving controls to explicit `:focus-visible` ring/outline treatment (theme-token based).
+- Removed launch-token preview snippet from coach quick-action UI to prevent partial handoff token leakage in interactive panel states.
+- Updated pilot hardening checklist with Sprint 17 theme/panel safety checks and token-preview control.
+
+### Validation
+- `npm run typecheck` (apps/web) → **expected fail-fast** on host runtime mismatch (`Node v24.13.1`, `npm 11.8.0`; requires Node `20.11.1`, `npm 10.x`).
+- Manual UI/security review of dark/light token usage + focus treatment in `apps/web/src/app/globals.css` and `CoachingProjectWorkbench.tsx`.
+
+### Risks / Follow-ups
+- Contrast validation is currently visual/manual; add automated accessibility checks (axe/Playwright) in a later sprint for repeatable gate evidence.
+- Next.js advisory remediation remains an independent release gate.
+
 ## Checkpoint Update (2026-03-07 - Sprint 16 Security Execution: Revalidation + Bounded-Risk Go/No-Go Refresh)
 
 ### Done
