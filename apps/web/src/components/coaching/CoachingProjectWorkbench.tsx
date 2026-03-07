@@ -255,6 +255,14 @@ function buildCombinedProfile(draft: IntakeDraft): string {
   return summaryBits.join("\n");
 }
 
+function failReasonPriority(reason: QualityActionableReason): number {
+  const code = String(reason.code || "").toUpperCase();
+  if (code.includes("MISSING") || code.includes("SECTION") || code.includes("MILESTONE")) return 1;
+  if (code.includes("DATA_SOURCE") || code.includes("INGESTION") || code.includes("ARCHITECTURE")) return 2;
+  if (code.includes("RESOURCE") || code.includes("NARRATIVE") || code.includes("STYLE")) return 3;
+  return 4;
+}
+
 function mapFailReasonToViewerTab(reason: QualityActionableReason): ViewerTabId {
   const code = String(reason.code || "").toUpperCase();
   const field = String(reason.field || "").toLowerCase();
@@ -573,6 +581,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   const [selectedSubmissionStatus, setSelectedSubmissionStatus] = useState<string>("submitted");
   const [selectedSubmissionIds, setSelectedSubmissionIds] = useState<string[]>([]);
   const [batchReviewState, setBatchReviewState] = useState<{ running: boolean; message?: string; error?: string }>({ running: false });
+  const [batchRegenerateState, setBatchRegenerateState] = useState<{ running: boolean; message?: string; error?: string }>({ running: false });
   const [coachNotes, setCoachNotes] = useState<string>("");
   const [coachFeedbackTags, setCoachFeedbackTags] = useState<string[]>([]);
   const [queueStatusFilter, setQueueStatusFilter] = useState<string>("all");
@@ -719,15 +728,19 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   const qualityActionableReasons = useMemo((): Array<QualityActionableReason & { targetTab: ViewerTabId }> => {
     const diagnostics = ((generationState.quality || {}).quality_diagnostics || {}) as Record<string, any>;
     const rows = Array.isArray(diagnostics.actionable_fail_reasons) ? diagnostics.actionable_fail_reasons : [];
-    return rows.slice(0, 6).map((row: any) => {
-      const normalized: QualityActionableReason = {
-        code: String(row?.code || "UNKNOWN"),
-        field: String(row?.field || "sow"),
-        reason: String(row?.reason || "Quality issue requires correction."),
-        suggested_fix: String(row?.suggested_fix || "Address this issue and regenerate."),
-      };
-      return { ...normalized, targetTab: mapFailReasonToViewerTab(normalized) };
-    });
+    return rows
+      .slice(0, 8)
+      .map((row: any) => {
+        const normalized: QualityActionableReason = {
+          code: String(row?.code || "UNKNOWN"),
+          field: String(row?.field || "sow"),
+          reason: String(row?.reason || "Quality issue requires correction."),
+          suggested_fix: String(row?.suggested_fix || "Address this issue and regenerate."),
+        };
+        return { ...normalized, targetTab: mapFailReasonToViewerTab(normalized), priority: failReasonPriority(normalized) };
+      })
+      .sort((a, b) => a.priority - b.priority)
+      .slice(0, 6);
   }, [generationState.quality]);
 
   const suggestedFeedbackTags = useMemo(() => {
@@ -942,7 +955,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   }
 
   async function runBatchReviewAction(action: "in_review" | "needs_revision" | "ready") {
-    if (!selectedSubmissionIds.length || batchReviewState.running) return;
+    if (!selectedSubmissionIds.length || batchReviewState.running || batchRegenerateState.running) return;
 
     try {
       setBatchReviewState({ running: true, message: `Applying ${action} to ${selectedSubmissionIds.length} submissions...` });
@@ -975,6 +988,40 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       }
     } catch (e: any) {
       setBatchReviewState({ running: false, error: handleProtectedApiError(e) });
+    }
+  }
+
+  async function runBatchRegenerateSelected() {
+    if (!selectedSubmissionIds.length || batchRegenerateState.running || batchReviewState.running) return;
+
+    try {
+      setBatchRegenerateState({ running: true, message: `Regenerating ${selectedSubmissionIds.length} selected submissions...` });
+      const ids = [...selectedSubmissionIds];
+      let success = 0;
+      let failure = 0;
+
+      for (const submissionId of ids) {
+        try {
+          const out = await api.coachingGenerateSow({
+            workspace_id: draft.workspaceId || "demo-workspace",
+            submission_id: submissionId,
+            parsed_jobs: [],
+            regenerate_with_improvements: true,
+          });
+          if (out.ok && out.sow) {
+            success += 1;
+          } else {
+            failure += 1;
+          }
+        } catch {
+          failure += 1;
+        }
+      }
+
+      await loadSubmissions();
+      setBatchRegenerateState({ running: false, message: `Batch regenerate complete: ${success} regenerated, ${failure} failed.` });
+    } catch (e: any) {
+      setBatchRegenerateState({ running: false, error: handleProtectedApiError(e) });
     }
   }
 
@@ -1628,11 +1675,14 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                     <span className="badge info">Selected: {selectedSubmissionIds.length}</span>
                     <button type="button" onClick={() => runBatchReviewAction("in_review")} disabled={batchReviewState.running || selectedSubmissionIds.length === 0}>Batch → in_review</button>
                     <button type="button" onClick={() => runBatchReviewAction("needs_revision")} disabled={batchReviewState.running || selectedSubmissionIds.length === 0}>Batch → needs_revision</button>
-                    <button type="button" className="btn-success" onClick={() => runBatchReviewAction("ready")} disabled={batchReviewState.running || selectedSubmissionIds.length === 0}>Batch → ready</button>
-                    <button type="button" onClick={() => setSelectedSubmissionIds([])} disabled={batchReviewState.running || selectedSubmissionIds.length === 0}>Clear selection</button>
+                    <button type="button" className="btn-success" onClick={() => runBatchReviewAction("ready")} disabled={batchReviewState.running || batchRegenerateState.running || selectedSubmissionIds.length === 0}>Batch → ready</button>
+                    <button type="button" className="btn-primary" onClick={runBatchRegenerateSelected} disabled={batchReviewState.running || batchRegenerateState.running || selectedSubmissionIds.length === 0}>{batchRegenerateState.running ? "Regenerating..." : "Batch regenerate"}</button>
+                    <button type="button" onClick={() => setSelectedSubmissionIds([])} disabled={batchReviewState.running || batchRegenerateState.running || selectedSubmissionIds.length === 0}>Clear selection</button>
                   </div>
                   {batchReviewState.message && <div style={{ marginTop: 6 }}><span className="badge success">{batchReviewState.message}</span></div>}
                   {batchReviewState.error && <div style={{ marginTop: 6 }}><span className="badge error">{batchReviewState.error}</span></div>}
+                  {batchRegenerateState.message && <div style={{ marginTop: 6 }}><span className="badge success">{batchRegenerateState.message}</span></div>}
+                  {batchRegenerateState.error && <div style={{ marginTop: 6 }}><span className="badge error">{batchRegenerateState.error}</span></div>}
                 </div>
 
                 <div style={{ overflowX: "auto", marginBottom: 8 }}>

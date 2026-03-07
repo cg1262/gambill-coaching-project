@@ -19,14 +19,14 @@ function Get-NodeVersionString() {
 
 function Print-VersionGuidance() {
   $nodeVersion = Get-NodeVersionString
-  $npmVersion = (npm -v) 2>$null
+  $npmVersion = (cmd /c "npm -v") 2>$null
   Write-Host "[build-clean] detected node=$nodeVersion npm=$npmVersion"
   Write-Host "[build-clean] required baseline: Node >=20.11.1 <21 and npm 10.x"
 }
 
 function Assert-RuntimeParity() {
   $nodeRaw = Get-NodeVersionString
-  $npmRaw = (npm -v) 2>$null
+  $npmRaw = (cmd /c "npm -v") 2>$null
   $node = [regex]::Match([string]$nodeRaw, '(\d+)\.(\d+)\.(\d+)')
   $npm = [regex]::Match([string]$npmRaw, '(\d+)\.(\d+)\.(\d+)')
   if (!$node.Success -or !$npm.Success) {
@@ -117,7 +117,7 @@ if (Needs-ModuleRecovery $buildText) {
   Remove-PathSafe "tsconfig.tsbuildinfo"
   Remove-PathSafe "node_modules\next\node_modules\@next\swc-win32-x64-msvc"
 
-  & npm ci --no-audit --no-fund
+  cmd /c "npm ci --no-audit --no-fund"
   if ($LASTEXITCODE -ne 0) {
     Write-Error "[build-clean] npm ci failed. Check lockfile integrity and Node/npm versions."
     exit $LASTEXITCODE
