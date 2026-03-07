@@ -3044,6 +3044,12 @@ def coaching_review_approve_send(req: CoachingReviewApproveSendRequest, request:
             "launch_token": launch_token,
             "latest_run_id": latest_run.get("run_id"),
         },
+        "audit": {
+            "action": "review_approve_send",
+            "actor": session.username,
+            "workspace_id": req.workspace_id,
+            "submission_id": req.submission_id,
+        },
     }
 
 
@@ -3101,6 +3107,12 @@ def coaching_review_status_update(req: CoachingReviewStatusUpdateRequest, reques
         "ok": True,
         "submission": persist.get("submission"),
         "consistency": {"persist_attempts": persist.get("attempts"), "persist_ok": True},
+        "audit": {
+            "action": "review_status_update",
+            "actor": session.username,
+            "workspace_id": req.workspace_id,
+            "submission_id": req.submission_id,
+        },
     }
 
 
@@ -3111,7 +3123,9 @@ def coaching_review_batch_status_update(req: CoachingBatchReviewStatusUpdateRequ
 
     updated: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
-    for submission_id in list(dict.fromkeys(req.submission_ids or [])):
+    batch_id = str(uuid4())
+    deduped_submission_ids = list(dict.fromkeys(req.submission_ids or []))
+    for submission_id in deduped_submission_ids:
         submission = get_coaching_intake_submission(submission_id)
         if not submission:
             failed.append({"submission_id": submission_id, "error": "submission not found"})
@@ -3140,7 +3154,20 @@ def coaching_review_batch_status_update(req: CoachingBatchReviewStatusUpdateRequ
                 }
             )
             continue
-        updated.append({"submission_id": submission_id, "submission": persist.get("submission"), "attempts": persist.get("attempts")})
+        updated.append(
+            {
+                "submission_id": submission_id,
+                "submission": persist.get("submission"),
+                "attempts": persist.get("attempts"),
+                "audit": {
+                    "action": "batch_review_status_update",
+                    "batch_id": batch_id,
+                    "actor": session.username,
+                    "workspace_id": req.workspace_id,
+                    "coach_review_status": req.coach_review_status,
+                },
+            }
+        )
 
     return {
         "ok": len(failed) == 0,
@@ -3149,6 +3176,14 @@ def coaching_review_batch_status_update(req: CoachingBatchReviewStatusUpdateRequ
         "updated": updated,
         "failed": failed,
         "counts": {"updated": len(updated), "failed": len(failed), "requested": len(req.submission_ids or [])},
+        "audit": {
+            "action": "batch_review_status_update",
+            "batch_id": batch_id,
+            "actor": session.username,
+            "workspace_id": req.workspace_id,
+            "requested_submissions": len(req.submission_ids or []),
+            "deduped_submissions": len(deduped_submission_ids),
+        },
     }
 
 
@@ -3159,7 +3194,9 @@ def coaching_batch_regenerate(req: CoachingBatchRegenerateRequest, request: Requ
 
     runs: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
-    for submission_id in list(dict.fromkeys(req.submission_ids or [])):
+    batch_id = str(uuid4())
+    deduped_submission_ids = list(dict.fromkeys(req.submission_ids or []))
+    for submission_id in deduped_submission_ids:
         out = coaching_generate_sow(
             CoachingGenerateSowRequest(
                 workspace_id=req.workspace_id,
@@ -3180,6 +3217,12 @@ def coaching_batch_regenerate(req: CoachingBatchRegenerateRequest, request: Requ
                 "quality_score": ((out.get("quality") or {}).get("score")),
                 "findings_count": len(out.get("findings") or []),
                 "hard_quality_gate_triggered": bool((out.get("quality_flags") or {}).get("hard_quality_gate_triggered")),
+                "audit": {
+                    "action": "batch_regenerate_submission",
+                    "batch_id": batch_id,
+                    "actor": session.username,
+                    "workspace_id": req.workspace_id,
+                },
             }
         )
 
@@ -3189,6 +3232,14 @@ def coaching_batch_regenerate(req: CoachingBatchRegenerateRequest, request: Requ
         "runs": runs,
         "failed": failed,
         "counts": {"completed": len(runs), "failed": len(failed), "requested": len(req.submission_ids or [])},
+        "audit": {
+            "action": "batch_regenerate",
+            "batch_id": batch_id,
+            "actor": session.username,
+            "workspace_id": req.workspace_id,
+            "requested_submissions": len(req.submission_ids or []),
+            "deduped_submissions": len(deduped_submission_ids),
+        },
     }
 
 
@@ -3223,7 +3274,18 @@ def coaching_review_feedback(req: CoachingFeedbackCaptureRequest, request: Reque
         actor_user=session.username,
         payload={"review_tags": req.review_tags, "hint_count": len(req.regeneration_hints or [])},
     )
-    return {"ok": True, "workspace_id": req.workspace_id, "submission_id": req.submission_id, "tag_count": len(req.review_tags or [])}
+    return {
+        "ok": True,
+        "workspace_id": req.workspace_id,
+        "submission_id": req.submission_id,
+        "tag_count": len(req.review_tags or []),
+        "audit": {
+            "action": "review_feedback_capture",
+            "actor": session.username,
+            "workspace_id": req.workspace_id,
+            "submission_id": req.submission_id,
+        },
+    }
 
 
 @app.post("/coaching/mentoring/intent")
@@ -3284,24 +3346,37 @@ def coaching_conversion_weekly_summary(
 
     tracked = ["intake_completed", "sow_generated", "sow_regenerated", "sow_exported", "cta_click", "mentoring_intent"]
     counts = {name: 0 for name in tracked}
+    raw_event_counts = {name: 0 for name in tracked}
     by_day: dict[str, dict[str, int]] = {}
-    for event in events:
+
+    stage_actor_sets: dict[str, set[str]] = {name: set() for name in tracked}
+    for idx, event in enumerate(events):
         name = str(event.get("event_name") or "unknown")
         created_at = str(event.get("created_at") or "")
         day = created_at[:10] if len(created_at) >= 10 else "unknown"
+        if name in raw_event_counts:
+            raw_event_counts[name] += 1
         if name in counts:
-            counts[name] += 1
+            submission_key = str(event.get("submission_id") or "").strip() or f"event-{idx}"
+            stage_actor_sets[name].add(submission_key)
+            counts[name] = len(stage_actor_sets[name])
             by_day.setdefault(day, {k: 0 for k in tracked})
             by_day[day][name] += 1
 
-    intake = max(1, counts.get("intake_completed", 0))
-    generated_total = counts.get("sow_generated", 0) + counts.get("sow_regenerated", 0)
+    intake_base = counts.get("intake_completed", 0)
+    generated_total = len(stage_actor_sets["sow_generated"].union(stage_actor_sets["sow_regenerated"]))
     exported_total = counts.get("sow_exported", 0)
-    cta_total = counts.get("cta_click", 0) + counts.get("mentoring_intent", 0)
+    cta_total = len(stage_actor_sets["cta_click"].union(stage_actor_sets["mentoring_intent"]))
+
+    def _safe_rate(numerator: int, denominator: int) -> float:
+        if denominator <= 0:
+            return 0.0
+        return round(min(1.0, numerator / denominator), 3)
+
     summary_rates = {
-        "generate_rate": round(generated_total / intake, 3),
-        "export_rate": round(exported_total / intake, 3),
-        "cta_rate": round(cta_total / intake, 3),
+        "generate_rate": _safe_rate(generated_total, intake_base),
+        "export_rate": _safe_rate(exported_total, intake_base),
+        "cta_rate": _safe_rate(cta_total, intake_base),
     }
 
     funnel_stages = [
@@ -3335,6 +3410,7 @@ def coaching_conversion_weekly_summary(
         "lookback_days": days,
         "window": {"since": since, "until": until},
         "counts": counts,
+        "raw_event_counts": raw_event_counts,
         "conversion_rates": summary_rates,
         "drop_off_insights": {
             "stage_sequence": [{"stage": stage, "count": count} for stage, count in funnel_stages],

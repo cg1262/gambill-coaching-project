@@ -22,6 +22,32 @@ Owner: ERD Program Team
 - **Blocker:** deterministic compliant-runtime web compile/build proof + Next.js remediation closure remain open release gates.
 - **Non-blocker:** API auth/session/rate-limit/webhook controls and webhook invalid-signature alert trigger/routing path remain regression-backed and passing.
 
+## Checkpoint Update (2026-03-07 - Sprint 16 Backend Execution: Production Bar + Trend Reporting + Batch/Conversion Reliability)
+
+### Done
+- Enforced Sprint 16 backend production quality bar as an explicit required regression gate:
+  - added `apps/api/tests/test_coaching_sprint16_backend.py`
+  - updated CI required gate command in `.github/workflows/ci.yml` to include Sprint 16 gate coverage.
+- Added deterministic quality trend artifact/report for seeded scenarios:
+  - generator: `build_seeded_quality_trend_report` in `apps/api/coaching/sprint14_artifacts.py`
+  - committed artifact: `apps/api/tests/fixtures/sprint16_seeded_quality_trend_report.json`.
+- Strengthened coach workflow backend reliability/auditability:
+  - batch endpoints now dedupe submission ids and return run-level + batch-level `audit` metadata.
+  - review actions (`/coaching/review/status`, `/coaching/review/approve-send`, `/coaching/review/feedback`) now return actor/action audit metadata for traceability.
+- Corrected weekly conversion/drop-off summary correctness:
+  - stage counts now use unique `submission_id` participants per stage to prevent repeat-event inflation.
+  - added `raw_event_counts` for event-volume observability while retaining funnel-stage correctness.
+- Captured backend checkpoint evidence log:
+  - `docs/coaching-project/evidence/sprint16-backend-checkpoint.log`.
+
+### Validation
+- `python -m pytest -q apps/api/tests/test_coaching_sprint14_quality_gates.py apps/api/tests/test_coaching_sprint14_seeded_artifacts.py apps/api/tests/test_coaching_sprint14_throughput_and_alerts.py apps/api/tests/test_coaching_sprint11_backend.py apps/api/tests/test_coaching_sprint13_backend.py apps/api/tests/test_coaching_sprint16_backend.py` (repo root) → **17 passed, 1 warning**.
+- `python -m pytest` (apps/api) → **167 passed, 4 skipped, 1 warning**.
+
+### Risks / Follow-ups
+- Existing pydantic warning (`TableNode.schema` field shadow) remains non-blocking and unchanged.
+- Batch endpoints remain synchronous request-scope processing; async job orchestration may still be needed for larger cohorts.
+
 ## Checkpoint Update (2026-03-07 - Sprint 15 Security Execution: Revalidation + Alert Routing Operational Evidence)
 
 ### Done

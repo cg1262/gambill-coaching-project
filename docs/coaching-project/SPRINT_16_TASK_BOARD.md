@@ -1,8 +1,9 @@
 # Sprint 16 Task Board — Gambill Coaching Project Creation
 
-Last Updated: 2026-03-07 (security checkpoint)
+Last Updated: 2026-03-07 (security + backend checkpoint)
 Sprint Goal: Pilot go/no-go closeout, production-quality output gating, and coach/conversion operational readiness.
 Latest security evidence: `docs/coaching-project/evidence/sprint16-security-checkpoint.log`
+Latest backend evidence: `docs/coaching-project/evidence/sprint16-backend-checkpoint.log`
 
 ## Epic A — Pilot Go/No-Go Closeout (P0)
 
@@ -27,6 +28,7 @@ Latest security evidence: `docs/coaching-project/evidence/sprint16-security-chec
 
 ### B1. Golden quality gate hardening
 - Owner: Backend
+- Status: **Done (required backend gate expanded)**
 - Scope:
   - enforce golden scenarios as required gate
   - zero major deficiencies for seeded scenarios
@@ -35,6 +37,7 @@ Latest security evidence: `docs/coaching-project/evidence/sprint16-security-chec
 
 ### B2. Quality trend visibility
 - Owner: Backend
+- Status: **Done (deterministic trend artifact committed + tested)**
 - Scope:
   - add quality trend summary for seeded runs (pass/fail + top deficiency classes)
 - Acceptance:
@@ -44,6 +47,7 @@ Latest security evidence: `docs/coaching-project/evidence/sprint16-security-chec
 
 ### C1. Batch workflow reliability
 - Owner: Frontend + Backend
+- Status: **Done (backend reliability + dedupe/audit assertions added)**
 - Scope:
   - verify batch status/regenerate/template flows at cohort scale
 - Acceptance:
@@ -51,6 +55,7 @@ Latest security evidence: `docs/coaching-project/evidence/sprint16-security-chec
 
 ### C2. Review auditability
 - Owner: Backend
+- Status: **Done (coach-action audit metadata returned by key review/batch endpoints)**
 - Scope:
   - provide coach action audit trail metadata for key review actions
 - Acceptance:
@@ -60,6 +65,7 @@ Latest security evidence: `docs/coaching-project/evidence/sprint16-security-chec
 
 ### D1. Event quality + weekly summary
 - Owner: Backend + Frontend
+- Status: **Done (unique submission-stage counts + raw event counts validated)**
 - Scope:
   - verify event completeness and stage transitions
   - expose weekly conversion/drop-off summary clearly
@@ -97,11 +103,17 @@ Latest security evidence: `docs/coaching-project/evidence/sprint16-security-chec
 
 ## Required Reporting Format
 - Done:
+  - Backend: enforced Sprint 16 production bar with required seeded/golden gate test (`apps/api/tests/test_coaching_sprint16_backend.py`) and CI workflow update (`.github/workflows/ci.yml`).
+  - Backend: added deterministic seeded quality trend artifact/report (`apps/api/tests/fixtures/sprint16_seeded_quality_trend_report.json`) via `build_seeded_quality_trend_report`.
+  - Backend: strengthened batch/review workflow auditability by adding `audit` metadata to review status, approve-send, review feedback, batch status, and batch regenerate responses.
+  - Backend: corrected weekly conversion summary stage math to use unique submission-stage counts while preserving `raw_event_counts` for event-volume diagnostics.
   - Revalidated auth/session/rate-limit/webhook controls after Sprint 16 changes.
   - Revalidated invalid-signature alert routing path and confirmed routed payload remains secret-safe.
   - Re-ran runtime diagnostic security tests and refreshed pilot checklist + POC status with Sprint 16 evidence.
   - Documented explicit bounded-risk/no-release posture for unresolved Next.js remediation dependency.
 - Validation:
+  - `python -m pytest -q apps/api/tests/test_coaching_sprint14_quality_gates.py apps/api/tests/test_coaching_sprint14_seeded_artifacts.py apps/api/tests/test_coaching_sprint14_throughput_and_alerts.py apps/api/tests/test_coaching_sprint11_backend.py apps/api/tests/test_coaching_sprint13_backend.py apps/api/tests/test_coaching_sprint16_backend.py` (repo root) → **17 passed, 1 warning**.
+  - `python -m pytest` (apps/api) → **167 passed, 4 skipped, 1 warning**.
   - `python -m pytest tests/test_auth_contract_security.py tests/test_auth_sessions.py tests/test_security_rate_limit_webhook.py tests/test_rate_limits_and_webhooks.py tests/test_coaching_subscription.py tests/test_llm_output_security.py` (apps/api) → **43 passed, 1 warning**.
   - `python -m pytest -q tests/test_security_rate_limit_webhook.py::test_invalid_signature_alert_routes_to_configured_webhook` (apps/api) → **pass**.
   - `python -m py_compile main.py webhook_security.py webhook_alerts.py coaching\sow_validation.py coaching\sow_security.py` (apps/api) → **pass**.

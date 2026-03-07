@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from collections import Counter
 
 from .sow_draft import build_sow_skeleton
 from .sow_validation import build_quality_diagnostics, compute_sow_quality_score, validate_sow_payload
@@ -100,4 +101,62 @@ def build_seeded_artifact_bundle() -> dict[str, Any]:
         "bundle_version": "2026-03-sprint14",
         "scenario_count": len(artifacts),
         "artifacts": artifacts,
+    }
+
+
+def build_seeded_quality_trend_report() -> dict[str, Any]:
+    bundle = build_seeded_artifact_bundle()
+    artifacts = bundle.get("artifacts") or []
+
+    deficiency_counter: Counter[str] = Counter()
+    scenarios: list[dict[str, Any]] = []
+    score_values: list[int] = []
+    style_values: list[int] = []
+
+    for artifact in artifacts:
+        quality = artifact.get("quality") or {}
+        score = int(quality.get("score") or 0)
+        style = int(quality.get("style_alignment_score") or 0)
+        major_deficiency_count = int(quality.get("major_deficiency_count") or 0)
+        deficiency_codes = [str(code) for code in (quality.get("deficiency_codes") or []) if str(code).strip()]
+        deficiency_counter.update(deficiency_codes)
+
+        score_values.append(score)
+        style_values.append(style)
+        scenarios.append(
+            {
+                "scenario": artifact.get("scenario"),
+                "score": score,
+                "style_alignment_score": style,
+                "major_deficiency_count": major_deficiency_count,
+                "pass": major_deficiency_count == 0 and style >= 75 and score >= 80,
+                "deficiency_codes": deficiency_codes,
+            }
+        )
+
+    major_deficiency_total = sum(int(row.get("major_deficiency_count") or 0) for row in scenarios)
+    passing = sum(1 for row in scenarios if bool(row.get("pass")))
+
+    return {
+        "report_version": "2026-03-sprint16",
+        "source_bundle_version": bundle.get("bundle_version"),
+        "scenario_count": len(scenarios),
+        "pass_count": passing,
+        "fail_count": len(scenarios) - passing,
+        "quality_summary": {
+            "average_score": round(sum(score_values) / len(score_values), 2) if score_values else 0,
+            "average_style_alignment_score": round(sum(style_values) / len(style_values), 2) if style_values else 0,
+            "major_deficiency_total": major_deficiency_total,
+            "top_deficiency_codes": [
+                {"code": code, "count": count}
+                for code, count in deficiency_counter.most_common(5)
+            ],
+        },
+        "production_gate": {
+            "all_seeded_scenarios_pass": passing == len(scenarios),
+            "zero_major_deficiencies": major_deficiency_total == 0,
+            "minimum_style_alignment_score": 75,
+            "minimum_quality_score": 80,
+        },
+        "scenarios": scenarios,
     }
