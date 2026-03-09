@@ -332,6 +332,34 @@ input:focus-visible, select:focus-visible, button:focus-visible {
   gap: 10px;
 }
 
+.coaching-busy-strip {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--coaching-panel-border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--coaching-panel-bg) 82%, var(--color-info) 18%);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.coaching-busy-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--color-info);
+  animation: coachingBusyPulse 1s ease-in-out infinite;
+}
+
+@keyframes coachingBusyPulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.9); }
+  50% { opacity: 1; transform: scale(1); }
+}
+
 .coaching-shell > h4 {
   margin: 4px 0 0;
   padding: 10px 12px;

@@ -608,6 +608,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   const [sessionBanner, setSessionBanner] = useState<string | null>(null);
   const [rateLimitConfig, setRateLimitConfig] = useState<RateLimitUiConfig>(DEFAULT_RATE_LIMIT_UI_CONFIG);
   const [rateLimitConfigSaved, setRateLimitConfigSaved] = useState<string>("");
+  const [intakeSubmitState, setIntakeSubmitState] = useState<{ running: boolean; message?: string }>({ running: false });
 
   const submissionsLoadRef = useRef(0);
   const submissionDetailReqRef = useRef(0);
@@ -668,6 +669,70 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   const showReviewQueue = mode === "all" || mode === "review";
   const showIntake = mode === "all" || mode === "intake";
   const showOutputViewer = mode === "all" || mode === "project" || mode === "intake";
+
+  const globalBusy = useMemo(() => {
+    return Boolean(
+      generationState.running
+      || reviewLoading
+      || submissionDetailLoading
+      || readinessState.loading
+      || batchReviewState.running
+      || batchRegenerateState.running
+      || reviewSaveState.saving
+      || quickActionState.running
+      || intakeSubmitState.running
+      || exportStatus.state === "exporting"
+      || resumeUploadState.phase === "uploading"
+      || resumeUploadState.phase === "parsing"
+    );
+  }, [
+    generationState.running,
+    reviewLoading,
+    submissionDetailLoading,
+    readinessState.loading,
+    batchReviewState.running,
+    batchRegenerateState.running,
+    reviewSaveState.saving,
+    quickActionState.running,
+    intakeSubmitState.running,
+    exportStatus.state,
+    resumeUploadState.phase,
+  ]);
+
+  const globalBusyMessage = useMemo(() => {
+    if (intakeSubmitState.running) return intakeSubmitState.message || "Submitting intake...";
+    if (generationState.running) return generationState.message || "Generating...";
+    if (batchRegenerateState.running) return batchRegenerateState.message || "Running batch regeneration...";
+    if (batchReviewState.running) return batchReviewState.message || "Applying batch review updates...";
+    if (reviewSaveState.saving) return "Saving review...";
+    if (quickActionState.running) return quickActionState.message || "Running review action...";
+    if (reviewLoading) return "Loading submissions...";
+    if (submissionDetailLoading) return "Loading submission details...";
+    if (readinessState.loading) return "Checking readiness...";
+    if (resumeUploadState.phase === "uploading" || resumeUploadState.phase === "parsing") return resumeUploadState.message || "Uploading resume...";
+    if (exportStatus.state === "exporting") return exportStatus.message || "Preparing export...";
+    return "Working...";
+  }, [
+    intakeSubmitState,
+    generationState,
+    batchRegenerateState,
+    batchReviewState,
+    reviewSaveState.saving,
+    quickActionState,
+    reviewLoading,
+    submissionDetailLoading,
+    readinessState.loading,
+    resumeUploadState,
+    exportStatus,
+  ]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    document.body.style.cursor = globalBusy ? "progress" : "";
+    return () => {
+      document.body.style.cursor = "";
+    };
+  }, [globalBusy]);
 
   function clearAuthStaleState() {
     setSessionBanner(null);
@@ -1216,7 +1281,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   }
 
   async function submitIntake() {
-    if (!canAccessWorkbench) return;
+    if (!canAccessWorkbench || intakeSubmitState.running) return;
 
     const jobLinks = draft.jobLinks.map((line) => line.trim()).filter(Boolean);
     const preferredStack = [...draft.selectedPlatforms, ...draft.selectedTools].join(" + ");
@@ -1224,6 +1289,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
     const combinedProfile = buildCombinedProfile(draft);
 
     try {
+      setIntakeSubmitState({ running: true, message: "Submitting intake..." });
       const intakeResult = await api.coachingIntake({
         workspace_id: draft.workspaceId,
         applicant_name: draft.candidateName || "Candidate",
@@ -1270,6 +1336,8 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       await loadSubmissions();
     } catch (e: any) {
       setGenerationState({ running: false, message: handleProtectedApiError(e) });
+    } finally {
+      setIntakeSubmitState({ running: false });
     }
   }
 
@@ -1546,6 +1614,12 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
           <span className="badge info">Coaching App</span>
         </div>
       </div>
+      {globalBusy && (
+        <div className="coaching-busy-strip" role="status" aria-live="polite" aria-busy="true">
+          <span className="coaching-busy-dot" />
+          <span>{globalBusyMessage}</span>
+        </div>
+      )}
       {sessionBanner && <div className="card" style={{ border: "1px solid #f59e0b", background: "#fffbeb", color: "#92400e" }}>{sessionBanner}</div>}
       {(reviewError || readinessState.error || (generationState.message && generationState.message.toLowerCase().includes("retry"))) && (
         <div className="card" style={{ border: "1px solid #f59e0b", background: "#fff7ed", marginBottom: 10 }}>
@@ -1554,8 +1628,8 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
             We hit a live issue. Retry first. If it persists, use fallback mode (local scaffold/export) and capture coach notes for follow-up.
           </div>
           <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
-            <button onClick={loadSubmissions}>Retry queue load</button>
-            <button onClick={loadReadiness}>Retry readiness check</button>
+            <button onClick={loadSubmissions} disabled={reviewLoading}>{reviewLoading ? "Loading..." : "Retry queue load"}</button>
+            <button onClick={loadReadiness} disabled={readinessState.loading}>{readinessState.loading ? "Checking..." : "Retry readiness check"}</button>
             <button onClick={() => generateSow(false)} disabled={generationState.running}>Retry generation</button>
           </div>
           <div style={{ fontSize: 12, marginTop: 8 }}>
@@ -1753,7 +1827,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                     <option value="needs_revision">needs_revision</option>
                     <option value="ready">ready</option>
                   </select>
-                  <button onClick={loadSubmissions}>Refresh submissions</button>
+                  <button onClick={loadSubmissions} disabled={reviewLoading}>{reviewLoading ? "Refreshing..." : "Refresh submissions"}</button>
                   {reviewLoading && <span className="badge info">Loading…</span>}
                   {reviewError && <span className="badge error">{reviewError}</span>}
                 </div>
@@ -1776,9 +1850,9 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                     >
                       Select all loaded
                     </button>
-                    <button type="button" onClick={() => runBatchReviewAction("in_review")} disabled={batchReviewState.running || selectedSubmissionIds.length === 0}>Batch → in_review</button>
-                    <button type="button" onClick={() => runBatchReviewAction("needs_revision")} disabled={batchReviewState.running || selectedSubmissionIds.length === 0}>Batch → needs_revision</button>
-                    <button type="button" className="btn-success" onClick={() => runBatchReviewAction("ready")} disabled={batchReviewState.running || batchRegenerateState.running || selectedSubmissionIds.length === 0}>Batch → ready</button>
+                    <button type="button" onClick={() => runBatchReviewAction("in_review")} disabled={batchReviewState.running || selectedSubmissionIds.length === 0}>{batchReviewState.running ? "Updating..." : "Batch → in_review"}</button>
+                    <button type="button" onClick={() => runBatchReviewAction("needs_revision")} disabled={batchReviewState.running || selectedSubmissionIds.length === 0}>{batchReviewState.running ? "Updating..." : "Batch → needs_revision"}</button>
+                    <button type="button" className="btn-success" onClick={() => runBatchReviewAction("ready")} disabled={batchReviewState.running || batchRegenerateState.running || selectedSubmissionIds.length === 0}>{batchReviewState.running ? "Updating..." : "Batch → ready"}</button>
                     <button type="button" className="btn-primary" onClick={runBatchRegenerateSelected} disabled={batchReviewState.running || batchRegenerateState.running || selectedSubmissionIds.length === 0}>{batchRegenerateState.running ? "Regenerating..." : "Batch regenerate"}</button>
                     <button type="button" onClick={() => setSelectedSubmissionIds([])} disabled={batchReviewState.running || batchRegenerateState.running || selectedSubmissionIds.length === 0}>Clear selection</button>
                   </div>
@@ -1936,10 +2010,10 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                             <option value="approved_sent">approved_sent</option>
                           </select>
                           <button onClick={saveCoachReview} disabled={reviewSaveState.saving || !selectedSubmissionId || quickActionState.running}>{reviewSaveState.saving ? "Saving..." : "Save review"}</button>
-                          <button onClick={() => runQuickReviewAction("in_review")} disabled={!selectedSubmissionId || quickActionState.running}>Quick: Mark in review</button>
-                          <button onClick={() => runQuickReviewAction("needs_revision")} disabled={!selectedSubmissionId || quickActionState.running}>Quick: Needs revision</button>
-                          <button className="btn-success" onClick={() => runQuickReviewAction("ready")} disabled={!selectedSubmissionId || quickActionState.running}>Quick: Mark ready</button>
-                          <button className="btn-primary" onClick={approveAndSend} disabled={!selectedSubmissionId || quickActionState.running}>Approve + Send</button>
+                          <button onClick={() => runQuickReviewAction("in_review")} disabled={!selectedSubmissionId || quickActionState.running}>{quickActionState.running ? "Updating..." : "Quick: Mark in review"}</button>
+                          <button onClick={() => runQuickReviewAction("needs_revision")} disabled={!selectedSubmissionId || quickActionState.running}>{quickActionState.running ? "Updating..." : "Quick: Needs revision"}</button>
+                          <button className="btn-success" onClick={() => runQuickReviewAction("ready")} disabled={!selectedSubmissionId || quickActionState.running}>{quickActionState.running ? "Updating..." : "Quick: Mark ready"}</button>
+                          <button className="btn-primary" onClick={approveAndSend} disabled={!selectedSubmissionId || quickActionState.running}>{quickActionState.running ? "Sending..." : "Approve + Send"}</button>
                           {reviewSaveState.message && <span className="badge success">{reviewSaveState.message}</span>}
                           {reviewSaveState.error && <span className="badge error">{reviewSaveState.error}</span>}
                         </div>
@@ -2186,7 +2260,9 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                 >
                   <div style={{ fontWeight: 600 }}>Drag and drop resume here</div>
                   <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>or</div>
-                  <button type="button" onClick={() => resumeFileInputRef.current?.click()}>Choose file</button>
+                  <button type="button" onClick={() => resumeFileInputRef.current?.click()} disabled={resumeUploadState.phase === "uploading" || resumeUploadState.phase === "parsing"}>
+                    {resumeUploadState.phase === "uploading" || resumeUploadState.phase === "parsing" ? "Uploading..." : "Choose file"}
+                  </button>
                   <input
                     ref={resumeFileInputRef}
                     type="file"
@@ -2387,9 +2463,9 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
             <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
               <button onClick={() => moveStep("back")}>Back</button>
               <button onClick={() => moveStep("next")}>Next</button>
-              <button onClick={submitIntake}>Submit Intake</button>
-              <button className="btn-success" onClick={() => generateSow(false)} disabled={generationState.running}>Generate SOW</button>
-              <button onClick={() => generateSow(true)} disabled={generationState.running || !stageState.sowGenerated}>Regenerate with improvements</button>
+              <button onClick={submitIntake} disabled={intakeSubmitState.running}>{intakeSubmitState.running ? "Submitting..." : "Submit Intake"}</button>
+              <button className="btn-success" onClick={() => generateSow(false)} disabled={generationState.running || intakeSubmitState.running}>{generationState.running ? "Generating..." : "Generate SOW"}</button>
+              <button onClick={() => generateSow(true)} disabled={generationState.running || intakeSubmitState.running || !stageState.sowGenerated}>{generationState.running ? "Regenerating..." : "Regenerate with improvements"}</button>
               <button onClick={markValidated}>Mark Validated</button>
             </div>
           </div>
