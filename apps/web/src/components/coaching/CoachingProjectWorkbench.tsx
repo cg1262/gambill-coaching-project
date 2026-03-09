@@ -44,9 +44,13 @@ type IntakeDraft = {
     currentBackground: string;
     deliveryExamples: string;
     confidenceSql: string;
+    rankSql: string;
     confidenceModeling: string;
+    rankDataModeling: string;
     confidenceOrchestration: string;
     confidenceStakeholder: string;
+    domains: string;
+    projectKeywords: string;
     platformExposure: string[];
     toolExposure: string[];
     platformExposureOther: string;
@@ -113,9 +117,9 @@ const STEP_LABELS: Record<IntakeStepId, string> = {
 };
 
 const PLATFORM_OPTIONS = ["Databricks", "Snowflake", "BigQuery", "Azure Synapse", "Redshift"];
-const TOOL_OPTIONS = ["dbt", "Airflow", "Power BI", "Tableau", "Python", "Spark"];
+const TOOL_OPTIONS = ["SQL", "dbt", "Airflow", "Power BI", "Tableau", "Python", "Spark"];
 const PLATFORM_EXPOSURE_OPTIONS = ["Databricks", "Snowflake", "BigQuery", "Azure", "AWS", "GCP"];
-const TOOL_EXPOSURE_OPTIONS = ["dbt", "Airflow", "Power BI", "Tableau", "Looker", "Spark", "Python"];
+const TOOL_EXPOSURE_OPTIONS = ["SQL", "dbt", "Airflow", "Power BI", "Tableau", "Looker", "Spark", "Python"];
 const COACH_FEEDBACK_TAG_OPTIONS = ["scope_clarity", "business_alignment", "architecture_depth", "storytelling", "portfolio_gap", "execution_risk"];
 const FEEDBACK_TAG_LABELS: Record<string, string> = {
   scope_clarity: "Scope clarity",
@@ -190,9 +194,13 @@ const DEFAULT_DRAFT: IntakeDraft = {
     currentBackground: "",
     deliveryExamples: "",
     confidenceSql: "Intermediate",
+    rankSql: "3",
     confidenceModeling: "Intermediate",
+    rankDataModeling: "3",
     confidenceOrchestration: "Intermediate",
     confidenceStakeholder: "Intermediate",
+    domains: "",
+    projectKeywords: "",
     platformExposure: ["Databricks"],
     toolExposure: ["dbt", "Python"],
     platformExposureOther: "",
@@ -205,7 +213,7 @@ const DEFAULT_DRAFT: IntakeDraft = {
   },
   jobLinks: Array.from({ length: 8 }, () => ""),
   selectedPlatforms: ["Databricks"],
-  selectedTools: ["dbt", "Power BI"],
+  selectedTools: ["SQL", "dbt", "Power BI"],
   timelineWeeks: "8",
 };
 
@@ -519,9 +527,13 @@ function buildStructuredAssessment(draft: IntakeDraft): string {
     "",
     "Skills Confidence",
     `- SQL: ${q.confidenceSql || ""}`,
+    `- SQL self-assessment rank (1-5): ${q.rankSql || ""}`,
     `- Data modeling: ${q.confidenceModeling || ""}`,
+    `- Data modeling self-assessment rank (1-5): ${q.rankDataModeling || ""}`,
     `- Orchestration: ${q.confidenceOrchestration || ""}`,
     `- Stakeholder communication: ${q.confidenceStakeholder || ""}`,
+    `- Domains: ${q.domains || ""}`,
+    `- Project keywords: ${q.projectKeywords || ""}`,
     "",
     "Tools + Platform Exposure",
     `- Platforms used: ${[...q.platformExposure, q.platformExposureOther ? `Other: ${q.platformExposureOther}` : ""].filter(Boolean).join(", ")}`,
@@ -609,6 +621,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   const [rateLimitConfig, setRateLimitConfig] = useState<RateLimitUiConfig>(DEFAULT_RATE_LIMIT_UI_CONFIG);
   const [rateLimitConfigSaved, setRateLimitConfigSaved] = useState<string>("");
   const [intakeSubmitState, setIntakeSubmitState] = useState<{ running: boolean; message?: string }>({ running: false });
+  const [issueResponseError, setIssueResponseError] = useState<string | null>(null);
 
   const submissionsLoadRef = useRef(0);
   const submissionDetailReqRef = useRef(0);
@@ -736,6 +749,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
 
   function clearAuthStaleState() {
     setSessionBanner(null);
+    setIssueResponseError(null);
     setReadinessState((prev) => ({ ...prev, error: undefined }));
   }
 
@@ -752,7 +766,9 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       const waitFor = error.retryAfterSeconds ?? rateLimitConfig.defaultRetrySeconds;
       setSessionBanner(`Rate limit reached. Please wait ${formatRetryWindow(waitFor)} before retrying.`);
     }
-    return uiErrorMessage(error, rateLimitConfig);
+    const uiMsg = uiErrorMessage(error, rateLimitConfig);
+    setIssueResponseError(uiMsg);
+    return uiMsg;
   }
 
   useEffect(() => {
@@ -1316,7 +1332,13 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
           preferred_stack: preferredStack,
           timeline_weeks: draft.questionnaire.timelineWeeks || draft.timelineWeeks,
           selected_platforms: draft.selectedPlatforms,
-          selected_tools: draft.selectedTools,
+          selected_tools: Array.from(new Set(["SQL", ...draft.selectedTools])),
+          self_assessment_ranks: {
+            sql: draft.questionnaire.rankSql,
+            data_modeling: draft.questionnaire.rankDataModeling,
+          },
+          domains: draft.questionnaire.domains.split(",").map((x) => x.trim()).filter(Boolean),
+          project_experience_keywords: draft.questionnaire.projectKeywords.split(",").map((x) => x.trim()).filter(Boolean),
           resume_profile: {
             file_name: draft.resumeFileName,
             confidence: resumeParseConfidence,
@@ -1346,6 +1368,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
     if (!currentSubmissionId) {
       setScaffold(buildProjectScaffold(draft));
       setStageState((prev) => ({ ...prev, sowGenerated: true }));
+      setIssueResponseError(null);
       setGenerationState({ running: false, message: "Built local scaffold (submit intake to enable server generation).", sourceMode: "fallback" });
       return;
     }
@@ -1356,10 +1379,13 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       const out = await api.coachingGenerateSow({ workspace_id: draft.workspaceId, submission_id: currentSubmissionId, parsed_jobs: [], regenerate_with_improvements: useImprovements });
       markAuthenticatedApiSuccess();
       if (!out.ok || !out.sow) {
-        setGenerationState({ running: false, message: out.message || "Generation failed." });
+        const failMsg = out.message || "Generation failed.";
+        setIssueResponseError(failMsg);
+        setGenerationState({ running: false, message: failMsg });
         return;
       }
       setScaffold(mapSowToScaffold(out.sow));
+      setIssueResponseError(null);
       setStageState((prev) => ({ ...prev, sowGenerated: true, validated: Boolean(out.valid) }));
       const fallbackUsed = Boolean(out.quality_flags?.fallback_used);
       setGenerationState({
@@ -1459,6 +1485,10 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       questionnaire: {
         ...prev.questionnaire,
         timelineWeeks: String(preferences.timeline_weeks || prev.questionnaire.timelineWeeks || prev.timelineWeeks),
+        rankSql: String((preferences as any).self_assessment_ranks?.sql || prev.questionnaire.rankSql),
+        rankDataModeling: String((preferences as any).self_assessment_ranks?.data_modeling || prev.questionnaire.rankDataModeling),
+        domains: Array.isArray((preferences as any).domains) ? (preferences as any).domains.join(", ") : prev.questionnaire.domains,
+        projectKeywords: Array.isArray((preferences as any).project_experience_keywords) ? (preferences as any).project_experience_keywords.join(", ") : prev.questionnaire.projectKeywords,
       },
     }));
 
@@ -1621,12 +1651,13 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
         </div>
       )}
       {sessionBanner && <div className="card" style={{ border: "1px solid #f59e0b", background: "#fffbeb", color: "#92400e" }}>{sessionBanner}</div>}
-      {(reviewError || readinessState.error || (generationState.message && generationState.message.toLowerCase().includes("retry"))) && (
+      {issueResponseError && (
         <div className="card" style={{ border: "1px solid #f59e0b", background: "#fff7ed", marginBottom: 10 }}>
           <strong style={{ fontSize: 12 }}>Issue response guide</strong>
           <div style={{ fontSize: 12, marginTop: 4 }}>
             We hit a live issue. Retry first. If it persists, use fallback mode (local scaffold/export) and capture coach notes for follow-up.
           </div>
+          <div style={{ fontSize: 12, marginTop: 6 }}><strong>Current issue:</strong> {issueResponseError}</div>
           <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
             <button onClick={loadSubmissions} disabled={reviewLoading}>{reviewLoading ? "Loading..." : "Retry queue load"}</button>
             <button onClick={loadReadiness} disabled={readinessState.loading}>{readinessState.loading ? "Checking..." : "Retry readiness check"}</button>
@@ -2243,8 +2274,12 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
             <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Candidate Email</label>
             <input value={draft.candidateEmail} onChange={(e) => setDraft((prev) => ({ ...prev, candidateEmail: e.target.value }))} placeholder="candidate@email.com" style={{ marginBottom: 6 }} />
 
-            <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Target Role</label>
+            <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Target Role (what role you are aiming for)</label>
             <input value={draft.targetRole} onChange={(e) => setDraft((prev) => ({ ...prev, targetRole: e.target.value }))} placeholder="Senior Data Engineer" style={{ marginBottom: 8 }} />
+            <div style={{ marginBottom: 10 }}>
+              <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Work Platforms (new line under target role)</label>
+              <div style={{ marginTop: 4 }}>{PLATFORM_OPTIONS.map((option) => <label key={`role-platform-${option}`} style={{ display: "inline-flex", marginRight: 8 }}><input type="checkbox" checked={draft.selectedPlatforms.includes(option)} onChange={(e) => setDraft((prev) => ({ ...prev, selectedPlatforms: e.target.checked ? [...prev.selectedPlatforms, option] : prev.selectedPlatforms.filter((x) => x !== option) }))} />{option}</label>)}</div>
+            </div>
 
             {activeStep === "resume" && (
               <div style={{ display: "grid", gap: 8 }}>
@@ -2383,12 +2418,24 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                 </div>
 
                 <div className="card" style={{ padding: 8 }}>
-                  <strong style={{ fontSize: 12 }}>Skills Confidence</strong>
+                  <strong style={{ fontSize: 12 }}>Skills Confidence + Self-Assessment Rank</strong>
+                  <div style={{ fontSize: 11, color: "var(--color-text-muted)", marginTop: 4 }}>Pick confidence + rank. Rank is 1 (new) to 5 (expert) and is sent in intake payload.</div>
                   <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
-                    <label style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 8, alignItems: "center", fontSize: 12 }}><span>SQL confidence</span><select value={draft.questionnaire.confidenceSql} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, confidenceSql: e.target.value } }))}><option>Beginner</option><option>Intermediate</option><option>Advanced</option></select></label>
-                    <label style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 8, alignItems: "center", fontSize: 12 }}><span>Data modeling confidence</span><select value={draft.questionnaire.confidenceModeling} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, confidenceModeling: e.target.value } }))}><option>Beginner</option><option>Intermediate</option><option>Advanced</option></select></label>
-                    <label style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 8, alignItems: "center", fontSize: 12 }}><span>Orchestration confidence</span><select value={draft.questionnaire.confidenceOrchestration} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, confidenceOrchestration: e.target.value } }))}><option>Beginner</option><option>Intermediate</option><option>Advanced</option></select></label>
-                    <label style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 8, alignItems: "center", fontSize: 12 }}><span>Stakeholder comms confidence</span><select value={draft.questionnaire.confidenceStakeholder} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, confidenceStakeholder: e.target.value } }))}><option>Beginner</option><option>Intermediate</option><option>Advanced</option></select></label>
+                    <label style={{ display: "grid", gridTemplateColumns: "220px 1fr 130px", gap: 8, alignItems: "center", fontSize: 12 }}><span>SQL confidence</span><select value={draft.questionnaire.confidenceSql} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, confidenceSql: e.target.value } }))}><option>Beginner</option><option>Intermediate</option><option>Advanced</option></select><select aria-label="SQL self-assessment rank" value={draft.questionnaire.rankSql} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, rankSql: e.target.value } }))}><option value="1">Rank 1</option><option value="2">Rank 2</option><option value="3">Rank 3</option><option value="4">Rank 4</option><option value="5">Rank 5</option></select></label>
+                    <label style={{ display: "grid", gridTemplateColumns: "220px 1fr 130px", gap: 8, alignItems: "center", fontSize: 12 }}><span>Data modeling confidence</span><select value={draft.questionnaire.confidenceModeling} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, confidenceModeling: e.target.value } }))}><option>Beginner</option><option>Intermediate</option><option>Advanced</option></select><select aria-label="Data modeling self-assessment rank" value={draft.questionnaire.rankDataModeling} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, rankDataModeling: e.target.value } }))}><option value="1">Rank 1</option><option value="2">Rank 2</option><option value="3">Rank 3</option><option value="4">Rank 4</option><option value="5">Rank 5</option></select></label>
+                    <label style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 8, alignItems: "center", fontSize: 12 }}><span>Orchestration confidence</span><select value={draft.questionnaire.confidenceOrchestration} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, confidenceOrchestration: e.target.value } }))}><option>Beginner</option><option>Intermediate</option><option>Advanced</option></select></label>
+                    <label style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 8, alignItems: "center", fontSize: 12 }}><span>Stakeholder comms confidence</span><select value={draft.questionnaire.confidenceStakeholder} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, confidenceStakeholder: e.target.value } }))}><option>Beginner</option><option>Intermediate</option><option>Advanced</option></select></label>
+                  </div>
+                </div>
+
+                <div className="card" style={{ padding: 8 }}>
+                  <strong style={{ fontSize: 12 }}>Domain + Project Keywords (explicit intake fields)</strong>
+                  <div style={{ fontSize: 11, color: "var(--color-text-muted)", marginTop: 4 }}>Use comma-separated values. Example domains: retail, fintech. Example keywords: medallion, kpi, data quality.</div>
+                  <div style={{ display: "grid", gap: 6, marginTop: 6 }}>
+                    <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Domains</label>
+                    <input value={draft.questionnaire.domains} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, domains: e.target.value } }))} placeholder="retail, healthcare, finance" />
+                    <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Project keywords</label>
+                    <input value={draft.questionnaire.projectKeywords} onChange={(e) => setDraft((prev) => ({ ...prev, questionnaire: { ...prev.questionnaire, projectKeywords: e.target.value } }))} placeholder="medallion, orchestration, data quality" />
                   </div>
                 </div>
 
@@ -2451,11 +2498,12 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
 
             {activeStep === "preferences" && (
               <>
-                <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Platforms</label>
+                <div style={{ fontSize: 11, color: "var(--color-text-muted)", marginBottom: 4 }}>Use this section for your target project stack and delivery timeline.</div>
+                <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Work Platforms (where you build/run data workflows)</label>
                 <div>{PLATFORM_OPTIONS.map((option) => <label key={option} style={{ display: "inline-flex", marginRight: 8 }}><input type="checkbox" checked={draft.selectedPlatforms.includes(option)} onChange={(e) => setDraft((prev) => ({ ...prev, selectedPlatforms: e.target.checked ? [...prev.selectedPlatforms, option] : prev.selectedPlatforms.filter((x) => x !== option) }))} />{option}</label>)}</div>
-                <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Tools</label>
+                <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Tools / Languages (select all that apply)</label>
                 <div>{TOOL_OPTIONS.map((option) => <label key={option} style={{ display: "inline-flex", marginRight: 8 }}><input type="checkbox" checked={draft.selectedTools.includes(option)} onChange={(e) => setDraft((prev) => ({ ...prev, selectedTools: e.target.checked ? [...prev.selectedTools, option] : prev.selectedTools.filter((x) => x !== option) }))} />{option}</label>)}</div>
-                <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Timeline target</label>
+                <label style={{ fontSize: 12, color: "var(--color-text-muted)" }}>Timeline target (delivery window)</label>
                 <select value={draft.timelineWeeks} onChange={(e) => setTimelineWeeks(e.target.value)}><option value="4">4 weeks</option><option value="6">6 weeks</option><option value="8">8 weeks</option><option value="12">12 weeks</option></select>
               </>
             )}
