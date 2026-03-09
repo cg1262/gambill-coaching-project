@@ -314,6 +314,9 @@ def _safe_generation_meta(meta: dict[str, Any] | None) -> dict[str, Any]:
         "attempts": int(src.get("attempts") or 0),
         "error_type": src.get("error_type") if src.get("error_type") in {"provider", "network", "timeout", "schema", None} else "provider",
     }
+    reason_code = str(src.get("reason_code") or "").strip().upper()
+    if reason_code:
+        out["reason_code"] = reason_code
     if src.get("finish_reason"):
         out["finish_reason"] = str(src.get("finish_reason"))
     if safe_usage:
@@ -2651,6 +2654,28 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, request: Request, ses
         quality = compute_sow_quality_score(strict_sow, final_findings)
         auto_regenerated_for_quality_floor = True
 
+    reason_codes: list[str] = []
+    upstream_reason = str((llm_result.get("meta") or {}).get("reason_code") or "").strip().upper()
+    if not bool(llm_result.get("ok")):
+        reason_codes.append(upstream_reason or "LLM_FALLBACK_TRIGGERED")
+    if retried_after_validation:
+        reason_codes.append("VALIDATION_RETRY_APPLIED")
+    if auto_regenerated_for_quality_floor:
+        reason_codes.append("QUALITY_FLOOR_REGEN_APPLIED")
+    if hard_quality_gate_triggered:
+        reason_codes.append("HARD_QUALITY_GATE_TRIGGERED")
+    if final_findings:
+        reason_codes.append("FINAL_FINDINGS_PRESENT")
+
+    if (not bool(llm_result.get("ok"))) or hard_quality_gate_triggered:
+        generation_mode = "fallback_scaffold"
+    elif retried_after_validation or auto_regenerated_for_quality_floor:
+        generation_mode = "revised"
+    else:
+        generation_mode = "llm"
+
+    reason_codes = list(dict.fromkeys([c for c in reason_codes if c]))
+
     quality_diagnostics = build_quality_diagnostics(
         quality=quality,
         findings=final_findings,
@@ -2718,7 +2743,9 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, request: Request, ses
             "quality_flags": {
                 "has_required_contract_fields": len(final_findings) == 0,
                 "used_llm_provider": generation_meta.get("provider") == "openai-compatible",
-                "fallback_used": not bool(llm_result.get("ok")),
+                "fallback_used": generation_mode == "fallback_scaffold",
+                "generation_mode": generation_mode,
+                "reason_codes": reason_codes,
                 "auto_regenerated_for_quality_floor": auto_regenerated_for_quality_floor,
                 "hard_quality_gate_triggered": hard_quality_gate_triggered,
             },
@@ -2774,11 +2801,15 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, request: Request, ses
         "auto_revised": auto_revised,
         "findings": final_findings,
         "generation_meta": generation_meta,
+        "generation_mode": generation_mode,
+        "generation_reason_codes": reason_codes,
         "observability": observability,
         "quality_flags": {
             "has_required_contract_fields": len(final_findings) == 0,
             "used_llm_provider": generation_meta.get("provider") == "openai-compatible",
-            "fallback_used": not bool(llm_result.get("ok")),
+            "fallback_used": generation_mode == "fallback_scaffold",
+            "generation_mode": generation_mode,
+            "reason_codes": reason_codes,
             "retried_after_validation": retried_after_validation,
             "auto_regenerated_for_quality_floor": auto_regenerated_for_quality_floor,
             "hard_quality_gate_triggered": hard_quality_gate_triggered,

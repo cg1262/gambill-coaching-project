@@ -154,3 +154,45 @@ def test_generate_sow_uses_llm_meta_and_quality_flags(monkeypatch):
     assert "quality_flags" in captured["validation"]
 
     app.dependency_overrides = {}
+
+
+def test_generate_sow_surfaces_fallback_mode_and_reason_codes_on_quality_gate(monkeypatch):
+    app.dependency_overrides[get_current_session] = _override_session("editor")
+    monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: _base_intake(submission_id))
+    monkeypatch.setattr(
+        main,
+        "get_coaching_account_subscription",
+        lambda workspace_id, username=None, email=None: {"subscription_status": "active", "email": email},
+    )
+    monkeypatch.setattr(
+        main,
+        "generate_sow_with_llm",
+        lambda intake, parsed_jobs: {
+            "ok": True,
+            "sow": build_sow_skeleton(intake, parsed_jobs),
+            "meta": {"provider": "openai-compatible", "model": "gpt-test"},
+        },
+    )
+    monkeypatch.setattr(
+        main,
+        "compute_sow_quality_score",
+        lambda sow, findings: {"score": 35, "structure_score": 30, "missing_sections": [], "section_order_valid": True, "style_alignment_score": 20, "milestone_specificity_score": 25},
+    )
+    monkeypatch.setattr(main, "save_coaching_generation_run", lambda **kwargs: None)
+
+    client = TestClient(app)
+    res = client.post(
+        "/coaching/sow/generate",
+        json={"workspace_id": "ws-1", "submission_id": "sub-llm", "parsed_jobs": []},
+    )
+    assert res.status_code == 200
+    body = res.json()
+
+    assert body["generation_mode"] == "fallback_scaffold"
+    assert "HARD_QUALITY_GATE_TRIGGERED" in body["generation_reason_codes"]
+    assert body["quality_flags"]["fallback_used"] is True
+    assert body["quality_flags"]["generation_mode"] == "fallback_scaffold"
+    assert "Repository bootstrap" in body["sow"]["project_charter"]["sections"]["prerequisites_resources"]["summary"]
+    assert "Salesforce Service Cloud" in body["sow"]["solution_architecture"]["medallion_plan"]["bronze"]
+
+    app.dependency_overrides = {}

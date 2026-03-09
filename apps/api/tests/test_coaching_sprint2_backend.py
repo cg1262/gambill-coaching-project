@@ -22,7 +22,7 @@ def test_generate_returns_quality_score(monkeypatch):
         "get_coaching_intake_submission",
         lambda submission_id: {"submission_id": submission_id, "workspace_id": "ws-1", "applicant_name": "A", "preferences_json": {}, "resume_text": "", "self_assessment_text": "", "applicant_email": "a@x.com"},
     )
-    monkeypatch.setattr(main, "generate_sow_with_llm", lambda intake, parsed_jobs: {"ok": False, "sow": main.build_sow_skeleton(intake, parsed_jobs), "meta": {"provider": "scaffold"}})
+    monkeypatch.setattr(main, "generate_sow_with_llm", lambda intake, parsed_jobs: {"ok": False, "sow": main.build_sow_skeleton(intake, parsed_jobs), "meta": {"provider": "scaffold", "reason_code": "LLM_TIMEOUT"}})
     monkeypatch.setattr(main, "save_coaching_generation_run", lambda **kwargs: None)
     monkeypatch.setattr(
         main,
@@ -40,6 +40,9 @@ def test_generate_returns_quality_score(monkeypatch):
     assert body["quality"]["quality_delta_meta"]["before"]["score"] == 70
     assert body["quality"]["quality_delta_meta"]["before"]["findings_count"] == 2
     assert body["quality"]["quality_delta_meta"]["after"]["findings_count"] >= 0
+    assert body["generation_mode"] == "fallback_scaffold"
+    assert "LLM_TIMEOUT" in body["generation_reason_codes"]
+    assert body["quality_flags"]["reason_codes"]
     app.dependency_overrides = {}
 
 

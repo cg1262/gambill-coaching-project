@@ -166,7 +166,13 @@ def generate_sow_with_llm(
             "ok": False,
             "error": "OPENAI_API_KEY missing",
             "sow": build_sow_skeleton(intake=intake, parsed_jobs=parsed_jobs),
-            "meta": {"provider": "scaffold", "model": "fallback", "base_url": base_url},
+            "meta": {
+                "provider": "scaffold",
+                "model": "fallback",
+                "base_url": base_url,
+                "error_type": "provider",
+                "reason_code": "LLM_API_KEY_MISSING",
+            },
         }
 
     prompt_payload = {
@@ -244,6 +250,7 @@ def generate_sow_with_llm(
     attempts = 0
     last_error = "unknown_error"
     error_type = "provider"
+    reason_code = "LLM_PROVIDER_ERROR"
     while attempts <= max_retries:
         attempts += 1
         try:
@@ -261,6 +268,7 @@ def generate_sow_with_llm(
             if structure.get("missing_sections") or not structure.get("order_valid"):
                 last_error = "LLM output failed required structure contract"
                 error_type = "schema"
+                reason_code = "LLM_SCHEMA_INVALID"
                 if attempts <= max_retries:
                     continue
                 break
@@ -278,23 +286,36 @@ def generate_sow_with_llm(
                 },
             }
         except httpx.HTTPStatusError as e:
-            last_error = f"HTTPError {e.response.status_code}"
+            status_code = int(e.response.status_code)
+            last_error = f"HTTPError {status_code}"
             error_type = "provider"
-            if e.response.status_code < 500 and e.response.status_code not in {408, 429}:
+            if status_code == 429:
+                reason_code = "LLM_RATE_LIMITED"
+            elif status_code in {401, 403}:
+                reason_code = "LLM_AUTH_FAILED"
+            elif status_code >= 500:
+                reason_code = "LLM_UPSTREAM_5XX"
+            else:
+                reason_code = "LLM_HTTP_ERROR"
+            if status_code < 500 and status_code not in {408, 429}:
                 break
         except httpx.TimeoutException as e:
             last_error = str(e) or "timeout"
             error_type = "timeout"
+            reason_code = "LLM_TIMEOUT"
         except httpx.RequestError as e:
             last_error = f"RequestError {e}"
             error_type = "network"
+            reason_code = "LLM_NETWORK_ERROR"
         except json.JSONDecodeError as e:
             last_error = str(e)
             error_type = "schema"
+            reason_code = "LLM_JSON_DECODE_ERROR"
             break
         except Exception as e:
             last_error = str(e)
             error_type = "provider"
+            reason_code = "LLM_PROVIDER_ERROR"
         if attempts > max_retries:
             break
 
@@ -308,6 +329,7 @@ def generate_sow_with_llm(
             "base_url": base_url,
             "attempts": attempts,
             "error_type": error_type,
+            "reason_code": reason_code,
         },
     }
 
@@ -342,9 +364,9 @@ def build_sow_skeleton(
         },
         "solution_architecture": {
             "medallion_plan": {
-                "bronze": "Ingest raw source data with schema drift handling.",
-                "silver": "Apply cleaning, conformance, and quality checks.",
-                "gold": "Publish curated marts and KPI-ready tables.",
+                "bronze": "Land Salesforce Service Cloud events, branch dispatch CSV drops, and payroll extracts hourly to append-only bronze tables with ingestion timestamps, file hashes, and replay checkpoints.",
+                "silver": "Standardize technician, branch, and work-order entities in dbt; enforce freshness/uniqueness tests; quarantine duplicates and schema-drift violations with alert routing to #data-ops.",
+                "gold": "Publish executive KPI marts for first-visit resolution, technician utilization, and upsell conversion with semantic metric definitions versioned in Git and reconciled to finance totals.",
             },
             "primary_tools": all_tools,
             "target_skills": all_skills,
@@ -382,8 +404,8 @@ def build_sow_skeleton(
                 "name": "Gold + ROI dashboard",
                 "duration_weeks": 1,
                 "deliverables": ["semantic model", "executive dashboard"],
-                "execution_plan": "Model gold marts for executive questions, define semantic layer metrics, and build ROI dashboard narratives.",
-                "expected_deliverable": "Validated KPI dashboard with traceable metric definitions and stakeholder walkthrough recording.",
+                "execution_plan": "Build dimensional gold marts in dbt for technician, branch, and service-line performance; wire semantic metrics in Power BI with row-level security by region; and script reconciliation queries that compare dashboard totals to payroll and billing control reports before release.",
+                "expected_deliverable": "Executive KPI dashboard package (PBIX + metric dictionary + SQL reconciliation workbook) with traceable source lineage and recorded stakeholder walkthrough.",
                 "business_why": "Clear KPI visibility enables faster decisions and proves business impact of the data platform investment.",
                 "milestone_tags": ["gold", "roi", "bi"],
                 "resources": [{"title": "Power BI Design Guidance", "url": "https://learn.microsoft.com/en-us/power-bi/guidance/"}],
@@ -423,7 +445,7 @@ def build_sow_skeleton(
             "section_order": list(CHARTER_REQUIRED_SECTION_FLOW),
             "sections": {
                 "prerequisites_resources": {
-                    "summary": "Repo scaffold, environment setup, and source access prerequisites.",
+                    "summary": "Repository bootstrap, secure environment setup, and source-system access prerequisites tied to branch dispatch and CRM telemetry delivery.",
                     "resources": [
                         {"title": "GitHub Flow", "url": "https://docs.github.com/en/get-started/using-github/github-flow"},
                         {"title": "dbt Documentation", "url": "https://docs.getdbt.com/docs/introduction"},
