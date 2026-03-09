@@ -2,9 +2,9 @@
 
 Use this as a go/no-go gate before enabling pilot users.
 
-## Current Gate Status (2026-03-07, Sprint 16 security checkpoint)
+## Current Gate Status (2026-03-07, Sprint 17 UI security/accessibility pass)
 - **Security pilot gate:** CONDITIONAL GO
-- **Why conditional:** Sprint 16 security revalidation confirms auth/session/rate-limit/webhook controls remain intact, invalid-signature alert routing remains operational for configured webhook delivery, and diagnostics/runtime error outputs remain secret-safe under regression coverage. Blocking dependency remains deterministic compliant-runtime web compile/build proof (`Node 20.11.1`, `npm 10.x`) plus Next.js advisory remediation closure.
+- **Why conditional:** Sprint 17 pass found/fixed dark-mode panel regressions (invalid border token usage and keyboard focus visibility strength) and removed launch-token preview leakage from coach action UI. Core auth/session/rate-limit/webhook controls remain unchanged from Sprint 16 revalidation. Remaining blocker is Next.js advisory remediation closure.
 
 ## 1) Auth + Subscription Enforcement
 - [x] Verify all coaching generation routes require authenticated session + allowed role (`admin`/`editor`).
@@ -33,6 +33,12 @@ Use this as a go/no-go gate before enabling pilot users.
 - [x] Verify missing LLM API key behavior is explicit and safe (no crash, no secret leak, deterministic fallback message/finding).
 - [x] Ensure generated links are URL-sanitized before render/export (block `javascript:` and `data:` schemes).
 - [x] Ensure generated narrative/resource text is secret-masked before persistence/export.
+- [x] Ensure sensitive handoff artifacts (launch tokens) are not previewed in UI state/messages.
+
+## 5b) Theme + Panel Accessibility Safety (Sprint 17)
+- [x] Validate keyboard focus visibility remains clear in dark and light themes for interactive controls.
+- [x] Validate panel/dropzone/milestone border tokens resolve correctly in both themes (no undefined var fallbacks).
+- [x] Confirm no new dark-mode/panel state reveals sensitive data beyond intended role-gated views.
 
 ## 6) Test + Release Evidence
 - [x] Run API security regression tests (auth, RBAC, inactive-subscription denial, logging masks, LLM guardrails).

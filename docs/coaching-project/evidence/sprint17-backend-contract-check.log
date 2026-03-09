@@ -1,0 +1,19 @@
+Sprint 17 Backend Contract Check
+Date: 2026-03-07
+Scope: Dark mode + panel-based frontend UX changes contract impact assessment
+
+Findings:
+- Reviewed frontend Sprint 17 workbench changes in `apps/web/src/components/coaching/CoachingProjectWorkbench.tsx`.
+- Changes are client-side only:
+  - selection helper controls (`Select first 10`, `Select all loaded`)
+  - selected/total badge display
+  - client-calculated selected status mix summary
+- No new API calls, payload fields, or endpoint paths introduced.
+- Existing review queue payload fields (`submission_id`, `status`) are sufficient; no backend contract changes required.
+
+Validation command (apps/api):
+python -m pytest tests/test_coaching_sprint16_backend.py tests/test_coaching_sprint14_throughput_and_alerts.py tests/test_coaching_review_endpoints.py tests/test_coaching_sprint13_backend.py
+
+Result:
+- 16 passed, 1 warning (pydantic TableNode.schema shadow warning, pre-existing/non-blocking)
+- Runtime: 3.22s
