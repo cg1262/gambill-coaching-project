@@ -211,7 +211,9 @@ def generate_sow_with_llm(
                 "Return JSON only, no markdown",
                 "Mirror exemplar section sequence and flow exactly using top_level_order_required",
                 "Keep content personalized to candidate resume/preferences/target roles (no generic placeholder narrative)",
-                "Use realistic but fictitious business narrative",
+                "Use realistic but fictitious business narrative with a named fictional company, business unit, and operating context",
+                "Do not echo prompt instructions, rule labels, schema notes, or meta language (e.g., hard_rules, required_contract, return JSON only)",
+                "Every story section must include concrete systems/process details and at least one measurable impact signal",
                 "Use real non-placeholder URLs",
                 "At least 3 milestones",
                 "Each milestone must include execution_plan, expected_deliverable, and business_why",
@@ -232,7 +234,7 @@ def generate_sow_with_llm(
         "messages": [
             {
                 "role": "system",
-                "content": "You are a senior data engineering consulting partner. Produce production-grade SOW JSON following the required contract exactly. Style-align to two anchors: GlobalMart Retail Intelligence Pipeline and VoltStream EV Grid Resilience. Match their executive charter tone, section depth, quantified KPI orientation, and implementation realism while keeping all details personalized and fictitious. For each milestone, provide concrete execution details, measurable deliverable quality, explicit acceptance checks, and business rationale tied to outcomes.",
+                "content": "You are a senior data engineering consulting partner. Produce production-grade SOW JSON following the required contract exactly. Style-align to two anchors: GlobalMart Retail Intelligence Pipeline and VoltStream EV Grid Resilience. Match their executive charter tone, section depth, quantified KPI orientation, and implementation realism while keeping all details personalized and fictitious. Never output prompt/meta-instruction text. Invent a realistic fictitious company context and include concrete project depth: named systems, ingestion cadence, quality controls, artifact evidence, and measurable business outcomes. For each milestone, provide concrete execution details, measurable deliverable quality, explicit acceptance checks, and business rationale tied to outcomes.",
             },
             {"role": "user", "content": json.dumps(prompt_payload)},
         ],
@@ -318,7 +320,7 @@ def build_sow_skeleton(
     all_tools = sorted({s for p in parsed_jobs for s in p.get("signals", {}).get("tools", [])})
     all_domains = sorted({s for p in parsed_jobs for s in p.get("signals", {}).get("domains", [])})
 
-    project_title = f"{(intake.get('applicant_name') or 'Candidate')} Data Engineering Capstone"
+    project_title = f"{(intake.get('applicant_name') or 'Candidate')} - Northbeam Outfitters Omnichannel Margin Recovery Program"
     scope_profile = _derive_scope_profile(intake=intake, parsed_jobs=parsed_jobs)
 
     return {
@@ -330,7 +332,7 @@ def build_sow_skeleton(
             "role_scope_assessment": scope_profile,
         },
         "business_outcome": {
-            "problem_statement": "Define a measurable business problem and target KPI uplift.",
+            "problem_statement": "BlueOrbit Home Services cannot trust branch-level dispatch and upsell metrics because CRM events arrive 18-36 hours late and duplicate records slip into weekly leadership reporting.",
             "target_metrics": [
                 {"metric": "pipeline_sla_minutes", "target": "<60"},
                 {"metric": "dashboard_adoption_rate", "target": ">=60%"},
@@ -348,17 +350,17 @@ def build_sow_skeleton(
             "target_skills": all_skills,
         },
         "project_story": {
-            "executive_summary": "Build a job-aligned medallion data platform project with measurable business outcomes and portfolio-ready artifacts.",
-            "challenge": "Translate fragmented source data into trusted KPI reporting under tight delivery timelines.",
-            "approach": "Implement bronze/silver/gold pipelines, data quality checks, and executive-friendly ROI dashboards.",
-            "impact_story": "Demonstrate end-to-end ownership from ingestion through business narrative and stakeholder-ready metrics.",
+            "executive_summary": "BlueOrbit Home Services will launch a medallion analytics program that unifies CRM, dispatch, and billing telemetry so operations leaders can trust branch KPIs in Monday reviews.",
+            "challenge": "Current reports are manually reconciled across three systems, creating a 2-day lag and frequent metric disputes on technician utilization and first-visit resolution.",
+            "approach": "Implement hourly bronze ingestion, silver conformance tests for key entities, and gold KPI marts with semantic definitions reviewed by operations and finance.",
+            "impact_story": "Target outcomes include reducing report latency from 36 hours to under 90 minutes, lifting dashboard adoption above 70%, and cutting rework tied to bad dispatch data by 25%.",
         },
         "milestones": [
             {
                 "name": "Discovery + Business framing",
                 "duration_weeks": 1,
                 "deliverables": ["scope brief", "KPI definitions"],
-                "execution_plan": "Interview stakeholders, map source systems, and define KPI ownership with acceptance criteria.",
+                "execution_plan": "Run a 90-minute discovery workshop with operations, finance, and branch managers; map Service Cloud objects, dispatch route files, and payroll extracts into a source-to-KPI matrix; then document KPI ownership and sign-off workflow in Confluence with explicit review dates.",
                 "expected_deliverable": "Signed project charter with KPI dictionary, source inventory, and scope boundaries approved by sponsor.",
                 "business_why": "Aligning scope and KPI definitions early prevents rework and accelerates measurable ROI delivery.",
                 "milestone_tags": ["discovery", "architecture", "roi"],
@@ -369,7 +371,7 @@ def build_sow_skeleton(
                 "name": "Bronze/Silver implementation",
                 "duration_weeks": 2,
                 "deliverables": ["ingestion jobs", "DQ checks"],
-                "execution_plan": "Build incremental ingestion pipelines, apply schema evolution handling, and implement automated data quality gates.",
+                "execution_plan": "Implement hourly ingestion from API and flat-file sources into bronze with idempotent load keys, add schema-drift alerts in Airflow, and enforce silver dbt tests (freshness, uniqueness, accepted-values) before publishing daily quality scorecards.",
                 "expected_deliverable": "Production-ready bronze/silver DAGs with tests, monitoring, and documented failure handling.",
                 "business_why": "Reliable ingestion and conformance reduce reporting defects and improve trust in downstream analytics.",
                 "milestone_tags": ["bronze", "silver", "pipeline"],
@@ -391,8 +393,8 @@ def build_sow_skeleton(
                 "name": "Final review + portfolio assets",
                 "duration_weeks": 1,
                 "deliverables": ["architecture narrative", "repo walkthrough"],
-                "execution_plan": "Package architecture decisions, demo script, and retrospective into a portfolio-quality delivery artifact set.",
-                "expected_deliverable": "Publish-ready repo and presentation assets that communicate technical depth and business outcomes.",
+                "execution_plan": "Record a full stakeholder demo using production-like data, publish architecture decision records plus incident-response runbook in the repo, and deliver a retrospective quantifying KPI deltas, open risks, and next-quarter hardening backlog.",
+                "expected_deliverable": "Release-tagged repository containing runbook, architecture diagram, automated test evidence, and a 10-minute narrated demo that ties KPI before/after math to signed stakeholder feedback.",
                 "business_why": "Strong communication artifacts increase hiring signal and stakeholder confidence in project value.",
                 "milestone_tags": ["communication", "career"],
                 "resources": [{"title": "GitHub Portfolio Guide", "url": "https://docs.github.com/en/get-started/showcase-your-work/about-your-profile"}],
@@ -465,9 +467,9 @@ def build_sow_skeleton(
         "interview_ready_package": _build_interview_ready_package(
             project_title=project_title,
             story={
-                "challenge": "Translate fragmented source data into trusted KPI reporting under tight delivery timelines.",
-                "approach": "Implement bronze/silver/gold pipelines, data quality checks, and executive-friendly ROI dashboards.",
-                "impact_story": "Demonstrate end-to-end ownership from ingestion through business narrative and stakeholder-ready metrics.",
+                "challenge": "Operations teams spent two days reconciling CRM, dispatch, and billing exports before every weekly executive review.",
+                "approach": "Built hourly ingestion + conformance checks, then published KPI marts with metric contracts owned by operations and finance.",
+                "impact_story": "Cut reporting latency below 90 minutes and reduced dispatch-data correction workload by 25% in pilot branches.",
             },
             milestones=[],
             tools=all_tools,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+import re
 
 from security import mask_secrets_in_text
 
@@ -109,6 +110,43 @@ def ensure_interview_ready_package(sow: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+_INSTRUCTION_ECHO_PATTERNS = [
+    r"\breturn\s+json\s+only\b",
+    r"\bno\s+markdown\b",
+    r"\btop_level_order_required\b",
+    r"\brequired_contract\b",
+    r"\bhard_rules\b",
+    r"\bstyle_anchors\b",
+    r"project_title\s*->\s*candidate\s+profile\s+context",
+    r"produce\s+production-grade\s+sow\s+json",
+]
+
+_GENERIC_SCAFFOLD_PHRASES = [
+    "build a job-aligned medallion data platform project",
+    "translate fragmented source data into trusted kpi reporting",
+    "demonstrate end-to-end ownership from ingestion through business narrative",
+    "define a measurable business problem and target kpi uplift",
+]
+
+
+def _contains_instruction_echo(text: str) -> bool:
+    low = str(text or "").lower()
+    return any(re.search(pattern, low) for pattern in _INSTRUCTION_ECHO_PATTERNS)
+
+
+def _looks_generic_scaffold(text: str) -> bool:
+    low = str(text or "").strip().lower()
+    if not low:
+        return True
+    if any(phrase in low for phrase in _GENERIC_SCAFFOLD_PHRASES):
+        return True
+    # Strong concrete signals: numbers, named systems, explicit business entities.
+    concrete_signals = ["%", "kpi", "sla", "api", "dataset", "table", "warehouse", "bronze", "silver", "gold", "dashboard", "hours", "minutes", "weekly", "monthly"]
+    has_signal = any(sig in low for sig in concrete_signals) or bool(re.search(r"\b\d+(?:\.\d+)?\b", low))
+    vague_markers = ["generic", "placeholder", "job-aligned", "candidate", "data project", "business outcomes"]
+    return (not has_signal) or any(marker in low for marker in vague_markers)
+
+
 def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
     sow, safety_findings = sanitize_generated_sow(sow)
     sow = ensure_interview_ready_package(sow)
@@ -151,10 +189,16 @@ def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
             findings.append({"code": "PROJECT_STORY_MISSING", "message": f"project_story.{k} is required."})
     story_text = " ".join(str(story.get(k) or "") for k in ["executive_summary", "challenge", "approach", "impact_story"])
     low_story = story_text.lower()
-    if len(story_text.strip()) < 280:
+    if len(story_text.strip()) < 320:
         findings.append({"code": "PROJECT_STORY_DEPTH_WEAK", "message": "project_story should include richer executive depth (current state, approach detail, and quantified impact)."})
     if not any(token in low_story for token in ["kpi", "%", "sla", "minutes", "revenue", "cost", "uptime", "adoption"]):
         findings.append({"code": "PROJECT_STORY_METRIC_SIGNAL_MISSING", "message": "project_story should reference measurable KPI or operational impact signals."})
+    if _contains_instruction_echo(story_text):
+        findings.append({"code": "INSTRUCTION_ECHO_DETECTED", "message": "project_story appears to echo prompt/meta instructions instead of business narrative."})
+    for k in ["executive_summary", "challenge", "approach", "impact_story"]:
+        section = str(story.get(k) or "")
+        if _looks_generic_scaffold(section):
+            findings.append({"code": "PROJECT_STORY_GENERIC", "message": f"project_story.{k} is too generic; include concrete business context, systems, and measurable outcomes."})
 
     business = sow.get("business_outcome") or {}
     data_sources = business.get("data_sources") or []
@@ -191,6 +235,14 @@ def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
                 findings.append({"code": "MILESTONE_EXPECTED_DELIVERABLE_MISSING", "message": f"milestones[{i}].expected_deliverable is required."})
             if not str(ms.get("business_why") or "").strip():
                 findings.append({"code": "MILESTONE_BUSINESS_WHY_MISSING", "message": f"milestones[{i}].business_why is required."})
+
+            ms_text = " ".join(str(ms.get(k) or "") for k in ["name", "execution_plan", "expected_deliverable", "business_why"])
+            if _contains_instruction_echo(ms_text):
+                findings.append({"code": "INSTRUCTION_ECHO_DETECTED", "message": f"milestones[{i}] appears to echo prompt instructions/meta text."})
+            if _looks_generic_scaffold(str(ms.get("execution_plan") or "")):
+                findings.append({"code": "MILESTONE_GENERIC_EXECUTION", "message": f"milestones[{i}].execution_plan is generic; include concrete systems, steps, and evidence outputs."})
+            if _looks_generic_scaffold(str(ms.get("expected_deliverable") or "")):
+                findings.append({"code": "MILESTONE_GENERIC_DELIVERABLE", "message": f"milestones[{i}].expected_deliverable is generic; define measurable artifact quality and acceptance evidence."})
             checks = ms.get("acceptance_checks") or []
             non_empty_checks = [str(c).strip() for c in checks if str(c).strip()]
             if not isinstance(checks, list) or len(non_empty_checks) < 2:
@@ -380,6 +432,10 @@ def build_quality_diagnostics(
         "MILESTONE_ACCEPTANCE_CHECKS_NOT_ACTIONABLE": "Rewrite acceptance checks as measurable verification statements (signed-off, tested, validated, published).",
         "PROJECT_STORY_DEPTH_WEAK": "Deepen project_story with current-state constraints, implementation tradeoffs, and quantified business outcomes.",
         "PROJECT_STORY_METRIC_SIGNAL_MISSING": "Add explicit KPI/operational metrics (SLA, adoption, revenue/cost impact) to project_story narrative.",
+        "PROJECT_STORY_GENERIC": "Replace generic project_story wording with a specific fictitious business context, named systems, and quantified targets.",
+        "INSTRUCTION_ECHO_DETECTED": "Remove prompt/meta-instruction echoes; return only business content and concrete execution details.",
+        "MILESTONE_GENERIC_EXECUTION": "Rewrite milestone execution plans with concrete tasks, systems touched, and validation evidence.",
+        "MILESTONE_GENERIC_DELIVERABLE": "Define milestone deliverables as verifiable artifacts (tests, dashboards, docs, demo recording).",
         "PERSONALIZATION_SIGNAL_MISSING": "Reference resume_parse_summary evidence directly in tools, domains, and milestone execution choices.",
         "PERSONALIZATION_SCOPE_MISMATCH": "Rebalance scope_difficulty and timeline so role level, evidence, and milestone depth align.",
     }
@@ -421,6 +477,8 @@ def build_quality_diagnostics(
         "MILESTONE_",
         "ROI_",
         "RESOURCE_LINKS_MISSING",
+        "INSTRUCTION_",
+        "PROJECT_STORY_GENERIC",
     )
     major_codes = [code for code in unique_codes if code.startswith(major_prefixes)]
 
