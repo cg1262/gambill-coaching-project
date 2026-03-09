@@ -1379,9 +1379,17 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       const out = await api.coachingGenerateSow({ workspace_id: draft.workspaceId, submission_id: currentSubmissionId, parsed_jobs: [], regenerate_with_improvements: useImprovements });
       markAuthenticatedApiSuccess();
       if (!out.ok || !out.sow) {
+        const reasonCodes = Array.isArray((out as any)?.quality_flags?.reason_codes)
+          ? (out as any).quality_flags.reason_codes.filter(Boolean).slice(0, 3)
+          : [];
+        const mode = (out as any)?.quality_flags?.generation_mode || (out as any)?.generation_mode;
+        const detail = [mode ? `mode=${mode}` : null, reasonCodes.length ? `reasons=${reasonCodes.join(",")}` : null]
+          .filter(Boolean)
+          .join(" | ");
         const failMsg = out.message || "Generation failed.";
-        setIssueResponseError(failMsg);
-        setGenerationState({ running: false, message: failMsg });
+        const uiMsg = detail ? `${failMsg} (${detail})` : failMsg;
+        setIssueResponseError(uiMsg);
+        setGenerationState({ running: false, message: uiMsg });
         return;
       }
       setScaffold(mapSowToScaffold(out.sow));
