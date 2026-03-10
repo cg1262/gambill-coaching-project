@@ -44,6 +44,7 @@ from coaching import (
     compute_sow_quality_score,
     build_quality_diagnostics,
     ensure_interview_ready_package,
+    enforce_required_section_order,
     extract_resume_signals,
 )
 from db_lakebase import (
@@ -2620,16 +2621,20 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, request: Request, ses
         retried_after_validation = True
 
     strict_sow = CoachingSowDraft.model_validate(ensure_interview_ready_package(sow)).model_dump(mode="json", by_alias=True)
+    strict_sow = enforce_required_section_order(strict_sow)
     strict_sow, sanitize_findings = sanitize_generated_sow(strict_sow)
     strict_sow = ensure_interview_ready_package(strict_sow)
+    strict_sow = enforce_required_section_order(strict_sow)
     final_findings = validate_sow_payload(strict_sow)
     quality = compute_sow_quality_score(strict_sow, final_findings)
 
     if int(quality.get("score") or 0) < quality_floor_score:
         strict_sow = auto_revise_sow_once(strict_sow, final_findings)
         strict_sow = CoachingSowDraft.model_validate(ensure_interview_ready_package(strict_sow)).model_dump(mode="json", by_alias=True)
+        strict_sow = enforce_required_section_order(strict_sow)
         strict_sow, extra_sanitize_findings = sanitize_generated_sow(strict_sow)
         strict_sow = ensure_interview_ready_package(strict_sow)
+        strict_sow = enforce_required_section_order(strict_sow)
         if extra_sanitize_findings:
             sanitize_findings = [*sanitize_findings, *extra_sanitize_findings]
         final_findings = validate_sow_payload(strict_sow)
@@ -2648,12 +2653,16 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, request: Request, ses
             parsed_jobs=parsed_jobs,
         ), final_findings)
         strict_sow = CoachingSowDraft.model_validate(ensure_interview_ready_package(strict_sow)).model_dump(mode="json", by_alias=True)
+        strict_sow = enforce_required_section_order(strict_sow)
         strict_sow, hard_gate_sanitize = sanitize_generated_sow(strict_sow)
         strict_sow = ensure_interview_ready_package(strict_sow)
+        strict_sow = enforce_required_section_order(strict_sow)
         sanitize_findings = [*sanitize_findings, *hard_gate_sanitize]
         final_findings = validate_sow_payload(strict_sow)
         quality = compute_sow_quality_score(strict_sow, final_findings)
         auto_regenerated_for_quality_floor = True
+
+    final_quality_clean = (len(final_findings) == 0) and (int(quality.get("score") or 0) >= quality_floor_score)
 
     reason_codes: list[str] = []
     upstream_reason = str((llm_result.get("meta") or {}).get("reason_code") or "").strip().upper()
@@ -2667,10 +2676,14 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, request: Request, ses
         reason_codes.append("HARD_QUALITY_GATE_TRIGGERED")
     if final_findings:
         reason_codes.append("FINAL_FINDINGS_PRESENT")
+    if hard_quality_gate_triggered and final_quality_clean:
+        reason_codes.append("HARD_QUALITY_GATE_RESOLVED")
 
-    if (not bool(llm_result.get("ok"))) or hard_quality_gate_triggered:
+    if not final_quality_clean:
         generation_mode = "fallback_scaffold"
-    elif retried_after_validation or auto_regenerated_for_quality_floor:
+    elif not bool(llm_result.get("ok")):
+        generation_mode = "fallback_scaffold"
+    elif retried_after_validation or auto_regenerated_for_quality_floor or hard_quality_gate_triggered:
         generation_mode = "revised"
     else:
         generation_mode = "llm"
@@ -2953,6 +2966,7 @@ def coaching_sow_export(req: CoachingSowExportRequest, request: Request, session
     sow_payload = req.sow.model_dump(mode="json", by_alias=True)
     sow_payload, _ = sanitize_generated_sow(sow_payload)
     sow_payload = ensure_interview_ready_package(sow_payload)
+    sow_payload = enforce_required_section_order(sow_payload)
     fmt = str(req.format or "markdown").strip().lower()
     _track_conversion_event(
         workspace_id=req.workspace_id,

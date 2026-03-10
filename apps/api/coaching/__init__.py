@@ -23,6 +23,7 @@ from .sow_validation import (
     compute_sow_quality_score,
     build_quality_diagnostics,
     ensure_interview_ready_package,
+    enforce_required_section_order,
     evaluate_sow_structure,
 )
 from .sow_completion import (
@@ -45,6 +46,7 @@ __all__ = [
     "compute_sow_quality_score",
     "build_quality_diagnostics",
     "ensure_interview_ready_package",
+    "enforce_required_section_order",
     "evaluate_sow_structure",
     "utc_now_iso",
     "COMMON_SKILLS",

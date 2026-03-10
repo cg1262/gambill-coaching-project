@@ -162,3 +162,51 @@ def test_generate_sow_handles_malformed_llm_sections_without_500(monkeypatch):
     assert isinstance((body.get("sow") or {}).get("mentoring_cta"), dict)
     assert isinstance((body.get("sow") or {}).get("resource_plan"), dict)
     app.dependency_overrides = {}
+
+
+def test_generate_sow_marks_revised_when_hard_gate_path_recovers_quality(monkeypatch):
+    app.dependency_overrides[get_current_session] = _override_session("editor")
+    monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: _base_intake(submission_id))
+    monkeypatch.setattr(
+        main,
+        "get_coaching_account_subscription",
+        lambda workspace_id, username=None, email=None: {"subscription_status": "active", "email": email},
+    )
+    monkeypatch.setattr(
+        main,
+        "generate_sow_with_llm",
+        lambda intake, parsed_jobs: {
+            "ok": True,
+            "sow": main.build_sow_skeleton(intake, parsed_jobs),
+            "meta": {"provider": "openai-compatible", "model": "gpt-test"},
+        },
+    )
+
+    quality_sequence = [
+        {"score": 70, "structure_score": 95, "missing_sections": [], "section_order_valid": True, "style_alignment_score": 80, "milestone_specificity_score": 80},
+        {"score": 70, "structure_score": 95, "missing_sections": [], "section_order_valid": True, "style_alignment_score": 80, "milestone_specificity_score": 80},
+        {"score": 92, "structure_score": 98, "missing_sections": [], "section_order_valid": True, "style_alignment_score": 88, "milestone_specificity_score": 90},
+    ]
+
+    def _quality_stub(sow, findings):
+        if quality_sequence:
+            return quality_sequence.pop(0)
+        return {"score": 92, "structure_score": 98, "missing_sections": [], "section_order_valid": True, "style_alignment_score": 88, "milestone_specificity_score": 90}
+
+    monkeypatch.setattr(main, "compute_sow_quality_score", _quality_stub)
+    monkeypatch.setattr(main, "save_coaching_generation_run", lambda **kwargs: None)
+
+    client = TestClient(app)
+    res = client.post(
+        "/coaching/sow/generate",
+        json={"workspace_id": "ws-1", "submission_id": "sub-1", "parsed_jobs": []},
+    )
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert body["generation_mode"] == "revised"
+    assert body["quality_flags"]["fallback_used"] is False
+    assert "HARD_QUALITY_GATE_TRIGGERED" in (body["generation_reason_codes"] or [])
+    assert "HARD_QUALITY_GATE_RESOLVED" in (body["generation_reason_codes"] or [])
+    app.dependency_overrides = {}

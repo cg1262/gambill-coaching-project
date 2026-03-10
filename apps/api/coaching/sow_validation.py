@@ -110,6 +110,18 @@ def ensure_interview_ready_package(sow: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def enforce_required_section_order(sow: dict[str, Any]) -> dict[str, Any]:
+    ordered: dict[str, Any] = {}
+    payload = sow or {}
+    for key in REQUIRED_SECTION_FLOW:
+        if key in payload:
+            ordered[key] = payload[key]
+    for key, value in payload.items():
+        if key not in ordered:
+            ordered[key] = value
+    return ordered
+
+
 _INSTRUCTION_ECHO_PATTERNS = [
     r"\breturn\s+json\s+only\b",
     r"\bno\s+markdown\b",
@@ -191,6 +203,7 @@ def _infer_expected_domain_family(resume_summary: dict[str, Any], domain_focus: 
 def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
     sow, safety_findings = sanitize_generated_sow(sow)
     sow = ensure_interview_ready_package(sow)
+    sow = enforce_required_section_order(sow)
     findings: list[dict[str, str]] = list(safety_findings)
 
     structure = evaluate_sow_structure(sow)

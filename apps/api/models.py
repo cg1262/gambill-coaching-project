@@ -124,9 +124,9 @@ class CoachingSowDraft(BaseModel):
     business_outcome: dict
     solution_architecture: dict
     project_story: dict
-    project_charter: dict = Field(default_factory=dict, validation_alias=AliasChoices("project_charter", "projectCharter"))
     milestones: list[SowMilestone]
     roi_dashboard_requirements: dict = Field(validation_alias=AliasChoices("roi_dashboard_requirements", "roiDashboardRequirements"))
     resource_plan: dict = Field(validation_alias=AliasChoices("resource_plan", "resourcePlan"))
     mentoring_cta: dict = Field(validation_alias=AliasChoices("mentoring_cta", "mentoringCta"))
+    project_charter: dict = Field(default_factory=dict, validation_alias=AliasChoices("project_charter", "projectCharter"))
     interview_ready_package: dict = Field(default_factory=dict, validation_alias=AliasChoices("interview_ready_package", "interviewReadyPackage"))

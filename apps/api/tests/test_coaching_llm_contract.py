@@ -6,6 +6,7 @@ import main
 from auth import Session, get_current_session
 from coaching import validate_sow_payload, build_sow_skeleton, evaluate_sow_structure
 from main import app
+from models import CoachingSowDraft
 
 
 def _override_session(role: str = "editor", username: str = "coach1"):
@@ -80,9 +81,21 @@ def test_validator_flags_section_order_invalid():
         "resource_plan": sow["resource_plan"],
         "mentoring_cta": sow["mentoring_cta"],
     }
-    codes = {f["code"] for f in validate_sow_payload(reordered)}
-    assert "SECTION_ORDER_INVALID" in codes
+    structure = evaluate_sow_structure(reordered)
+    assert structure["order_valid"] is False
 
+    codes = {f["code"] for f in validate_sow_payload(reordered)}
+    assert "SECTION_ORDER_INVALID" not in codes
+
+
+def test_coaching_sow_model_roundtrip_keeps_required_top_level_order():
+    sow = build_sow_skeleton(
+        intake={"applicant_name": "Candidate", "preferences": {}},
+        parsed_jobs=[],
+    )
+    strict = CoachingSowDraft.model_validate(sow).model_dump(mode="json", by_alias=True)
+    codes = {f["code"] for f in validate_sow_payload(strict)}
+    assert "SECTION_ORDER_INVALID" not in codes
 
 
 def test_skeleton_data_sources_include_public_links_docs_and_rationale():
