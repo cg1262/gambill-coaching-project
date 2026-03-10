@@ -131,3 +131,34 @@ def test_export_requires_active_subscription(monkeypatch):
     )
     assert res.status_code == 403
     app.dependency_overrides = {}
+
+
+def test_generate_sow_handles_malformed_llm_sections_without_500(monkeypatch):
+    app.dependency_overrides[get_current_session] = _override_session("editor")
+    monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: _base_intake(submission_id))
+    monkeypatch.setattr(
+        main,
+        "get_coaching_account_subscription",
+        lambda workspace_id, username=None, email=None: {"subscription_status": "active", "email": email},
+    )
+
+    def _malformed_llm(intake, parsed_jobs):
+        sow = main.build_sow_skeleton(intake, parsed_jobs)
+        sow["mentoring_cta"] = "Book a 1:1 call with token=abc123"
+        sow["resource_plan"] = "not a dict"
+        return {"ok": True, "sow": sow, "meta": {"provider": "openai-compatible", "model": "gpt-test"}}
+
+    monkeypatch.setattr(main, "generate_sow_with_llm", _malformed_llm)
+
+    client = TestClient(app)
+    res = client.post(
+        "/coaching/sow/generate",
+        json={"workspace_id": "ws-1", "submission_id": "sub-1", "parsed_jobs": []},
+    )
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert isinstance((body.get("sow") or {}).get("mentoring_cta"), dict)
+    assert isinstance((body.get("sow") or {}).get("resource_plan"), dict)
+    app.dependency_overrides = {}

@@ -128,6 +128,31 @@ _GENERIC_SCAFFOLD_PHRASES = [
     "define a measurable business problem and target kpi uplift",
 ]
 
+_LEGACY_STORY_MARKERS = {
+    "northbeam",
+    "northbeam outfitters",
+    "blueorbit",
+    "blueorbit home services",
+}
+
+_DOMAIN_SIGNAL_MAP = {
+    "retail": {
+        "resume_markers": {"retail", "ecommerce", "merchandising", "inventory", "omnichannel", "customer"},
+        "source_markers": {"kaggle", "superstore", "instacart", "olist", "retail"},
+        "kpi_markers": {"basket", "margin", "aov", "conversion", "sell-through", "returns", "inventory turns"},
+    },
+    "energy": {
+        "resume_markers": {"energy", "utilities", "ev", "charging", "grid", "outage", "telemetry", "resilience"},
+        "source_markers": {"open charge map", "openweather", "eia", "entsoe", "nrel"},
+        "kpi_markers": {"downtime", "uptime", "outage", "charger", "load", "forecast error", "station utilization"},
+    },
+    "finance": {
+        "resume_markers": {"finance", "trading", "crypto", "market", "donation", "risk", "fraud"},
+        "source_markers": {"coingecko", "federal reserve", "fred", "sec", "alphavantage", "iex"},
+        "kpi_markers": {"latency", "volatility", "drawdown", "slippage", "alert", "donation velocity", "liquidation"},
+    },
+}
+
 
 def _contains_instruction_echo(text: str) -> bool:
     low = str(text or "").lower()
@@ -145,6 +170,22 @@ def _looks_generic_scaffold(text: str) -> bool:
     has_signal = any(sig in low for sig in concrete_signals) or bool(re.search(r"\b\d+(?:\.\d+)?\b", low))
     vague_markers = ["generic", "placeholder", "job-aligned", "candidate", "data project", "business outcomes"]
     return (not has_signal) or any(marker in low for marker in vague_markers)
+
+
+def _infer_expected_domain_family(resume_summary: dict[str, Any], domain_focus: list[str], project_strategy: dict[str, Any]) -> str:
+    strategy_domain = str(project_strategy.get("archetype") or "").strip().lower()
+    if strategy_domain in _DOMAIN_SIGNAL_MAP:
+        return strategy_domain
+
+    terms = {
+        str(item).strip().lower()
+        for item in ((resume_summary.get("domains") or []) + (resume_summary.get("project_experience_keywords") or []) + (domain_focus or []))
+        if str(item).strip()
+    }
+    for domain_name, signals in _DOMAIN_SIGNAL_MAP.items():
+        if terms.intersection(signals["resume_markers"]):
+            return domain_name
+    return ""
 
 
 def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
@@ -336,6 +377,39 @@ def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
                 }
             )
 
+    combined_text = " ".join(
+        [
+            str(sow.get("project_title") or ""),
+            story_text,
+            " ".join(str((ds or {}).get("name") or "") for ds in data_sources if isinstance(ds, dict)),
+            " ".join(str(x or "") for x in ((roi.get("business_questions") or []) + (roi.get("required_measures") or []))),
+        ]
+    ).lower()
+    expected_domain = _infer_expected_domain_family(
+        resume_summary=resume_summary,
+        domain_focus=[str(x).strip().lower() for x in (business.get("domain_focus") or []) if str(x).strip()],
+        project_strategy=sow.get("project_strategy") or {},
+    )
+    enforce_legacy_gate = bool(expected_domain or str((sow.get("project_strategy") or {}).get("archetype") or "").strip())
+    if enforce_legacy_gate and any(marker in combined_text for marker in _LEGACY_STORY_MARKERS):
+        findings.append(
+            {
+                "code": "LEGACY_STORY_REUSE_DETECTED",
+                "message": "Generated SOW reused legacy story/company markers. Regenerate with a fresh domain-specific narrative.",
+            }
+        )
+
+    if expected_domain:
+        signals = _DOMAIN_SIGNAL_MAP.get(expected_domain) or {}
+        source_names = " ".join(str((ds or {}).get("name") or "") for ds in data_sources if isinstance(ds, dict)).lower()
+        kpi_text = " ".join(str(x or "") for x in ((roi.get("business_questions") or []) + (roi.get("required_measures") or []) + (business.get("target_metrics") or []))).lower()
+        if signals.get("source_markers") and not any(marker in source_names for marker in signals["source_markers"]):
+            findings.append({"code": "DOMAIN_SOURCE_MISMATCH", "message": f"Data sources do not align with expected {expected_domain} domain signals."})
+        if signals.get("kpi_markers") and not any(marker in kpi_text for marker in signals["kpi_markers"]):
+            findings.append({"code": "DOMAIN_KPI_MISMATCH", "message": f"KPI language does not align with expected {expected_domain} domain signals."})
+        if signals.get("resume_markers") and not any(marker in combined_text for marker in signals["resume_markers"]):
+            findings.append({"code": "DOMAIN_NARRATIVE_MISMATCH", "message": f"Narrative does not align with expected {expected_domain} domain context."})
+
     return findings
 
 
@@ -438,6 +512,10 @@ def build_quality_diagnostics(
         "MILESTONE_GENERIC_DELIVERABLE": "Define milestone deliverables as verifiable artifacts (tests, dashboards, docs, demo recording).",
         "PERSONALIZATION_SIGNAL_MISSING": "Reference resume_parse_summary evidence directly in tools, domains, and milestone execution choices.",
         "PERSONALIZATION_SCOPE_MISMATCH": "Rebalance scope_difficulty and timeline so role level, evidence, and milestone depth align.",
+        "LEGACY_STORY_REUSE_DETECTED": "Regenerate with a fresh business narrative and prohibit legacy company/story names.",
+        "DOMAIN_SOURCE_MISMATCH": "Align data source family with inferred domain archetype.",
+        "DOMAIN_KPI_MISMATCH": "Align KPI vocabulary with inferred domain archetype.",
+        "DOMAIN_NARRATIVE_MISMATCH": "Align project narrative with inferred domain archetype and resume signals.",
     }
     targeted_regeneration_hints = [regen_hints_map[c] for c in unique_codes if c in regen_hints_map][:6]
     if int(quality.get("structure_score") or 0) < 90:
@@ -479,6 +557,8 @@ def build_quality_diagnostics(
         "RESOURCE_LINKS_MISSING",
         "INSTRUCTION_",
         "PROJECT_STORY_GENERIC",
+        "LEGACY_STORY_REUSE_DETECTED",
+        "DOMAIN_",
     )
     major_codes = [code for code in unique_codes if code.startswith(major_prefixes)]
 

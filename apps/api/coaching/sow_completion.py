@@ -96,14 +96,45 @@ def auto_revise_sow_once(sow: dict[str, Any], findings: list[dict[str, str]]) ->
     out.setdefault("roi_dashboard_requirements", {})
     out["roi_dashboard_requirements"].setdefault("required_dimensions", ["time", "business_unit"])
     out["roi_dashboard_requirements"].setdefault("required_measures", ["cost_savings"])
+    out["roi_dashboard_requirements"].setdefault("business_questions", [
+        "Which KPI is underperforming and why?",
+        "Where is the operational or revenue risk concentrated?",
+        "What action should the stakeholder take next?",
+    ])
+    out["roi_dashboard_requirements"].setdefault("visual_requirements", [
+        "Include at least one KPI card.",
+        "Include at least one trend or comparison visual.",
+    ])
 
     out.setdefault("project_charter", {})
     out["project_charter"].setdefault("section_order", list(CHARTER_REQUIRED_SECTION_FLOW))
     sections = out["project_charter"].setdefault("sections", {})
     for required_section in CHARTER_REQUIRED_SECTION_FLOW:
         sections.setdefault(required_section, {})
+    sections.setdefault("prerequisites_resources", {}).setdefault("summary", "Confirm source access, tooling, and readiness before starting the project.")
+    sections.setdefault("prerequisites_resources", {}).setdefault("resources", [
+        {"title": "GitHub Flow", "url": "https://docs.github.com/en/get-started/using-github/github-flow"},
+        {"title": "dbt Documentation", "url": "https://docs.getdbt.com/docs/introduction"},
+    ])
+    sections.setdefault("prerequisites_resources", {}).setdefault("skill_check", "The candidate should be comfortable with SQL, basic Python, and business KPI framing.")
+    sections.setdefault("executive_summary", {}).setdefault("current_state", "The current state relies on delayed or manual reporting.")
+    sections.setdefault("executive_summary", {}).setdefault("future_state", "The future state delivers trusted KPIs from a documented Gold layer.")
+    tech_arch = sections.setdefault("technical_architecture", {})
+    tech_arch.setdefault("ingestion", {"pattern": "Replay-safe source landing into Bronze."})
+    tech_arch.setdefault("processing", {"engine": "PySpark and SQL transformations."})
+    tech_arch.setdefault("storage", {"bronze": "Raw", "silver": "Conformed", "gold": "KPI marts"})
+    tech_arch.setdefault("serving", {"tool": "Power BI"})
+    impl = sections.setdefault("implementation_plan", {})
+    impl.setdefault("milestones", [
+        {"name": "Foundation", "expectations": "Set up sources and Bronze.", "completion_criteria": ["Source landed", "Runbook created"], "estimated_effort_hours": 3, "key_concept": "Ingestion"},
+        {"name": "Standardization", "expectations": "Clean and conform the source.", "completion_criteria": ["DQ checks pass", "Schema documented"], "estimated_effort_hours": 4, "key_concept": "Quality"},
+        {"name": "Gold + dashboard", "expectations": "Publish KPI marts and dashboard logic.", "completion_criteria": ["Metrics reconcile", "Dashboard answers business questions"], "estimated_effort_hours": 4, "key_concept": "Business value"},
+    ])
 
-    out.setdefault("resource_plan", {})
+    resource_plan = out.get("resource_plan")
+    if not isinstance(resource_plan, dict):
+        resource_plan = {}
+    out["resource_plan"] = resource_plan
     if not (out["resource_plan"].get("required") or []):
         out["resource_plan"]["required"] = [{"title": "Choose an open source license", "url": "https://choosealicense.com/"}]
     out["resource_plan"].setdefault("recommended", [])
@@ -123,7 +154,13 @@ def auto_revise_sow_once(sow: dict[str, Any], findings: list[dict[str, str]]) ->
             profile["scope_difficulty"] = "advanced"
             profile["suggested_timeline_weeks"] = min(max(int(profile.get("suggested_timeline_weeks") or 6), 4), 8)
 
-    out.setdefault("mentoring_cta", {})
+    mentoring_cta = out.get("mentoring_cta")
+    if isinstance(mentoring_cta, dict):
+        out["mentoring_cta"] = mentoring_cta
+    elif isinstance(mentoring_cta, str):
+        out["mentoring_cta"] = {"reason": mentoring_cta}
+    else:
+        out["mentoring_cta"] = {}
     out["mentoring_cta"].setdefault(
         "trust_language",
         "Mentoring recommendations are guidance-only and should align with the candidate's goals and budget.",

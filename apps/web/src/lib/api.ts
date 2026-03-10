@@ -228,6 +228,18 @@ export interface CoachingHealthReadinessResult {
   };
 }
 
+export interface CoachingSubscriptionSyncResult {
+  ok: boolean;
+  workspace_id: string;
+  event_id?: string;
+  provider?: string;
+  status?: string;
+  active?: boolean;
+  idempotent_replay?: boolean;
+  idempotency_key_source?: string;
+  message?: string;
+}
+
 export interface CoachingReviewRunsResult {
   ok: boolean;
   message?: string;
@@ -266,6 +278,7 @@ export interface AdminRuntimeRateLimitConfigResult {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
 let AUTH_TOKEN = "";
+const AUTH_TOKEN_STORAGE_KEY = "coaching_api_token";
 
 export class ApiError extends Error {
   status?: number;
@@ -302,6 +315,24 @@ async function parseErrorPayload(res: Response): Promise<any | null> {
 
 export function setAuthToken(token: string) {
   AUTH_TOKEN = token;
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
+  }
+}
+
+export function clearAuthToken() {
+  AUTH_TOKEN = "";
+  if (typeof window !== "undefined") {
+    window.localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+  }
+}
+
+function getAuthToken(): string {
+  if (AUTH_TOKEN) return AUTH_TOKEN;
+  if (typeof window === "undefined") return "";
+  const stored = window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY) || "";
+  if (stored) AUTH_TOKEN = stored;
+  return AUTH_TOKEN;
 }
 
 function toApiAst(payload: any): any {
@@ -337,10 +368,11 @@ function toApiAst(payload: any): any {
 }
 
 async function getJson<T>(path: string): Promise<T> {
+  const authToken = getAuthToken();
   let res: Response;
   try {
     res = await fetch(`${API_BASE}${path}`, {
-      headers: AUTH_TOKEN ? { Authorization: `Bearer ${AUTH_TOKEN}` } : undefined,
+      headers: authToken ? { Authorization: `Bearer ${authToken}` } : undefined,
     });
   } catch {
     throw new ApiError(`Failed to reach API at ${API_BASE}. Start backend (uvicorn) and retry.`, path);
@@ -362,13 +394,14 @@ async function getJson<T>(path: string): Promise<T> {
 }
 
 async function postJson<T>(path: string, body: unknown): Promise<T> {
+  const authToken = getAuthToken();
   let res: Response;
   try {
     res = await fetch(`${API_BASE}${path}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(AUTH_TOKEN ? { Authorization: `Bearer ${AUTH_TOKEN}` } : {}),
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
       },
       body: JSON.stringify(body),
     });
@@ -552,7 +585,11 @@ export const api = {
     applicant_email?: string;
     resume_text?: string;
     self_assessment_text?: string;
+    self_assessment?: Record<string, any>;
+    resume_parse_summary?: Record<string, any>;
     job_links?: string[];
+    stack_preferences?: string[];
+    tool_preferences?: string[];
     preferences?: Record<string, any>;
   }) => postJson<{ ok: boolean; submission_id: string; workspace_id: string }>("/coaching/intake", payload),
   coachingGenerateSow: (payload: {
@@ -561,6 +598,21 @@ export const api = {
     parsed_jobs?: Record<string, any>[];
     regenerate_with_improvements?: boolean;
   }) => postJson<CoachingSowGenerateResult>("/coaching/sow/generate", payload),
+  coachingSubscriptionSync: (payload: {
+    workspace_id: string;
+    provider?: string;
+    event_type?: string;
+    email: string;
+    username?: string;
+    plan_tier?: string;
+    subscription_status: string;
+    renewal_date?: string;
+    provider_customer_id?: string;
+    provider_subscription_id?: string;
+    webhook_signature?: string;
+    webhook_timestamp?: number;
+    raw_event?: Record<string, any>;
+  }) => postJson<CoachingSubscriptionSyncResult>("/coaching/subscription/sync", payload),
   coachingReviewSubmissionRuns: (submissionId: string, limit = 20) =>
     getJson<CoachingReviewRunsResult>(`/coaching/review/submissions/${encodeURIComponent(submissionId)}/runs?limit=${limit}`),
   coachingReviewOpenSubmissions: (workspaceId: string, limit = 50, status?: string) =>

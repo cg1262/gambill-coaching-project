@@ -695,6 +695,7 @@ class CoachingSubscriptionSyncRequest(BaseModel):
     provider: str = "squarespace"
     event_type: str = "subscription.updated"
     email: str
+    username: str | None = None
     plan_tier: str = "coaching-core"
     subscription_status: str
     renewal_date: str | None = None
@@ -2296,7 +2297,7 @@ def coaching_subscription_sync(req: CoachingSubscriptionSyncRequest, request: Re
     )
     upsert_coaching_account_subscription(
         workspace_id=req.workspace_id,
-        username=None,
+        username=str(req.username or session.username or "").strip() or None,
         email=req.email.strip().lower(),
         plan_tier=req.plan_tier,
         subscription_status=normalized_status,

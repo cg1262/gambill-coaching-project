@@ -90,7 +90,8 @@ def sanitize_generated_sow(sow: dict[str, Any]) -> tuple[dict[str, Any], list[di
     if "project_story" in out:
         out["project_story"] = _mask_strings_deep(out.get("project_story"))
 
-    resources = out.get("resource_plan") or {}
+    resources_raw = out.get("resource_plan")
+    resources = resources_raw if isinstance(resources_raw, dict) else {}
     for bucket in ["required", "recommended", "optional"]:
         cleaned_items = []
         for item in (resources.get(bucket) or []):
@@ -119,7 +120,13 @@ def sanitize_generated_sow(sow: dict[str, Any]) -> tuple[dict[str, Any], list[di
             resources[text_key] = mask_secrets_in_text(resources[text_key])
     out["resource_plan"] = resources
 
-    mentoring = out.get("mentoring_cta") or {}
+    mentoring_raw = out.get("mentoring_cta")
+    if isinstance(mentoring_raw, dict):
+        mentoring = dict(mentoring_raw)
+    elif isinstance(mentoring_raw, str):
+        mentoring = {"reason": mask_secrets_in_text(mentoring_raw)}
+    else:
+        mentoring = {}
     for text_key in ["reason", "offer", "pricing", "timeline", "cta_text", "trust_language"]:
         if isinstance(mentoring.get(text_key), str):
             mentoring[text_key] = mask_secrets_in_text(mentoring[text_key])
@@ -131,7 +138,8 @@ def sanitize_generated_sow(sow: dict[str, Any]) -> tuple[dict[str, Any], list[di
             mentoring["safety_flag"] = "blocked_unsafe_url"
     out["mentoring_cta"] = mentoring
 
-    business_outcome = out.get("business_outcome") or {}
+    business_outcome_raw = out.get("business_outcome")
+    business_outcome = business_outcome_raw if isinstance(business_outcome_raw, dict) else {}
     for text_key in ["problem_statement", "target_users", "success_metric", "constraints"]:
         if text_key in business_outcome:
             business_outcome[text_key] = _mask_if_str(business_outcome.get(text_key))

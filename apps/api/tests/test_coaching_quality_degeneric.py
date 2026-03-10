@@ -49,3 +49,36 @@ def test_quality_gate_scores_generic_or_echo_output_below_floor():
     quality = compute_sow_quality_score(sow, findings)
 
     assert int(quality.get("score") or 0) < 80
+
+
+def test_validator_rejects_legacy_story_marker_reuse():
+    sow = _seed_sow()
+    sow["project_title"] = "Avery - Northbeam Analytics Program"
+    sow["project_story"]["executive_summary"] = "Northbeam Outfitters needs a modern data platform."
+
+    findings = validate_sow_payload(sow)
+    codes = {f.get("code") for f in findings}
+
+    assert "LEGACY_STORY_REUSE_DETECTED" in codes
+
+
+def test_validator_rejects_domain_source_and_kpi_mismatch():
+    sow = _seed_sow()
+    sow["project_strategy"] = {"archetype": "energy"}
+    sow["business_outcome"]["data_sources"] = [
+        {
+            "name": "Sample Superstore Sales Dataset",
+            "url": "https://www.kaggle.com/datasets/vivek468/superstore-dataset-final",
+            "ingestion_doc_url": "https://www.kaggle.com/docs/api",
+            "selection_rationale": "Retail sample data for sales analysis",
+            "ingestion_instructions": "Load CSV daily into bronze with metadata.",
+        }
+    ]
+    sow["roi_dashboard_requirements"]["required_measures"] = ["gross_margin", "basket_size"]
+    sow["roi_dashboard_requirements"]["business_questions"] = ["Which stores have the highest basket size by month?"]
+
+    findings = validate_sow_payload(sow)
+    codes = {f.get("code") for f in findings}
+
+    assert "DOMAIN_SOURCE_MISMATCH" in codes
+    assert "DOMAIN_KPI_MISMATCH" in codes

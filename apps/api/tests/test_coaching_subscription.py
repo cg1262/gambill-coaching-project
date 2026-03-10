@@ -4,6 +4,8 @@ from fastapi.testclient import TestClient
 
 import main
 from auth import Session, get_current_session
+from config import settings
+from db_lakebase import get_coaching_account_subscription, upsert_coaching_account_subscription
 from main import app
 from rate_limits import RATE_LIMIT_POLICIES_DEFAULT, RATE_LIMIT_STORE
 
@@ -94,7 +96,9 @@ def test_subscription_sync_stub(monkeypatch):
     def _upsert_account(**kwargs):
         calls["account"] += 1
         assert kwargs["subscription_status"] == "active"
+        assert kwargs["username"] == "coach-admin"
 
+    monkeypatch.setattr(main, "get_coaching_subscription_event", lambda event_id: None)
     monkeypatch.setattr(main, "save_coaching_subscription_event", _save_event)
     monkeypatch.setattr(main, "upsert_coaching_account_subscription", _upsert_account)
 
@@ -122,6 +126,41 @@ def test_subscription_sync_stub(monkeypatch):
     assert calls["event"] == 1
     assert calls["account"] == 1
     assert body["idempotent_replay"] is False
+    app.dependency_overrides = {}
+
+
+def test_subscription_sync_allows_explicit_username_override(monkeypatch):
+    app.dependency_overrides[get_current_session] = _override_session("editor", "coach-admin")
+
+    captured: dict[str, str | None] = {}
+    monkeypatch.setattr(main, "get_coaching_subscription_event", lambda event_id: None)
+    monkeypatch.setattr(main, "save_coaching_subscription_event", lambda **kwargs: None)
+
+    def _upsert_account(**kwargs):
+        captured["username"] = kwargs["username"]
+        captured["email"] = kwargs["email"]
+
+    monkeypatch.setattr(main, "upsert_coaching_account_subscription", _upsert_account)
+
+    client = TestClient(app)
+    res = client.post(
+        "/coaching/subscription/sync",
+        json={
+            "workspace_id": "ws-1",
+            "provider": "squarespace",
+            "event_type": "subscription.updated",
+            "email": "demo@example.com",
+            "username": "admin",
+            "plan_tier": "pro",
+            "subscription_status": "active",
+            "raw_event": {"id": "evt_demo_sync"},
+        },
+    )
+
+    assert res.status_code == 200
+    assert res.json()["active"] is True
+    assert captured["username"] == "admin"
+    assert captured["email"] == "demo@example.com"
     app.dependency_overrides = {}
 
 
@@ -160,3 +199,32 @@ def test_subscription_sync_is_idempotent_on_replay(monkeypatch):
     assert calls["event"] == 0
     assert calls["account"] == 0
     app.dependency_overrides = {}
+
+
+def test_subscription_account_upsert_persists_in_duckdb(tmp_path):
+    original_backend = settings.lakebase_backend
+    original_path = settings.lakebase_duckdb_path
+    try:
+        settings.lakebase_backend = "duckdb"
+        settings.lakebase_duckdb_path = str(tmp_path / "coaching-subscriptions.duckdb")
+
+        upsert_coaching_account_subscription(
+            workspace_id="ws-demo",
+            username="admin",
+            email="candidate@example.com",
+            plan_tier="starter",
+            subscription_status="active",
+            renewal_date=None,
+            provider_customer_id=None,
+            provider_subscription_id=None,
+            provider_source="squarespace",
+            updated_by="admin",
+        )
+
+        account = get_coaching_account_subscription("ws-demo", username="admin")
+        assert account is not None
+        assert account["email"] == "candidate@example.com"
+        assert account["subscription_status"] == "active"
+    finally:
+        settings.lakebase_backend = original_backend
+        settings.lakebase_duckdb_path = original_path

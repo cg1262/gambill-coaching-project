@@ -46,6 +46,20 @@ def test_sprint12_golden_voltstream_energy_style_acceptance():
     assert diagnostics["major_deficiency_codes"] == []
 
 
+def test_sprint12_golden_market_monitor_finance_style_acceptance():
+    sow = build_sow_skeleton(
+        intake=_golden_intake("Tafor", "mid", 5, ["python", "sql", "spark", "databricks", "azure"], ["finance"]),
+        parsed_jobs=[{"signals": {"seniority": "mid", "skills": ["spark"], "tools": ["databricks"], "domains": ["finance"]}}],
+    )
+    findings = validate_sow_payload(sow)
+    quality = compute_sow_quality_score(sow, findings)
+    diagnostics = build_quality_diagnostics(quality, findings, workspace_id="ws-gold", submission_id="sub-gold-3")
+
+    assert findings == []
+    assert quality["score"] >= 80
+    assert diagnostics["major_deficiency_codes"] == []
+
+
 def test_sprint12_golden_foundational_candidate_still_contract_clean():
     sow = build_sow_skeleton(
         intake=_golden_intake("Jordan", "junior", 1, ["python", "sql"], ["healthcare"], timeline_weeks=10),

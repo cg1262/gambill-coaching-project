@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 import base64
@@ -2025,13 +2026,15 @@ def upsert_coaching_account_subscription(
     if not is_configured() or not str(email).strip():
         return
 
+    synced_at = datetime.now(timezone.utc).isoformat()
+
     if _using_duckdb():
         with lakebase_connection() as conn:
             conn.execute(
                 """
                 INSERT INTO coaching_accounts
                 (workspace_id, username, email, plan_tier, subscription_status, renewal_date, provider_customer_id, provider_subscription_id, provider_source, last_synced_at, updated_by, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, CURRENT_TIMESTAMP)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(workspace_id, email) DO UPDATE
                 SET username=excluded.username,
                     plan_tier=excluded.plan_tier,
@@ -2040,11 +2043,11 @@ def upsert_coaching_account_subscription(
                     provider_customer_id=excluded.provider_customer_id,
                     provider_subscription_id=excluded.provider_subscription_id,
                     provider_source=excluded.provider_source,
-                    last_synced_at=CURRENT_TIMESTAMP,
+                    last_synced_at=excluded.last_synced_at,
                     updated_by=excluded.updated_by,
-                    updated_at=CURRENT_TIMESTAMP
+                    updated_at=excluded.updated_at
                 """,
-                [workspace_id, username, email, plan_tier, subscription_status, renewal_date, provider_customer_id, provider_subscription_id, provider_source, updated_by],
+                [workspace_id, username, email, plan_tier, subscription_status, renewal_date, provider_customer_id, provider_subscription_id, provider_source, synced_at, updated_by, synced_at],
             )
         return
 
@@ -2054,7 +2057,7 @@ def upsert_coaching_account_subscription(
                 """
                 INSERT INTO coaching_accounts
                 (workspace_id, username, email, plan_tier, subscription_status, renewal_date, provider_customer_id, provider_subscription_id, provider_source, last_synced_at, updated_by, updated_at)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, %s, CURRENT_TIMESTAMP)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(workspace_id, email) DO UPDATE
                 SET username=excluded.username,
                     plan_tier=excluded.plan_tier,
@@ -2063,11 +2066,11 @@ def upsert_coaching_account_subscription(
                     provider_customer_id=excluded.provider_customer_id,
                     provider_subscription_id=excluded.provider_subscription_id,
                     provider_source=excluded.provider_source,
-                    last_synced_at=CURRENT_TIMESTAMP,
+                    last_synced_at=excluded.last_synced_at,
                     updated_by=excluded.updated_by,
-                    updated_at=CURRENT_TIMESTAMP
+                    updated_at=excluded.updated_at
                 """,
-                (workspace_id, username, email, plan_tier, subscription_status, renewal_date, provider_customer_id, provider_subscription_id, provider_source, updated_by),
+                (workspace_id, username, email, plan_tier, subscription_status, renewal_date, provider_customer_id, provider_subscription_id, provider_source, synced_at, updated_by, synced_at),
             )
             conn.commit()
 

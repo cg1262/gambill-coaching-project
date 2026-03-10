@@ -1,9 +1,9 @@
-"use client";
+﻿"use client";
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ApiError, api, type CoachingIntakeSubmission, type CoachingIntakeSubmissionDetail } from "../../lib/api";
+import { ApiError, api, clearAuthToken, type CoachingIntakeSubmission, type CoachingIntakeSubmissionDetail } from "../../lib/api";
 import { trackConversionEvent } from "../../lib/conversion";
 import {
   DEFAULT_RATE_LIMIT_UI_CONFIG,
@@ -179,6 +179,8 @@ const RESUME_CONFIDENCE_BANDS = [
 ];
 
 const DISCORD_COMMUNITY_URL = "https://discord.gg/gambillcoaching";
+const LOCAL_DEMO_API_USERNAME = process.env.NEXT_PUBLIC_COACHING_DEMO_USERNAME || "admin";
+const LOCAL_DEMO_API_PASSWORD = process.env.NEXT_PUBLIC_COACHING_DEMO_PASSWORD || "admin123";
 
 const DEFAULT_DRAFT: IntakeDraft = {
   workspaceId: "demo-workspace",
@@ -550,6 +552,84 @@ function buildStructuredAssessment(draft: IntakeDraft): string {
   ].join("\n");
 }
 
+function inferRoleLevel(targetRole: string): string {
+  const lower = String(targetRole || "").toLowerCase();
+  if (lower.includes("principal") || lower.includes("staff")) return "staff";
+  if (lower.includes("senior")) return "senior";
+  if (lower.includes("lead")) return "lead";
+  if (lower.includes("junior") || lower.includes("entry")) return "junior";
+  return "mid";
+}
+
+function buildStructuredAssessmentPayload(draft: IntakeDraft): Record<string, string> {
+  const q = draft.questionnaire;
+  return {
+    career_clarity: q.careerGoal || "",
+    sql_confidence: q.confidenceSql || "",
+    python_confidence: q.toolExposure.includes("Python") || draft.selectedTools.includes("Python") ? "Intermediate" : "Developing",
+    data_modeling_confidence: q.confidenceModeling || "",
+    etl_pipeline_confidence: q.confidenceOrchestration || "",
+    cloud_platform_confidence: q.platformExposure.length || draft.selectedPlatforms.length ? "Intermediate" : "Developing",
+    analytics_storytelling_confidence: q.confidenceStakeholder || "",
+    job_search_execution: q.roleTimeline || "",
+    interview_readiness: q.interviewReadiness || "",
+    portfolio_readiness: q.portfolioReadiness || "",
+    notes: [
+      q.supportNeeded ? `Support needed: ${q.supportNeeded}` : "",
+      q.deliveryExamples ? `Delivery examples: ${q.deliveryExamples}` : "",
+      q.weeklyHours ? `Weekly hours: ${q.weeklyHours}` : "",
+    ].filter(Boolean).join(" | "),
+  };
+}
+
+function buildResumeParseSummary(
+  draft: IntakeDraft,
+  resumeParseConfidence: number,
+  resumeStrengthSignals: string[],
+  resumeGapSignals: string[],
+) {
+  const q = draft.questionnaire;
+  return {
+    role_level: inferRoleLevel(draft.targetRole),
+    tools: Array.from(new Set([
+      ...draft.selectedPlatforms,
+      ...draft.selectedTools,
+      ...q.platformExposure,
+      ...q.toolExposure,
+      ...q.projectKeywords.split(",").map((x) => x.trim()).filter(Boolean),
+    ])).slice(0, 20),
+    domains: q.domains.split(",").map((x) => x.trim()).filter(Boolean).slice(0, 10),
+    project_experience_keywords: q.projectKeywords.split(",").map((x) => x.trim()).filter(Boolean).slice(0, 12),
+    strengths: resumeStrengthSignals.map((x) => x.trim()).filter(Boolean).slice(0, 6),
+    gaps: resumeGapSignals.map((x) => x.trim()).filter(Boolean).slice(0, 6),
+    parse_confidence: resumeParseConfidence,
+    parse_strategy: "frontend_resume_summary_v1",
+    filename: draft.resumeFileName || "",
+  };
+}
+
+function buildResumeContext(draft: IntakeDraft, resumeStrengthSignals: string[], resumeGapSignals: string[]): string {
+  const highlights = draft.resumeHighlights.map((item) => item.trim()).filter(Boolean);
+  const lines = [
+    draft.resumeFileName ? `Resume file: ${draft.resumeFileName}` : "",
+    draft.questionnaire.currentBackground ? `Current background: ${draft.questionnaire.currentBackground}` : "",
+    draft.questionnaire.deliveryExamples ? `Delivery examples: ${draft.questionnaire.deliveryExamples}` : "",
+    highlights.length ? "Resume highlights:" : "",
+    ...highlights.map((line) => `- ${line}`),
+    resumeStrengthSignals.length ? "Resume strengths:" : "",
+    ...resumeStrengthSignals.map((line) => `- ${line}`),
+    resumeGapSignals.length ? "Resume gaps to address:" : "",
+    ...resumeGapSignals.map((line) => `- ${line}`),
+  ].filter(Boolean);
+  return lines.join("\n").slice(0, 12000);
+}
+
+function isLocalDemoHost() {
+  if (typeof window === "undefined") return false;
+  const host = window.location.hostname.toLowerCase();
+  return host === "localhost" || host === "127.0.0.1";
+}
+
 type WorkbenchRouteMode = "all" | "intake" | "review" | "project";
 
 type CoachingProjectWorkbenchProps = {
@@ -622,10 +702,12 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   const [rateLimitConfigSaved, setRateLimitConfigSaved] = useState<string>("");
   const [intakeSubmitState, setIntakeSubmitState] = useState<{ running: boolean; message?: string }>({ running: false });
   const [issueResponseError, setIssueResponseError] = useState<string | null>(null);
+  const [apiSessionReady, setApiSessionReady] = useState(false);
 
   const submissionsLoadRef = useRef(0);
   const submissionDetailReqRef = useRef(0);
   const readinessReqRef = useRef(0);
+  const apiSessionPromiseRef = useRef<Promise<boolean> | null>(null);
 
   useEffect(() => {
     setThemeMode(resolvePreferredTheme());
@@ -760,6 +842,8 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   function handleProtectedApiError(error: unknown): string {
     const msg = error instanceof Error ? error.message : "Request failed";
     if (isUnauthorizedError(msg)) {
+      clearAuthToken();
+      setApiSessionReady(false);
       setSessionBanner("Session expired. Please sign back in to continue.");
     }
     if (isRateLimitError(error)) {
@@ -771,11 +855,96 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
     return uiMsg;
   }
 
+  async function ensureCoachingApiSession(): Promise<boolean> {
+    if (authState !== "authenticated" || !isLocalDemoHost()) return false;
+    if (apiSessionReady) return true;
+    if (apiSessionPromiseRef.current) return apiSessionPromiseRef.current;
+
+    const task = (async () => {
+      try {
+        const login = await api.login(LOCAL_DEMO_API_USERNAME, LOCAL_DEMO_API_PASSWORD);
+        if (!login.ok || !login.token) {
+          setSessionBanner("Local demo auth did not return an API token.");
+          setApiSessionReady(false);
+          return false;
+        }
+        setApiSessionReady(true);
+        clearAuthStaleState();
+        return true;
+      } catch (error: any) {
+        setApiSessionReady(false);
+        setSessionBanner(error?.message || "Local demo auth failed.");
+        return false;
+      } finally {
+        apiSessionPromiseRef.current = null;
+      }
+    })();
+
+    apiSessionPromiseRef.current = task;
+    return task;
+  }
+
+  async function syncDemoSubscription(nextStatus: SubscriptionStatus): Promise<boolean> {
+    if (!isLocalDemoHost()) {
+      setSubscriptionStatus(nextStatus);
+      if (nextStatus === "active") clearAuthStaleState();
+      return true;
+    }
+    if (authState !== "authenticated") {
+      setSessionBanner("Sign in before syncing a local demo subscription.");
+      return false;
+    }
+    const sessionReady = await ensureCoachingApiSession();
+    if (!sessionReady) return false;
+
+    const applicantEmail = (draft.candidateEmail || "candidate@example.com").trim().toLowerCase();
+    const backendStatus = nextStatus === "unknown" ? "inactive" : nextStatus;
+
+    try {
+      const out = await api.coachingSubscriptionSync({
+        workspace_id: draft.workspaceId || "demo-workspace",
+        provider: "squarespace",
+        event_type: "subscription.updated",
+        email: applicantEmail,
+        username: LOCAL_DEMO_API_USERNAME,
+        plan_tier: planTier,
+        subscription_status: backendStatus,
+        raw_event: {
+          id: `local_demo_${backendStatus}_${Date.now()}`,
+          source: "coaching_workbench_demo_controls",
+          requested_status: nextStatus,
+          plan_tier: planTier,
+        },
+      });
+      if (!out.ok) {
+        setSessionBanner(out.message || "Local demo subscription sync failed.");
+        return false;
+      }
+      setSubscriptionStatus(nextStatus);
+      clearAuthStaleState();
+      return true;
+    } catch (error: any) {
+      setSessionBanner(handleProtectedApiError(error));
+      return false;
+    }
+  }
+
   useEffect(() => {
     if (authState === "authenticated" || subscriptionStatus === "active") {
       clearAuthStaleState();
     }
   }, [authState, subscriptionStatus]);
+
+  useEffect(() => {
+    if (authState !== "authenticated") {
+      clearAuthToken();
+      setApiSessionReady(false);
+      return;
+    }
+    if (!isLocalDemoHost()) return;
+    void ensureCoachingApiSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authState]);
 
   useEffect(() => {
     if (showLaunchAndAccess) {
@@ -931,6 +1100,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
     try {
       setReviewLoading(true);
       setReviewError(null);
+      await ensureCoachingApiSession();
       if (queueStatusFilter !== "all") {
         const out = await api.coachingReviewOpenSubmissions(draft.workspaceId || "demo-workspace", 50, queueStatusFilter);
         if (reqId !== submissionsLoadRef.current) return;
@@ -962,6 +1132,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
     const reqId = ++readinessReqRef.current;
     try {
       setReadinessState({ loading: true });
+      await ensureCoachingApiSession();
       const out = await api.coachingHealthReadiness(draft.workspaceId || "demo-workspace");
       if (reqId !== readinessReqRef.current) return;
       setReadinessState({ loading: false, readiness: out.readiness, error: undefined });
@@ -1296,21 +1467,26 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
     }
   }
 
-  async function submitIntake() {
-    if (!canAccessWorkbench || intakeSubmitState.running) return;
+  async function submitIntake(): Promise<string | null> {
+    if (!canAccessWorkbench || intakeSubmitState.running) return null;
 
     const jobLinks = draft.jobLinks.map((line) => line.trim()).filter(Boolean);
     const preferredStack = [...draft.selectedPlatforms, ...draft.selectedTools].join(" + ");
     const structuredAssessment = buildStructuredAssessment(draft);
     const combinedProfile = buildCombinedProfile(draft);
+    const structuredAssessmentPayload = buildStructuredAssessmentPayload(draft);
+    const resumeParseSummary = buildResumeParseSummary(draft, resumeParseConfidence, resumeStrengthSignals, resumeGapSignals);
+    const resumeContext = buildResumeContext(draft, resumeStrengthSignals, resumeGapSignals);
+    const timelineWeeks = Number(draft.questionnaire.timelineWeeks || draft.timelineWeeks || 8);
 
     try {
       setIntakeSubmitState({ running: true, message: "Submitting intake..." });
+      await ensureCoachingApiSession();
       const intakeResult = await api.coachingIntake({
         workspace_id: draft.workspaceId,
         applicant_name: draft.candidateName || "Candidate",
         applicant_email: draft.candidateEmail || undefined,
-        resume_text: draft.resumeFileName,
+        resume_text: resumeContext,
         self_assessment_text: [
           structuredAssessment,
           "",
@@ -1326,19 +1502,15 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
           "Combined Profile",
           combinedProfile,
         ].join("\n"),
+        self_assessment: structuredAssessmentPayload,
+        resume_parse_summary: resumeParseSummary,
+        stack_preferences: Array.from(new Set([...draft.selectedPlatforms, ...draft.questionnaire.platformExposure])).filter(Boolean),
+        tool_preferences: Array.from(new Set(["SQL", ...draft.selectedTools, ...draft.questionnaire.toolExposure])).filter(Boolean),
         job_links: jobLinks,
         preferences: {
           target_role: draft.targetRole,
           preferred_stack: preferredStack,
-          timeline_weeks: draft.questionnaire.timelineWeeks || draft.timelineWeeks,
-          selected_platforms: draft.selectedPlatforms,
-          selected_tools: Array.from(new Set(["SQL", ...draft.selectedTools])),
-          self_assessment_ranks: {
-            sql: draft.questionnaire.rankSql,
-            data_modeling: draft.questionnaire.rankDataModeling,
-          },
-          domains: draft.questionnaire.domains.split(",").map((x) => x.trim()).filter(Boolean),
-          project_experience_keywords: draft.questionnaire.projectKeywords.split(",").map((x) => x.trim()).filter(Boolean),
+          timeline_weeks: Number.isFinite(timelineWeeks) ? timelineWeeks : 8,
           resume_profile: {
             file_name: draft.resumeFileName,
             confidence: resumeParseConfidence,
@@ -1346,7 +1518,12 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
             strengths: resumeStrengthSignals.map((item) => item.trim()).filter(Boolean),
             gaps: resumeGapSignals.map((item) => item.trim()).filter(Boolean),
           },
-          combined_profile: combinedProfile,
+          combined_profile: {
+            summary: combinedProfile,
+          },
+          profile_overrides: {
+            role_level: inferRoleLevel(draft.targetRole),
+          },
         },
       });
 
@@ -1356,8 +1533,10 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       trackConversionEvent({ name: "intake_submitted", workspaceId: draft.workspaceId, submissionId: intakeResult.submission_id, planTier, details: { jobLinks: jobLinks.length } });
       setStageState((prev) => ({ ...prev, intakeParsed: true }));
       await loadSubmissions();
+      return intakeResult.submission_id || null;
     } catch (e: any) {
       setGenerationState({ running: false, message: handleProtectedApiError(e) });
+      return null;
     } finally {
       setIntakeSubmitState({ running: false });
     }
@@ -1365,18 +1544,24 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
 
   async function generateSow(useImprovements = false) {
     if (!canAccessWorkbench || generationState.running) return;
-    if (!currentSubmissionId) {
-      setScaffold(buildProjectScaffold(draft));
-      setStageState((prev) => ({ ...prev, sowGenerated: true }));
-      setIssueResponseError(null);
-      setGenerationState({ running: false, message: "Built local scaffold (submit intake to enable server generation).", sourceMode: "fallback" });
-      return;
+    let submissionId = currentSubmissionId;
+    if (!submissionId) {
+      if (showInternalAdminPanel) {
+        setScaffold(buildProjectScaffold(draft));
+        setStageState((prev) => ({ ...prev, sowGenerated: true }));
+        setIssueResponseError(null);
+        setGenerationState({ running: false, message: "Built local scaffold (internal mode only).", sourceMode: "fallback" });
+        return;
+      }
+      submissionId = await submitIntake();
+      if (!submissionId) return;
     }
 
     try {
-      trackConversionEvent({ name: useImprovements ? "sow_regenerate_clicked" : "sow_generate_clicked", workspaceId: draft.workspaceId, submissionId: currentSubmissionId, planTier });
+      await ensureCoachingApiSession();
+      trackConversionEvent({ name: useImprovements ? "sow_regenerate_clicked" : "sow_generate_clicked", workspaceId: draft.workspaceId, submissionId, planTier });
       setGenerationState({ running: true, message: useImprovements ? "Regenerating with improvements..." : "Generating SOW..." });
-      const out = await api.coachingGenerateSow({ workspace_id: draft.workspaceId, submission_id: currentSubmissionId, parsed_jobs: [], regenerate_with_improvements: useImprovements });
+      const out = await api.coachingGenerateSow({ workspace_id: draft.workspaceId, submission_id: submissionId, parsed_jobs: [], regenerate_with_improvements: useImprovements });
       markAuthenticatedApiSuccess();
       if (!out.ok || !out.sow) {
         const reasonCodes = Array.isArray((out as any)?.quality_flags?.reason_codes)
@@ -1404,7 +1589,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
         generationMeta: out.generation_meta || {},
         quality: out.quality || {},
       });
-      trackConversionEvent({ name: "sow_generate_completed", workspaceId: draft.workspaceId, submissionId: currentSubmissionId, source: fallbackUsed ? "fallback" : "llm", details: { valid: Boolean(out.valid), score: out.quality?.score } });
+      trackConversionEvent({ name: "sow_generate_completed", workspaceId: draft.workspaceId, submissionId, source: fallbackUsed ? "fallback" : "llm", details: { valid: Boolean(out.valid), score: out.quality?.score } });
     } catch (e: any) {
       const msg = e?.message || "Generation failed.";
       setGenerationState({ running: false, message: msg.includes("403") ? "Upgrade required: active subscription needed for generation." : handleProtectedApiError(e) });
@@ -1481,22 +1666,34 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       candidateName: selectedSubmission.applicant_name || prev.candidateName,
       candidateEmail: selectedSubmission.applicant_email || prev.candidateEmail,
       targetRole: String(preferences.target_role || prev.targetRole),
-      resumeFileName: selectedSubmission.resume_text || prev.resumeFileName,
+      resumeFileName: String((preferences as any).resume_profile?.file_name || prev.resumeFileName),
       resumeHighlights: Array.isArray((preferences as any).resume_profile?.highlights) && (preferences as any).resume_profile.highlights.length
         ? (preferences as any).resume_profile.highlights.map((x: any) => String(x))
         : prev.resumeHighlights,
       selfAssessment: selectedSubmission.self_assessment_text || prev.selfAssessment,
       jobLinks: parsedJobLinks.length ? [...parsedJobLinks, ...Array.from({ length: Math.max(0, 8 - parsedJobLinks.length) }, () => "")].slice(0, 10) : prev.jobLinks,
-      selectedPlatforms: Array.isArray((preferences as any).selected_platforms) ? (preferences as any).selected_platforms.map((x: any) => String(x)) : prev.selectedPlatforms,
-      selectedTools: Array.isArray((preferences as any).selected_tools) ? (preferences as any).selected_tools.map((x: any) => String(x)) : prev.selectedTools,
+      selectedPlatforms: Array.isArray((preferences as any).stack_preferences) && (preferences as any).stack_preferences.length
+        ? (preferences as any).stack_preferences.map((x: any) => String(x))
+        : Array.isArray((preferences as any).selected_platforms)
+          ? (preferences as any).selected_platforms.map((x: any) => String(x))
+          : prev.selectedPlatforms,
+      selectedTools: Array.isArray((preferences as any).tool_preferences) && (preferences as any).tool_preferences.length
+        ? (preferences as any).tool_preferences.map((x: any) => String(x))
+        : Array.isArray((preferences as any).selected_tools)
+          ? (preferences as any).selected_tools.map((x: any) => String(x))
+          : prev.selectedTools,
       timelineWeeks: String(preferences.timeline_weeks || prev.timelineWeeks),
       questionnaire: {
         ...prev.questionnaire,
         timelineWeeks: String(preferences.timeline_weeks || prev.questionnaire.timelineWeeks || prev.timelineWeeks),
-        rankSql: String((preferences as any).self_assessment_ranks?.sql || prev.questionnaire.rankSql),
-        rankDataModeling: String((preferences as any).self_assessment_ranks?.data_modeling || prev.questionnaire.rankDataModeling),
-        domains: Array.isArray((preferences as any).domains) ? (preferences as any).domains.join(", ") : prev.questionnaire.domains,
-        projectKeywords: Array.isArray((preferences as any).project_experience_keywords) ? (preferences as any).project_experience_keywords.join(", ") : prev.questionnaire.projectKeywords,
+        confidenceSql: String((preferences as any).self_assessment?.sql_confidence || prev.questionnaire.confidenceSql),
+        confidenceModeling: String((preferences as any).self_assessment?.data_modeling_confidence || prev.questionnaire.confidenceModeling),
+        confidenceOrchestration: String((preferences as any).self_assessment?.etl_pipeline_confidence || prev.questionnaire.confidenceOrchestration),
+        confidenceStakeholder: String((preferences as any).self_assessment?.analytics_storytelling_confidence || prev.questionnaire.confidenceStakeholder),
+        portfolioReadiness: String((preferences as any).self_assessment?.portfolio_readiness || prev.questionnaire.portfolioReadiness),
+        interviewReadiness: String((preferences as any).self_assessment?.interview_readiness || prev.questionnaire.interviewReadiness),
+        domains: Array.isArray((preferences as any).resume_parse_summary?.domains) ? (preferences as any).resume_parse_summary.domains.join(", ") : prev.questionnaire.domains,
+        projectKeywords: Array.isArray((preferences as any).resume_parse_summary?.project_experience_keywords) ? (preferences as any).resume_parse_summary.project_experience_keywords.join(", ") : prev.questionnaire.projectKeywords,
       },
     }));
 
@@ -1745,11 +1942,11 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 8 }}>
-          <button onClick={() => setAuthState("signedOut")}>Set Signed Out</button>
-          <button onClick={() => { setAuthState("authenticated"); clearAuthStaleState(); }}>Set Authenticated</button>
-          <button onClick={() => setSubscriptionStatus("inactive")}>Set Inactive Sub</button>
-          <button onClick={() => { setSubscriptionStatus("active"); clearAuthStaleState(); }}>Set Active Sub</button>
-          <button onClick={() => setSubscriptionStatus("unknown")}>Set Unknown Sub</button>
+          <button onClick={() => { clearAuthToken(); setApiSessionReady(false); setAuthState("signedOut"); setSubscriptionStatus("unknown"); }}>Set Signed Out</button>
+          <button onClick={() => { setAuthState("authenticated"); clearAuthStaleState(); void ensureCoachingApiSession(); }}>Set Authenticated</button>
+          <button onClick={() => { void syncDemoSubscription("inactive"); }}>Set Inactive Sub</button>
+          <button onClick={() => { void syncDemoSubscription("active"); }}>Set Active Sub</button>
+          <button onClick={() => { void syncDemoSubscription("unknown"); }}>Set Unknown Sub</button>
           <button onClick={resetLaunchFlow}>Reset Launch</button>
         </div>
 
@@ -1808,7 +2005,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
             {subscriptionStatus !== "active" && (
               <>
                 <div style={{ fontSize: 12, marginTop: 8 }}><strong>Upgrade message:</strong> Upgrade to Pro/Elite to unlock generation, exports, and coach review workflow.</div>
-                <button style={{ marginTop: 8 }} onClick={() => { trackConversionEvent({ name: "upgrade_cta_clicked", workspaceId: draft.workspaceId, planTier }); setSubscriptionStatus("active"); clearAuthStaleState(); }}>Simulate successful upgrade/renewal</button>
+                <button style={{ marginTop: 8 }} onClick={() => { trackConversionEvent({ name: "upgrade_cta_clicked", workspaceId: draft.workspaceId, planTier }); void syncDemoSubscription("active"); }}>Simulate successful upgrade/renewal</button>
               </>
             )}
           </div>

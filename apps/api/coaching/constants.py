@@ -68,6 +68,41 @@ RESUME_PROJECT_KEYWORDS = [
 
 DATA_SOURCE_CANDIDATES: list[dict[str, Any]] = [
     {
+        "name": "Sample Superstore Sales Dataset",
+        "url": "https://www.kaggle.com/datasets/vivek468/superstore-dataset-final",
+        "ingestion_doc_url": "https://www.kaggle.com/docs/api",
+        "tags": {"retail", "ecommerce", "csv", "dashboard", "power bi", "sql"},
+        "selection_rationale": "Provides order-level retail facts that are well suited for bronze-to-gold modeling, KPI design, and executive dashboard storytelling.",
+    },
+    {
+        "name": "CoinGecko Simple Price API",
+        "url": "https://api.coingecko.com/api/v3/simple/price",
+        "ingestion_doc_url": "https://docs.coingecko.com/v3.0.1/reference/simple-price",
+        "tags": {"finance", "crypto", "api", "python", "spark", "databricks", "realtime", "market"},
+        "selection_rationale": "Supports near-real-time crypto market monitoring scenarios with fast price checks, timestamp handling, and latency-aware alerting use cases.",
+    },
+    {
+        "name": "CoinGecko Markets API",
+        "url": "https://api.coingecko.com/api/v3/coins/markets",
+        "ingestion_doc_url": "https://docs.coingecko.com/v3.0.1/reference/coins-markets",
+        "tags": {"finance", "crypto", "api", "json", "python", "spark", "databricks", "metadata"},
+        "selection_rationale": "Provides richer market and coin metadata that works well for silver-layer flattening, rolling metrics, and alert logic in finance-style projects.",
+    },
+    {
+        "name": "Open Charge Map API",
+        "url": "https://openchargemap.org/site/develop/api",
+        "ingestion_doc_url": "https://openchargemap.org/site/develop/api#/operations/get-poi",
+        "tags": {"energy", "ev", "api", "json", "spark", "databricks"},
+        "selection_rationale": "Gives public EV charging infrastructure and status data for resilient API ingestion, flattening, and operational analytics exercises.",
+    },
+    {
+        "name": "OpenWeather One Call API",
+        "url": "https://openweathermap.org/api/one-call-3",
+        "ingestion_doc_url": "https://openweathermap.org/api/one-call-3#how",
+        "tags": {"energy", "weather", "api", "time-series", "python"},
+        "selection_rationale": "Adds external weather signals that support risk scoring, regional joins, and business-impact narratives for outage or utilization scenarios.",
+    },
+    {
         "name": "NYC TLC Trip Record Data",
         "url": "https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page",
         "ingestion_doc_url": "https://www.nyc.gov/assets/tlc/downloads/pdf/data_dictionary_trip_records_yellow.pdf",
@@ -108,5 +143,10 @@ STYLE_ANCHORS = {
         "name": "VoltStream EV Grid Resilience",
         "tone_cues": ["systems thinking", "risk-aware", "operationally realistic"],
         "required_signals": ["realistic fictitious business narrative", "public datasource URLs", "explicit ingestion instructions"],
+    },
+    "ggn_market_monitor": {
+        "name": "Global Giving Network Market & Donation Velocity Monitor",
+        "tone_cues": ["real-time", "alert-driven", "financially precise"],
+        "required_signals": ["API-first ingestion", "latency monitoring", "threshold-based business alerts"],
     },
 }
