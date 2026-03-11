@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-# Re-exports — keeps "from coaching import X" working in main.py unchanged.
+# Re-exports - keeps "from coaching import X" working in main.py unchanged.
 
 from .constants import (
     COMMON_SKILLS,
@@ -17,7 +17,8 @@ from .constants import (
 )
 from .sow_security import sanitize_generated_sow, utc_now_iso
 from .intake import fetch_job_text, extract_job_signals, extract_resume_signals
-from .sow_draft import generate_sow_with_llm, build_sow_skeleton
+from .sow_draft import build_sow_skeleton
+from .sow_generation_gate import generate_sow_with_llm
 from .sow_validation import (
     validate_sow_payload,
     compute_sow_quality_score,
@@ -30,6 +31,10 @@ from .sow_completion import (
     auto_revise_sow_once,
     match_resources_for_sow,
     compose_demo_project_package,
+)
+from .sow_evaluation import (
+    evaluate_sow_output,
+    evaluate_sow_with_reference_paths,
 )
 
 __all__ = [
@@ -48,6 +53,8 @@ __all__ = [
     "ensure_interview_ready_package",
     "enforce_required_section_order",
     "evaluate_sow_structure",
+    "evaluate_sow_output",
+    "evaluate_sow_with_reference_paths",
     "utc_now_iso",
     "COMMON_SKILLS",
     "COMMON_DOMAINS",

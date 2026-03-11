@@ -149,6 +149,7 @@ logging.config.dictConfig({
 
 logger = logging.getLogger("gambill_coaching.api")
 RESOURCE_LIBRARY_PATH = Path(__file__).resolve().parents[2] / "docs" / "coaching-project" / "RESOURCE_LIBRARY.json"
+DOCX_EXPORT_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
 @asynccontextmanager
@@ -984,6 +985,19 @@ def _check_llm_provider_reachability(base_url: str, api_key: str, timeout_sec: i
         return False, f"Error: {e}"
 
 
+def _safe_export_slug(value: str) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9]+", "-", str(value or "").strip().lower()).strip("-")
+    return cleaned or "coaching-sow"
+
+
+def _xml_escape_text(value: str) -> str:
+    return str(value or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _docx_paragraph(text: str) -> str:
+    return f"<w:p><w:r><w:t xml:space=\"preserve\">{_xml_escape_text(text)}</w:t></w:r></w:p>"
+
+
 def _render_sow_markdown(sow: dict[str, Any]) -> str:
     milestones = sow.get("milestones") or []
     milestone_lines = "\n".join([f"- **{m.get('name', 'Milestone')}** ({m.get('duration_weeks', '?')}w): {', '.join(m.get('deliverables') or [])}" for m in milestones])
@@ -1014,6 +1028,39 @@ def _render_sow_markdown(sow: dict[str, Any]) -> str:
             json.dumps((sow.get("solution_architecture") or {}).get("medallion_plan") or {}, indent=2),
         ]
     )
+
+
+def _render_sow_docx_bytes(sow: dict[str, Any]) -> bytes:
+    paragraphs = [_docx_paragraph(line if line.strip() else " ") for line in _render_sow_markdown(sow).splitlines()]
+    document_xml = (
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+        "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">"
+        "<w:body>"
+        f"{''.join(paragraphs)}"
+        "<w:sectPr><w:pgSz w:w=\"12240\" w:h=\"15840\"/><w:pgMar w:top=\"1440\" w:right=\"1440\" w:bottom=\"1440\" w:left=\"1440\"/></w:sectPr>"
+        "</w:body>"
+        "</w:document>"
+    )
+    content_types_xml = (
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+        "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+        "<Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>"
+        "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
+        "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>"
+        "</Types>"
+    )
+    rels_xml = (
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+        "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+        "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/>"
+        "</Relationships>"
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", content_types_xml)
+        zf.writestr("_rels/.rels", rels_xml)
+        zf.writestr("word/document.xml", document_xml)
+    return buf.getvalue()
 
 
 def _launch_token_secret() -> str:
@@ -2982,6 +3029,18 @@ def coaching_sow_export(req: CoachingSowExportRequest, request: Request, session
             "submission_id": req.submission_id,
             "format": "json",
             "content": json.dumps(sow_payload, indent=2),
+        }
+    if fmt == "docx":
+        docx_bytes = _render_sow_docx_bytes(sow_payload)
+        filename = f"{_safe_export_slug(str(sow_payload.get('project_title') or 'coaching-sow'))}-{datetime.now(timezone.utc).strftime('%Y%m%d')}.docx"
+        return {
+            "ok": True,
+            "workspace_id": req.workspace_id,
+            "submission_id": req.submission_id,
+            "format": "docx",
+            "filename": filename,
+            "mime_type": DOCX_EXPORT_MIME,
+            "content_base64": base64.b64encode(docx_bytes).decode("ascii"),
         }
     return {
         "ok": True,
