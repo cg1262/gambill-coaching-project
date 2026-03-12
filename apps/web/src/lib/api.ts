@@ -236,10 +236,33 @@ export interface CoachingHealthReadinessResult {
   workspace_id: string;
   readiness: {
     llm_key_present: boolean;
+    api_key_present: boolean;
+    provider_reachable: boolean;
+    provider_message: string;
+    base_url: string;
+    api_key_source?: string;
     lakebase_ok: boolean;
     lakebase_message: string;
     ready: boolean;
   };
+}
+
+export interface ResumeUploadValidationResult {
+  ok: boolean;
+  workspace_id: string;
+  validation?: Record<string, any>;
+  safe_storage_path?: string;
+  message?: string;
+}
+
+export interface ResumeUploadResult {
+  ok: boolean;
+  workspace_id: string;
+  submission_id?: string | null;
+  validation?: Record<string, any>;
+  resume_text?: string;
+  resume_parse_summary?: Record<string, any>;
+  message?: string;
 }
 
 export interface CoachingSubscriptionSyncResult {
@@ -438,6 +461,37 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+async function postFormData<T>(path: string, body: FormData): Promise<T> {
+  const authToken = getAuthToken();
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      method: "POST",
+      headers: {
+        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+      },
+      body,
+    });
+  } catch {
+    throw new ApiError(`Failed to reach API at ${API_BASE}. Start backend (uvicorn) and retry.`, path);
+  }
+
+  if (!res.ok) {
+    const payload = await parseErrorPayload(res);
+    const payloadMessage = String(payload?.detail || payload?.message || "").trim();
+    if (res.status === 401) throw new ApiError(payloadMessage || "Session expired (401)", path, { status: 401 });
+    if (res.status === 429) {
+      throw new ApiError(payloadMessage || "You are doing that too quickly. Please wait and retry.", path, {
+        status: 429,
+        retryAfterSeconds: parseRetryAfterSeconds(res.headers.get("retry-after")),
+      });
+    }
+    throw new ApiError(payloadMessage || `${path} failed (${res.status})`, path, { status: res.status });
+  }
+  return (await res.json()) as T;
+}
+
+
 export const api = {
   login: async (username: string, password: string) => {
     const res = await postJson<LoginResult>("/auth/login", { username, password });
@@ -593,6 +647,23 @@ export const api = {
     getJson<CoachingIntakeSubmissionDetailResult>(
       `/coaching/intake/submissions/${encodeURIComponent(submissionId)}`
     ),
+  coachingResumeValidate: (payload: {
+    workspace_id: string;
+    filename: string;
+    content_type?: string;
+    size_bytes: number;
+  }) => postJson<ResumeUploadValidationResult>("/coaching/intake/resume/validate", payload),
+  coachingResumeUpload: (payload: {
+    workspace_id: string;
+    file: File;
+    submission_id?: string;
+  }) => {
+    const form = new FormData();
+    form.append("workspace_id", payload.workspace_id);
+    if (payload.submission_id) form.append("submission_id", payload.submission_id);
+    form.append("file", payload.file);
+    return postFormData<ResumeUploadResult>("/coaching/intake/resume/upload", form);
+  },
   coachingIntake: (payload: {
     workspace_id: string;
     applicant_name: string;

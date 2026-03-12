@@ -195,6 +195,7 @@ def test_e1_llm_readiness_endpoint(monkeypatch):
     body = res.json()
     assert body["readiness"]["api_key_present"] is True
     assert body["readiness"]["provider_reachable"] is True
+    assert body["readiness"]["api_key_source"] == "OPENAI_API_KEY"
     assert body["readiness"]["ready"] is True
 
     app.dependency_overrides = {}
@@ -253,3 +254,14 @@ def test_d1_intake_submissions_filter_passed_to_storage(monkeypatch):
     assert captured["review_status"] == "in_review"
     assert res.json()["status_filter"] == "in_review"
     app.dependency_overrides = {}
+
+
+def test_env_assignment_parser_supports_export_and_inline_comments():
+    parsed = main._parse_env_assignment("export OPENAI_API_KEY=abc123 # local secret")
+    assert parsed == ("OPENAI_API_KEY", "abc123")
+
+    quoted = main._parse_env_assignment("LLM_API_KEY='quoted value'")
+    assert quoted == ("LLM_API_KEY", "quoted value")
+
+    assert main._parse_env_assignment("# comment") is None
+    assert main._parse_env_assignment("NO_EQUALS") is None

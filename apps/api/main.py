@@ -109,6 +109,58 @@ from webhook_security import parse_webhook_body, verify_webhook_signature
 from webhook_alerts import INVALID_WEBHOOK_SIGNATURE_TRACKER, InvalidSignatureAlertEvent, dispatch_invalid_webhook_signature_alert
 from admin_runtime_config import runtime_rate_limit_snapshot, runtime_rate_limit_update
 
+# Load local environment variables from .env files (if present) without overriding shell env.
+def _parse_env_assignment(line: str) -> tuple[str, str] | None:
+    cleaned = str(line or "").strip()
+    if not cleaned or cleaned.startswith("#"):
+        return None
+    if cleaned.lower().startswith("export "):
+        cleaned = cleaned[7:].strip()
+    if "=" not in cleaned:
+        return None
+    key, raw_value = cleaned.split("=", 1)
+    key = key.strip()
+    if not key:
+        return None
+
+    value = raw_value.strip()
+    if value and value[0] in {'"', "'"}:
+        quote = value[0]
+        end_idx = value.find(quote, 1)
+        value = value[1:end_idx] if end_idx >= 1 else value[1:]
+    else:
+        value = value.split(" #", 1)[0].strip()
+
+    return key, value
+
+
+def _load_env_file(path: Path) -> None:
+    if not path.exists() or not path.is_file():
+        return
+    for raw_line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        parsed = _parse_env_assignment(raw_line)
+        if not parsed:
+            continue
+        key, value = parsed
+        if key in os.environ:
+            continue
+        os.environ[key] = value
+
+
+def _resolve_llm_api_key() -> tuple[str, str]:
+    primary = str(os.getenv("OPENAI_API_KEY") or "").strip()
+    if primary:
+        return primary, "OPENAI_API_KEY"
+    fallback = str(os.getenv("LLM_API_KEY") or "").strip()
+    if fallback:
+        return fallback, "LLM_API_KEY"
+    return "", "none"
+
+
+_repo_root = Path(__file__).resolve().parents[2]
+_load_env_file(_repo_root / ".env")
+_load_env_file(Path.cwd() / ".env")
+
 class _JsonFormatter(logging.Formatter):
     """JSON log formatter — no extra packages required."""
 
@@ -1228,7 +1280,7 @@ def health() -> dict:
 @app.get("/coaching/health/llm-readiness")
 def coaching_llm_readiness(session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor"})
-    api_key = str(os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY") or "").strip()
+    api_key, api_key_source = _resolve_llm_api_key()
     base_url = str(os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").strip()
     provider_ok, provider_message = _check_llm_provider_reachability(base_url=base_url, api_key=api_key)
     ready = bool(api_key) and provider_ok
@@ -1240,6 +1292,7 @@ def coaching_llm_readiness(session=Depends(get_current_session)) -> dict:
             "provider_reachable": provider_ok,
             "provider_message": provider_message,
             "base_url": base_url,
+            "api_key_source": api_key_source,
         },
     }
 
@@ -3685,7 +3738,7 @@ def coaching_conversion_weekly_summary(
 def coaching_health_readiness(workspace_id: str, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor", "viewer"})
     _require_active_coaching_subscription(workspace_id=workspace_id, session=session)
-    api_key = str(os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY") or "").strip()
+    api_key, api_key_source = _resolve_llm_api_key()
     base_url = str(os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").strip()
     provider_ok, provider_message = _check_llm_provider_reachability(base_url=base_url, api_key=api_key)
     lb_ok, lb_msg = lakebase_health()
@@ -3702,6 +3755,7 @@ def coaching_health_readiness(workspace_id: str, session=Depends(get_current_ses
             "provider_reachable": provider_ok,
             "provider_message": provider_message,
             "base_url": base_url,
+            "api_key_source": api_key_source,
             "backend_health": backend_health,
             "lakebase_ok": lb_ok,
             "lakebase_message": lb_msg,
