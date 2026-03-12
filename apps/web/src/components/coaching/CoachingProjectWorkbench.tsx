@@ -238,10 +238,35 @@ const DEFAULT_DRAFT: IntakeDraft = {
   timelineWeeks: "8",
 };
 
+function sanitizeResumeText(rawText: string): string {
+  return String(rawText || "")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, " ")
+    .replace(/[\uFFFD]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function sanitizeResumeLine(rawLine: string): string {
+  return String(rawLine || "")
+    .replace(/[\u0000-\u001F\u007F]/g, " ")
+    .replace(/[\uFFFD]/g, " ")
+    .replace(/[\u2022\-\*]+/g, " ")
+    .replace(/[^\x20-\x7E\u00A0-\u024F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function looksCorruptedResumeText(rawText: string): boolean {
+  const text = String(rawText || "");
+  if (!text.trim()) return true;
+  const weirdMatches = text.match(/[^\x09\x0A\x0D\x20-\x7E\u00A0-\u024F]/g) || [];
+  return (weirdMatches.length / Math.max(1, text.length)) > 0.12;
+}
+
 function deriveResumeHighlights(rawText: string): string[] {
   const lines = rawText
     .split(/\r?\n/)
-    .map((line) => line.replace(/[\u2022\-\*]+/g, "").trim())
+    .map((line) => sanitizeResumeLine(line))
     .filter((line) => line.length > 24);
 
   const ranked = lines
@@ -559,6 +584,8 @@ function uiErrorMessage(error: unknown, rateLimitConfig: RateLimitUiConfig): str
     const waitFor = error.retryAfterSeconds ?? rateLimitConfig.defaultRetrySeconds;
     return `You have hit a temporary request limit. Wait ${formatRetryWindow(waitFor)}, then retry.`;
   }
+  if (error instanceof ApiError && error.message) return error.message;
+  if (message) return message;
   return "We hit a request issue. Please retry.";
 }
 
@@ -1527,22 +1554,83 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
     }, 120);
 
     try {
-      const rawText = await file.text();
+      await ensureCoachingApiSession();
+      const validation = await api.coachingResumeValidate({
+        workspace_id: draft.workspaceId,
+        filename: file.name,
+        content_type: file.type,
+        size_bytes: file.size,
+      });
+      if (!validation.ok) {
+        throw new Error(validation.message || "Resume file validation failed.");
+      }
+
       setResumeUploadState({ phase: "parsing", progress: 95, message: "Parsing resume for highlights..." });
-      const highlights = deriveResumeHighlights(rawText);
-      const resolvedHighlights = highlights.length ? highlights : ["Add one achievement highlight from your resume"];
-      const signalSummary = deriveResumeSignalSummary(rawText, resolvedHighlights);
-      setDraft((prev) => ({ ...prev, resumeHighlights: resolvedHighlights }));
-      setResumeParseConfidence(signalSummary.confidence);
-      setResumeStrengthSignals(signalSummary.strengths);
-      setResumeGapSignals(signalSummary.gaps);
-      setResumeUploadState({ phase: "ready", progress: 100, message: `Parsed ${highlights.length || 1} highlight${highlights.length === 1 ? "" : "s"}.` });
-      trackConversionEvent({ name: "resume_parse_completed", workspaceId: draft.workspaceId, details: { confidence: signalSummary.confidence, highlights: resolvedHighlights.length } });
+      const uploaded = await api.coachingResumeUpload({ workspace_id: draft.workspaceId, file });
+      if (!uploaded.ok) {
+        throw new Error(uploaded.message || "Resume upload/parse failed.");
+      }
+
+      const parsedSummary = (uploaded.resume_parse_summary || {}) as Record<string, any>;
+      const serverHighlights = [
+        ...(Array.isArray(parsedSummary.strengths) ? parsedSummary.strengths : []),
+        ...(Array.isArray(parsedSummary.project_experience_keywords) ? parsedSummary.project_experience_keywords : []),
+      ]
+        .map((line) => sanitizeResumeLine(String(line || "")))
+        .filter(Boolean);
+
+      const cleanResumeText = sanitizeResumeText(String(uploaded.resume_text || ""));
+      const localHighlights = deriveResumeHighlights(cleanResumeText);
+      const resolvedHighlights = Array.from(new Set([...(serverHighlights || []), ...(localHighlights || [])])).slice(0, 6);
+      const finalHighlights = resolvedHighlights.length ? resolvedHighlights : ["Add one achievement highlight from your resume"];
+
+      const signalSummary = deriveResumeSignalSummary(cleanResumeText, finalHighlights);
+      const parseConfidence = Number(parsedSummary.parse_confidence || signalSummary.confidence || 0);
+      const parseWarning = String(parsedSummary.parse_warning || "").trim();
+      const corrupted = looksCorruptedResumeText(String(uploaded.resume_text || ""));
+
+      setDraft((prev) => ({ ...prev, resumeHighlights: finalHighlights }));
+      setResumeParseConfidence(Math.max(0, Math.min(100, parseConfidence)));
+      setResumeStrengthSignals(
+        (Array.isArray(parsedSummary.strengths) ? parsedSummary.strengths : signalSummary.strengths)
+          .map((line) => sanitizeResumeLine(String(line || "")))
+          .filter(Boolean)
+          .slice(0, 6)
+      );
+      setResumeGapSignals(
+        (Array.isArray(parsedSummary.gaps) ? parsedSummary.gaps : signalSummary.gaps)
+          .map((line) => sanitizeResumeLine(String(line || "")))
+          .filter(Boolean)
+          .slice(0, 6)
+      );
+
+      const warningParts: string[] = [];
+      if (parseWarning) warningParts.push(parseWarning);
+      if (corrupted) warningParts.push("Detected noisy characters from the source file. Please quickly review highlights before submit.");
+      const warningText = warningParts.length ? ` ${warningParts.join(" ")}` : "";
+      setResumeUploadState({
+        phase: "ready",
+        progress: 100,
+        message: `Parsed ${finalHighlights.length} highlight${finalHighlights.length === 1 ? "" : "s"}.${warningText}`.trim(),
+      });
+      trackConversionEvent({ name: "resume_parse_completed", workspaceId: draft.workspaceId, details: { confidence: parseConfidence, highlights: finalHighlights.length, parse_warning: parseWarning || undefined } });
     } catch (e: any) {
+      try {
+        const rawText = await file.text();
+        const cleanText = sanitizeResumeText(rawText);
+        const highlights = deriveResumeHighlights(cleanText);
+        const resolvedHighlights = highlights.length ? highlights : ["Add one achievement highlight from your resume"];
+        const signalSummary = deriveResumeSignalSummary(cleanText, resolvedHighlights);
+        setDraft((prev) => ({ ...prev, resumeHighlights: resolvedHighlights }));
+        setResumeParseConfidence(signalSummary.confidence);
+        setResumeStrengthSignals(signalSummary.strengths);
+        setResumeGapSignals(signalSummary.gaps);
+      } catch {
+        setResumeParseConfidence(0);
+        setResumeStrengthSignals([]);
+        setResumeGapSignals(["Paste at least 3 achievement highlights manually to continue."]);
+      }
       setResumeUploadState({ phase: "error", progress: 100, message: e?.message || "Could not parse that file. Try .txt, .md, .docx, or paste highlights manually." });
-      setResumeParseConfidence(0);
-      setResumeStrengthSignals([]);
-      setResumeGapSignals(["Paste at least 3 achievement highlights manually to continue."]);
       trackConversionEvent({ name: "resume_parse_failed", workspaceId: draft.workspaceId, details: { reason: e?.message || "parse_error" } });
     } finally {
       window.clearInterval(timer);
@@ -2133,8 +2221,11 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
             {readinessState.readiness && (
               <div style={{ display: "grid", gap: 6, fontSize: 12 }}>
                 <div>LLM key: <strong>{readinessState.readiness.llm_key_present ? "present" : "missing"}</strong></div>
+                <div>Provider: <strong>{readinessState.readiness.provider_reachable ? "reachable" : "unreachable"}</strong></div>
+                <div style={{ color: "var(--color-text-muted)", overflowWrap: "anywhere", wordBreak: "break-word" }}>{readinessState.readiness.provider_message || "No provider details."}</div>
+                <div style={{ color: "var(--color-text-muted)", overflowWrap: "anywhere", wordBreak: "break-word" }}>Base URL: {readinessState.readiness.base_url || "https://api.openai.com/v1"}</div>
                 <div>Lakebase: <strong>{readinessState.readiness.lakebase_ok ? "healthy" : "unhealthy"}</strong></div>
-                <div style={{ color: "var(--color-text-muted)" }}>{readinessState.readiness.lakebase_message || "No lakebase details."}</div>
+                <div style={{ color: "var(--color-text-muted)", overflowWrap: "anywhere", wordBreak: "break-word" }}>{readinessState.readiness.lakebase_message || "No lakebase details."}</div>
               </div>
             )}
           </div>
@@ -2667,7 +2758,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                         <div style={{ fontSize: 11, color: "var(--color-text-muted)", marginBottom: 4 }}><strong>Editable strengths</strong></div>
                         <div style={{ display: "grid", gap: 6 }}>
                           {resumeStrengthSignals.length ? resumeStrengthSignals.map((signal, idx) => (
-                            <div key={`resume-strength-${idx}`} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 6 }}>
+                            <div key={`resume-strength-${idx}`} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 6 }}>
                               <input
                                 value={signal}
                                 onChange={(e) => setResumeStrengthSignals((prev) => prev.map((item, i) => i === idx ? e.target.value : item))}
@@ -2682,7 +2773,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                         <div style={{ fontSize: 11, color: "var(--color-text-muted)", marginBottom: 4 }}><strong>Editable gaps to close</strong></div>
                         <div style={{ display: "grid", gap: 6 }}>
                           {resumeGapSignals.length ? resumeGapSignals.map((signal, idx) => (
-                            <div key={`resume-gap-${idx}`} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 6 }}>
+                            <div key={`resume-gap-${idx}`} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 6 }}>
                               <input
                                 value={signal}
                                 onChange={(e) => setResumeGapSignals((prev) => prev.map((item, i) => i === idx ? e.target.value : item))}
@@ -2703,7 +2794,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                   <div style={{ marginTop: 6, fontSize: 12 }}><strong>Strength signals:</strong> {resumeStrengthSignals.filter((x) => x.trim()).length || 0}</div>
                   <div style={{ marginTop: 2, fontSize: 12 }}><strong>Gap signals:</strong> {resumeGapSignals.filter((x) => x.trim()).length || 0}</div>
                   <div style={{ marginTop: 2, fontSize: 12 }}><strong>Highlight bullets:</strong> {draft.resumeHighlights.filter((x) => x.trim()).length || 0}</div>
-                  {buildCombinedProfile(draft) && <div style={{ marginTop: 6, fontSize: 11, color: "var(--color-text-muted)", whiteSpace: "pre-wrap" }}>{buildCombinedProfile(draft)}</div>}
+                  {buildCombinedProfile(draft) && <div style={{ marginTop: 6, fontSize: 11, color: "var(--color-text-muted)", whiteSpace: "pre-wrap", overflowWrap: "anywhere", wordBreak: "break-word" }}>{buildCombinedProfile(draft)}</div>}
                 </div>
 
                 <div className="card" style={{ padding: 10 }}>
@@ -2711,7 +2802,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                   <div style={{ fontSize: 11, color: "var(--color-text-muted)", marginTop: 4 }}>Tune these before submit so reviewers see the strongest evidence.</div>
                   <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
                     {draft.resumeHighlights.map((highlight, idx) => (
-                      <div key={`resume-highlight-${idx}`} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 6 }}>
+                      <div key={`resume-highlight-${idx}`} style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 6 }}>
                         <input
                           value={highlight}
                           onChange={(e) => setDraft((prev) => ({ ...prev, resumeHighlights: prev.resumeHighlights.map((item, i) => i === idx ? e.target.value : item) }))}
