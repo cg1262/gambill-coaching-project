@@ -2462,6 +2462,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
           </>
           )}
 
+          <div className="coaching-workbench-grid">
           {showIntake && (
           <>
           <h4>Coaching Project Intake</h4>
@@ -3123,6 +3124,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
           </div>
           </>
           )}
+          </div>
         </>
       )}
     </div>
