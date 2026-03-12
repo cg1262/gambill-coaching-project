@@ -87,5 +87,6 @@ def test_coaching_health_readiness(monkeypatch):
     assert "readiness" in body
     assert body["readiness"]["api_key_present"] is True
     assert body["readiness"]["provider_reachable"] is True
+    assert body["readiness"]["api_key_source"] == "OPENAI_API_KEY"
     assert body["readiness"]["backend_health"]["ok"] is True
     app.dependency_overrides = {}

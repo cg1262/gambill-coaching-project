@@ -392,6 +392,17 @@ input:focus-visible, select:focus-visible, button:focus-visible {
   gap: 10px;
 }
 
+.coaching-shell .coaching-input-grid > * {
+  min-width: 0;
+}
+
+.coaching-shell input:not([type="checkbox"]):not([type="radio"]),
+.coaching-shell textarea,
+.coaching-shell select {
+  min-width: 0;
+}
+
+
 .coaching-panel,
 .coaching-shell .card {
   background: var(--coaching-panel-bg);
