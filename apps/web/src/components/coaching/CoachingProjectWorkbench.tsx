@@ -30,6 +30,25 @@ type QualityActionableReason = {
   suggested_fix: string;
 };
 
+type MetaRubricGateAttempt = {
+  archetype: string;
+  overallScore: number;
+};
+
+type MetaRubricGateSummary = {
+  threshold: number;
+  initialOverallScore: number;
+  finalOverallScore: number;
+  metThresholdInitially: boolean;
+  metThresholdFinal: boolean;
+  reprocessed: boolean;
+  reprocessAttempts: MetaRubricGateAttempt[];
+  selectedArchetype: string;
+  status: string;
+  maxReprocessAttempts?: number;
+  archetypeOrder: string[];
+};
+
 type IntakeDraft = {
   workspaceId: string;
   candidateName: string;
@@ -470,6 +489,51 @@ function safeExternalUrl(url?: string): { safe: boolean; reason?: string; normal
   } catch {
     return { safe: false, reason: "invalid_url" };
   }
+}
+
+function toMetaRubricGateSummary(raw: unknown): MetaRubricGateSummary | null {
+  if (!raw || typeof raw !== "object") return null;
+  const row = raw as Record<string, any>;
+  const attemptsSrc = Array.isArray(row.reprocess_attempts) ? row.reprocess_attempts : [];
+  const attempts: MetaRubricGateAttempt[] = attemptsSrc
+    .slice(0, 8)
+    .map((item: any) => ({
+      archetype: String(item?.archetype || "").trim().toLowerCase(),
+      overallScore: Number(item?.overall_score || 0),
+    }))
+    .filter((item: MetaRubricGateAttempt) => item.archetype.length > 0);
+  const archetypeOrder = Array.isArray(row.archetype_order)
+    ? row.archetype_order.map((item: any) => String(item || "").trim().toLowerCase()).filter(Boolean)
+    : [];
+  const maxReprocessAttempts = Number(row.max_reprocess_attempts || 0);
+
+  return {
+    threshold: Number(row.threshold || 0),
+    initialOverallScore: Number(row.initial_overall_score || 0),
+    finalOverallScore: Number(row.final_overall_score || 0),
+    metThresholdInitially: Boolean(row.met_threshold_initially),
+    metThresholdFinal: Boolean(row.met_threshold_final),
+    reprocessed: Boolean(row.reprocessed),
+    reprocessAttempts: attempts,
+    selectedArchetype: String(row.selected_archetype || "").trim().toLowerCase(),
+    status: String(row.status || "").trim().toLowerCase(),
+    maxReprocessAttempts: Number.isFinite(maxReprocessAttempts) && maxReprocessAttempts > 0 ? maxReprocessAttempts : undefined,
+    archetypeOrder,
+  };
+}
+
+function formatGateStatusLabel(status: string): string {
+  const normalized = String(status || "").trim().toLowerCase();
+  if (!normalized) return "unknown";
+  return normalized.replace(/_/g, " ");
+}
+
+function gateStatusTone(status: string): "success" | "warning" | "error" | "info" {
+  const normalized = String(status || "").trim().toLowerCase();
+  if (normalized.includes("pass")) return "success";
+  if (normalized.includes("below")) return "warning";
+  if (normalized.includes("no_improvement")) return "error";
+  return "info";
 }
 
 function isUnauthorizedError(message?: string): boolean {
@@ -970,6 +1034,18 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
     ];
   }, [scaffold]);
 
+  const metaRubricGate = useMemo(() => {
+    return toMetaRubricGateSummary((generationState.generationMeta || {}).meta_rubric_gate);
+  }, [generationState.generationMeta]);
+
+  const reviewMetaRubricGate = useMemo(() => {
+    const latestRun = selectedSubmissionRuns[0] || {};
+    const validation = (latestRun.validation_json || {}) as Record<string, any>;
+    const fromRun = toMetaRubricGateSummary(((validation.generation_meta || {}) as Record<string, any>).meta_rubric_gate);
+    if (fromRun) return fromRun;
+    return toMetaRubricGateSummary((generationState.generationMeta || {}).meta_rubric_gate);
+  }, [selectedSubmissionRuns, generationState.generationMeta]);
+
   const qualityGuidance = useMemo(() => {
     const q = generationState.quality || {};
     const diagnostics = q.quality_diagnostics || {};
@@ -1083,11 +1159,17 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
     }
     selectedSubmissionRuns.forEach((run: any) => {
       const status = String(run.run_status || "unknown");
+      const validation = (run.validation_json || {}) as Record<string, any>;
+      const gate = toMetaRubricGateSummary(((validation.generation_meta || {}) as Record<string, any>).meta_rubric_gate);
+      const detailBits = [
+        String(validation.auto_revised ? "Auto-revised once" : "No auto-revision"),
+        gate ? `Gate: ${formatGateStatusLabel(gate.status)} (${gate.initialOverallScore}→${gate.finalOverallScore}, threshold ${gate.threshold})` : "",
+      ].filter(Boolean);
       events.push({
         id: String(run.run_id || run.id || Math.random()),
         at: String(run.created_at || run.run_at || ""),
         label: `Generation run (${status})`,
-        detail: String((run.validation_json || {}).auto_revised ? "Auto-revised once" : "No auto-revision"),
+        detail: detailBits.join(" | "),
         tone: status === "completed" ? "success" : status.includes("review") ? "warning" : "info",
       });
     });
@@ -1639,11 +1721,32 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
         }));
       }
       if (out.latest_generation_run) {
+        const latestRun = out.latest_generation_run as Record<string, any>;
+        const latestValidation = ((latestRun.validation_json || {}) as Record<string, any>);
+        const latestQualityFlags = ((latestValidation.quality_flags || {}) as Record<string, any>);
+        const latestGenerationMeta = ((latestValidation.generation_meta || {}) as Record<string, any>);
+        const latestQuality = ((latestValidation.quality || {}) as Record<string, any>);
+        const latestSow = latestRun.sow_json as Record<string, any> | undefined;
+        if (latestSow && typeof latestSow === "object") {
+          setScaffold(mapSowToScaffold(latestSow));
+        }
+        const latestMode = String(latestQualityFlags.generation_mode || "").toLowerCase();
+        setGenerationState({
+          running: false,
+          message: `Loaded latest run (${String(latestRun.run_status || "unknown")}).`,
+          sourceMode: Boolean(latestQualityFlags.fallback_used) || latestMode === "fallback_scaffold" ? "fallback" : "llm",
+          qualityFlags: latestQualityFlags,
+          generationMeta: latestGenerationMeta,
+          quality: latestQuality,
+        });
         setStageState({
           intakeParsed: true,
           sowGenerated: true,
           validated: String(out.latest_generation_run.run_status || "").toLowerCase() === "completed",
         });
+      } else {
+        setScaffold(null);
+        setGenerationState({ running: false, message: "No prior generation run for this submission yet." });
       }
     } catch (e: any) {
       if (reqId !== submissionDetailReqRef.current) return;
@@ -2235,6 +2338,29 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                         </div>
                       </div>
 
+                      {reviewMetaRubricGate && (
+                        <div className="card" style={{ padding: 8, border: "1px solid var(--color-border-strong)" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                            <strong>Meta-Rubric Gate</strong>
+                            <span className={`badge ${gateStatusTone(reviewMetaRubricGate.status)}`}>{formatGateStatusLabel(reviewMetaRubricGate.status)}</span>
+                          </div>
+                          <div style={{ display: "grid", gap: 4, fontSize: 12, marginTop: 6 }}>
+                            <div><strong>Threshold:</strong> {reviewMetaRubricGate.threshold}</div>
+                            <div><strong>Initial score:</strong> {reviewMetaRubricGate.initialOverallScore}</div>
+                            <div><strong>Final score:</strong> {reviewMetaRubricGate.finalOverallScore}</div>
+                            <div><strong>Selected archetype:</strong> {reviewMetaRubricGate.selectedArchetype || "unknown"}</div>
+                            <div><strong>Reprocessed:</strong> {reviewMetaRubricGate.reprocessed ? "yes" : "no"}</div>
+                            {reviewMetaRubricGate.maxReprocessAttempts ? <div><strong>Attempt limit:</strong> {reviewMetaRubricGate.maxReprocessAttempts}</div> : null}
+                            {reviewMetaRubricGate.reprocessAttempts.length > 0 ? (
+                              <div>
+                                <strong>Attempts:</strong>{" "}
+                                {reviewMetaRubricGate.reprocessAttempts.map((attempt) => `${attempt.archetype}:${attempt.overallScore}`).join(" | ")}
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      )}
+
                       <div className="card" style={{ padding: 8 }}>
                         <strong>Coach Status + Notes</strong>
                         <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap", alignItems: "center" }}>
@@ -2774,6 +2900,30 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                     </span>
                   ))}
                 </div>
+
+                {metaRubricGate && (
+                  <div className="card" style={{ padding: 10, marginBottom: 10, border: "1px solid var(--color-border-strong)" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <strong>Project Generation Meta-Rubric Gate</strong>
+                      <span className={`badge ${gateStatusTone(metaRubricGate.status)}`}>{formatGateStatusLabel(metaRubricGate.status)}</span>
+                    </div>
+                    <div style={{ display: "grid", gap: 4, fontSize: 12, marginTop: 6 }}>
+                      <div><strong>Threshold:</strong> {metaRubricGate.threshold}</div>
+                      <div><strong>Initial score:</strong> {metaRubricGate.initialOverallScore}</div>
+                      <div><strong>Final score:</strong> {metaRubricGate.finalOverallScore}</div>
+                      <div><strong>Selected archetype:</strong> {metaRubricGate.selectedArchetype || "unknown"}</div>
+                      <div><strong>Reprocessed:</strong> {metaRubricGate.reprocessed ? "yes" : "no"}</div>
+                      {metaRubricGate.maxReprocessAttempts ? <div><strong>Attempt limit:</strong> {metaRubricGate.maxReprocessAttempts}</div> : null}
+                      {metaRubricGate.archetypeOrder.length > 0 ? <div><strong>Archetype order:</strong> {metaRubricGate.archetypeOrder.join(" → ")}</div> : null}
+                      {metaRubricGate.reprocessAttempts.length > 0 ? (
+                        <div>
+                          <strong>Attempts:</strong>{" "}
+                          {metaRubricGate.reprocessAttempts.map((attempt) => `${attempt.archetype}:${attempt.overallScore}`).join(" | ")}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                )}
 
                 {viewerTab === "charter" && (
                   <div style={{ display: "grid", gap: 10 }}>

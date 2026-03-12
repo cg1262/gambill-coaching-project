@@ -50,8 +50,10 @@ npm run build:clean
 
 ## Actionable Runtime Remediation Flow
 ```bash
+npm run runtime:doctor
 npm run runtime:check
 ```
+- `runtime:doctor` prints required vs detected versions and exact next commands.
 - If runtime check fails:
   1. switch to Node `20.11.1` (`.nvmrc` / Volta pin)
   2. confirm npm is `10.x`

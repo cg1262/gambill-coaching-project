@@ -1840,6 +1840,53 @@ def save_coaching_generation_run(
             conn.commit()
 
 
+def get_coaching_generation_run(run_id: str) -> dict[str, Any] | None:
+    if not is_configured():
+        return None
+
+    if _using_duckdb():
+        with lakebase_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT *
+                FROM coaching_generation_runs
+                WHERE run_id = ?
+                LIMIT 1
+                """,
+                [run_id],
+            ).fetchall()
+            if not rows:
+                return None
+            cols = [d[0] for d in conn.description]
+            row = dict(zip(cols, rows[0]))
+    else:
+        import psycopg
+        with lakebase_connection() as conn:
+            with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM coaching_generation_runs
+                    WHERE run_id = %s
+                    LIMIT 1
+                    """,
+                    (run_id,),
+                )
+                dbrow = cur.fetchone()
+                row = dict(dbrow) if dbrow else None
+                if not row:
+                    return None
+
+    for key in ["parsed_jobs_json", "sow_json", "validation_json"]:
+        payload = row.get(key)
+        if isinstance(payload, str):
+            try:
+                row[key] = json.loads(payload)
+            except Exception:
+                row[key] = [] if key == "parsed_jobs_json" else {}
+    return row
+
+
 def get_latest_coaching_generation_run(submission_id: str) -> dict[str, Any] | None:
     if not is_configured():
         return None
