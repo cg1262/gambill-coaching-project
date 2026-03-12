@@ -50,6 +50,9 @@ For each client submission, generate a structured SOW including:
 cd apps/api
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+# Option A: pass key from your shell session
+$env:OPENAI_API_KEY="your-key"
+# Option B: put OPENAI_API_KEY=... in repo-root .env (auto-loaded by API)
 .\.venv\Scripts\python.exe -m uvicorn main:app --reload --port 8000
 ```
 

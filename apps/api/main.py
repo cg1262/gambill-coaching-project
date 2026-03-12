@@ -109,6 +109,26 @@ from webhook_security import parse_webhook_body, verify_webhook_signature
 from webhook_alerts import INVALID_WEBHOOK_SIGNATURE_TRACKER, InvalidSignatureAlertEvent, dispatch_invalid_webhook_signature_alert
 from admin_runtime_config import runtime_rate_limit_snapshot, runtime_rate_limit_update
 
+# Load local environment variables from .env files (if present) without overriding shell env.
+def _load_env_file(path: Path) -> None:
+    if not path.exists() or not path.is_file():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        cleaned = value.strip().strip("\"'")
+        os.environ[key] = cleaned
+
+
+_repo_root = Path(__file__).resolve().parents[2]
+_load_env_file(_repo_root / ".env")
+_load_env_file(Path.cwd() / ".env")
+
 class _JsonFormatter(logging.Formatter):
     """JSON log formatter — no extra packages required."""
 
