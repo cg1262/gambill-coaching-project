@@ -1,0 +1,71 @@
+{
+  "summary": {
+    "workspace_id": "ws-e2e-llm-20260310141735",
+    "submission_id": "b9e1da2b-7625-43f2-b67d-c3a09ef8ec91",
+    "llm_ready": true,
+    "provider": "openai-compatible",
+    "model": "gpt-4o-mini",
+    "generation_mode": "fallback_scaffold",
+    "reason_codes": [
+      "VALIDATION_RETRY_APPLIED",
+      "QUALITY_FLOOR_REGEN_APPLIED",
+      "HARD_QUALITY_GATE_TRIGGERED",
+      "FINAL_FINDINGS_PRESENT"
+    ],
+    "quality_score": 86,
+    "project_title": "Taylor Walkthrough - GlobalMart Retail Intelligence Pipeline",
+    "failfast_codes": [
+      "DOMAIN_SOURCE_MISMATCH",
+      "LEGACY_STORY_REUSE_DETECTED",
+      "PROJECT_STORY_GENERIC",
+      "SECTION_ORDER_INVALID"
+    ]
+  },
+  "steps": [
+    {
+      "step": "auth_login",
+      "status_code": 200,
+      "ok": true
+    },
+    {
+      "step": "llm_readiness",
+      "status_code": 200,
+      "ok": true
+    },
+    {
+      "step": "subscription_status_before_sync",
+      "status_code": 200,
+      "ok": true
+    },
+    {
+      "step": "subscription_sync",
+      "status_code": 200,
+      "ok": true
+    },
+    {
+      "step": "subscription_status_after_sync",
+      "status_code": 200,
+      "ok": true
+    },
+    {
+      "step": "intake_submit",
+      "status_code": 200,
+      "ok": true
+    },
+    {
+      "step": "sow_generate",
+      "status_code": 200,
+      "ok": true
+    },
+    {
+      "step": "sow_export_json",
+      "status_code": 200,
+      "ok": true
+    },
+    {
+      "step": "sow_validate_failfast_demo",
+      "status_code": 200,
+      "ok": true
+    }
+  ]
+}
