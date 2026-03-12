@@ -14,7 +14,12 @@ from .constants import (
     DATA_SOURCE_CANDIDATES,
     STYLE_ANCHORS,
 )
-from .sow_validation import evaluate_sow_structure, _build_interview_ready_package
+from .sow_validation import (
+    evaluate_sow_structure,
+    _build_interview_ready_package,
+    validate_sow_payload,
+    compute_sow_quality_score,
+)
 
 
 def _bounded_int(value: Any, default: int, minimum: int, maximum: int) -> int:
@@ -1467,6 +1472,80 @@ def generate_sow_with_llm(
                 if attempts <= max_retries:
                     continue
                 break
+
+            review_meta: dict[str, Any] = {
+                "attempted": False,
+                "applied": False,
+                "reason": "disabled",
+            }
+            review_enabled = str(os.getenv("COACHING_SOW_ENABLE_REVIEW_PASS") or "1").strip().lower() not in {"0", "false", "no", "off"}
+            if review_enabled:
+                review_meta = {
+                    "attempted": True,
+                    "applied": False,
+                    "reason": "no_improvement",
+                }
+                try:
+                    findings_before = validate_sow_payload(sow)
+                    quality_before = compute_sow_quality_score(sow, findings_before)
+                    review_payload = {
+                        "candidate": prompt_payload_base.get("candidate") or {},
+                        "project_strategy": project_strategy,
+                        "draft_sow": sow,
+                        "draft_quality": {
+                            "score": int(quality_before.get("score") or 0),
+                            "finding_count": int(quality_before.get("finding_count") or 0),
+                            "findings": findings_before[:20],
+                        },
+                        "required_contract": prompt_payload.get("required_contract") or {},
+                        "hard_rules": [
+                            "Return JSON only",
+                            "Preserve required top-level section order and contract shape",
+                            "Increase specificity: KPI thresholds, milestone acceptance checks, data source ingestion instructions",
+                            "Do not include prompt/schema meta language in output",
+                        ],
+                    }
+                    reviewed_sow, review_resp = _request_llm_json(
+                        client=client,
+                        base_url=base_url,
+                        api_key=api_key,
+                        model=model,
+                        system_prompt="You are a principal QA editor for premium data engineering project charters. Critique the draft SOW against the contract and improve weak sections while preserving valid structure. Return only improved SOW JSON.",
+                        user_payload=review_payload,
+                    )
+                    reviewed_structure = evaluate_sow_structure(reviewed_sow)
+                    if not reviewed_structure.get("missing_sections") and reviewed_structure.get("order_valid"):
+                        findings_after = validate_sow_payload(reviewed_sow)
+                        quality_after = compute_sow_quality_score(reviewed_sow, findings_after)
+                        improved = (
+                            int(quality_after.get("score") or 0) > int(quality_before.get("score") or 0)
+                            or int(quality_after.get("finding_count") or 0) < int(quality_before.get("finding_count") or 0)
+                        )
+                        review_meta = {
+                            "attempted": True,
+                            "applied": bool(improved),
+                            "reason": "improved" if improved else "no_improvement",
+                            "quality_before": quality_before,
+                            "quality_after": quality_after,
+                            "review_finish_reason": (((review_resp.get("choices") or [{}])[0].get("finish_reason")) or ""),
+                            "usage": review_resp.get("usage") or {},
+                        }
+                        if improved:
+                            sow = reviewed_sow
+                    else:
+                        review_meta = {
+                            "attempted": True,
+                            "applied": False,
+                            "reason": "review_schema_invalid",
+                        }
+                except Exception as review_error:
+                    review_meta = {
+                        "attempted": True,
+                        "applied": False,
+                        "reason": "review_error",
+                        "error": str(review_error),
+                    }
+
             return {
                 "ok": True,
                 "sow": sow,
@@ -1480,6 +1559,7 @@ def generate_sow_with_llm(
                     "error_type": None,
                     "generation_pipeline": "analysis_then_charter",
                     "strategy": strategy_meta,
+                    "review": review_meta,
                 },
             }
         except httpx.HTTPStatusError as e:
@@ -1532,6 +1612,11 @@ def generate_sow_with_llm(
                 "provider": "fallback",
                 "reason_code": "STRATEGY_STAGE_FALLBACK",
                 "project_strategy": strategy_fallback,
+            },
+            "review": {
+                "attempted": False,
+                "applied": False,
+                "reason": "generator_fallback",
             },
         },
     }

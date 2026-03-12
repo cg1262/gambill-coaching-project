@@ -1,3 +1,4 @@
+import base64
 from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
@@ -111,4 +112,26 @@ def test_export_includes_interview_ready_sections(monkeypatch):
     content = res.json()["content"]
     assert "Interview-ready STAR Bullets" in content
     assert "Portfolio Checklist" in content
+    app.dependency_overrides = {}
+
+
+def test_export_supports_docx_download_payload(monkeypatch):
+    app.dependency_overrides[get_current_session] = _override_session("editor")
+    monkeypatch.setattr(main, "_require_active_coaching_subscription", lambda **kwargs: {"subscription_status": "active"})
+    monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: {"submission_id": submission_id, "workspace_id": "ws-1", "applicant_email": "candidate@example.com"})
+    monkeypatch.setattr(main, "save_coaching_conversion_event", lambda **kwargs: None)
+
+    client = TestClient(app)
+    sow = main.build_sow_skeleton({"applicant_name": "A", "preferences": {}}, [])
+    res = client.post(
+        "/coaching/sow/export",
+        json={"workspace_id": "ws-1", "submission_id": "sub-1", "format": "docx", "sow": sow},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["format"] == "docx"
+    assert body["mime_type"] == main.DOCX_EXPORT_MIME
+    assert str(body["filename"]).endswith(".docx")
+    decoded = base64.b64decode(body["content_base64"])
+    assert decoded[:2] == b"PK"
     app.dependency_overrides = {}

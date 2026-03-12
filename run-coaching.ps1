@@ -83,7 +83,7 @@ function Ensure-WebRuntime {
   }
 
   if (-not ($nodeOk -and $npmOk)) {
-    throw "Web runtime still unsupported (node=$nodeV npm=$npmV). Install Volta and run: volta install node@$NodeVersion npm@$NpmVersion"
+    throw "Web runtime still unsupported (node=$nodeV npm=$npmV). Run 'npm --prefix apps/web run runtime:doctor' for exact remediation, then install Volta and run: volta install node@$NodeVersion npm@$NpmVersion"
   }
 
   Write-Host "[WEB] Runtime fixed: node $nodeV, npm $npmV" -ForegroundColor Green

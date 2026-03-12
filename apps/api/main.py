@@ -47,6 +47,7 @@ from coaching import (
     enforce_required_section_order,
     extract_resume_signals,
 )
+from coaching.sow_evaluation import evaluate_sow_with_reference_paths
 from db_lakebase import (
     healthcheck as lakebase_health,
     bootstrap_status as lakebase_bootstrap_status,
@@ -71,6 +72,7 @@ from db_lakebase import (
     list_coaching_intake_submissions,
     update_coaching_intake_preferences,
     save_coaching_generation_run,
+    get_coaching_generation_run,
     get_latest_coaching_generation_run,
     list_coaching_generation_runs,
     update_coaching_review_status,
@@ -323,6 +325,97 @@ def _safe_generation_meta(meta: dict[str, Any] | None) -> dict[str, Any]:
         out["finish_reason"] = str(src.get("finish_reason"))
     if safe_usage:
         out["usage"] = safe_usage
+
+    review_src = src.get("review") if isinstance(src.get("review"), dict) else None
+    if review_src:
+        safe_review: dict[str, Any] = {
+            "attempted": bool(review_src.get("attempted")),
+            "applied": bool(review_src.get("applied")),
+        }
+        reason = str(review_src.get("reason") or "").strip()
+        if reason:
+            safe_review["reason"] = reason
+
+        for key in ["quality_before", "quality_after"]:
+            block = review_src.get(key) if isinstance(review_src.get(key), dict) else None
+            if not block:
+                continue
+            safe_block: dict[str, Any] = {}
+            if isinstance(block.get("score"), (int, float)):
+                safe_block["score"] = int(block.get("score") or 0)
+            if isinstance(block.get("finding_count"), (int, float)):
+                safe_block["finding_count"] = int(block.get("finding_count") or 0)
+            if safe_block:
+                safe_review[key] = safe_block
+
+        review_usage_src = review_src.get("usage") if isinstance(review_src.get("usage"), dict) else {}
+        review_usage = {
+            key: int(value)
+            for key, value in review_usage_src.items()
+            if key in {"prompt_tokens", "completion_tokens", "total_tokens"} and isinstance(value, (int, float))
+        }
+        if review_usage:
+            safe_review["usage"] = review_usage
+
+        finish_reason = str(review_src.get("review_finish_reason") or "").strip()
+        if finish_reason:
+            safe_review["review_finish_reason"] = finish_reason
+
+        out["review"] = safe_review
+
+    gate_src = src.get("meta_rubric_gate") if isinstance(src.get("meta_rubric_gate"), dict) else None
+    if gate_src:
+        attempts_src = gate_src.get("reprocess_attempts") if isinstance(gate_src.get("reprocess_attempts"), list) else []
+        safe_attempts: list[dict[str, Any]] = []
+        for attempt in attempts_src[:8]:
+            if not isinstance(attempt, dict):
+                continue
+            archetype = str(attempt.get("archetype") or "").strip().lower()
+            if not archetype:
+                continue
+            try:
+                score = int(attempt.get("overall_score") or 0)
+            except Exception:
+                score = 0
+            safe_attempts.append({"archetype": archetype, "overall_score": score})
+
+        try:
+            threshold = int(gate_src.get("threshold") or 0)
+        except Exception:
+            threshold = 0
+        try:
+            initial_score = int(gate_src.get("initial_overall_score") or 0)
+        except Exception:
+            initial_score = 0
+        try:
+            final_score = int(gate_src.get("final_overall_score") or 0)
+        except Exception:
+            final_score = 0
+        try:
+            max_attempts = int(gate_src.get("max_reprocess_attempts") or 0)
+        except Exception:
+            max_attempts = 0
+
+        archetype_order_src = gate_src.get("archetype_order") if isinstance(gate_src.get("archetype_order"), list) else []
+        safe_order = [str(item).strip().lower() for item in archetype_order_src if str(item).strip()][:8]
+
+        safe_gate = {
+            "threshold": threshold,
+            "initial_overall_score": initial_score,
+            "final_overall_score": final_score,
+            "met_threshold_initially": bool(gate_src.get("met_threshold_initially")),
+            "met_threshold_final": bool(gate_src.get("met_threshold_final")),
+            "reprocessed": bool(gate_src.get("reprocessed")),
+            "reprocess_attempts": safe_attempts,
+            "selected_archetype": str(gate_src.get("selected_archetype") or "").strip().lower(),
+            "status": str(gate_src.get("status") or "").strip().lower(),
+        }
+        if max_attempts > 0:
+            safe_gate["max_reprocess_attempts"] = max_attempts
+        if safe_order:
+            safe_gate["archetype_order"] = safe_order
+
+        out["meta_rubric_gate"] = safe_gate
     return out
 
 
@@ -837,8 +930,16 @@ class CoachingSubscriptionStatusRequest(BaseModel):
 class CoachingSowExportRequest(BaseModel):
     workspace_id: str
     submission_id: str
-    sow: CoachingSowDraft
+    sow: CoachingSowDraft | None = None
+    run_id: str | None = None
     format: str = "markdown"  # markdown | json
+
+
+class CoachingSowEvaluateRequest(BaseModel):
+    workspace_id: str
+    sow: CoachingSowDraft | None = None
+    run_id: str | None = None
+    reference_doc_paths: list[str] = Field(default_factory=list, max_length=10)
 
 
 class CoachingReviewStatusUpdateRequest(BaseModel):
@@ -2931,6 +3032,41 @@ def coaching_sow_validate(req: CoachingSowValidateRequest, session=Depends(get_c
     }
 
 
+@app.post("/coaching/sow/evaluate")
+def coaching_sow_evaluate(req: CoachingSowEvaluateRequest, session=Depends(get_current_session)) -> dict:
+    assert_role(session, {"admin", "editor", "viewer"})
+    _require_active_coaching_subscription(workspace_id=req.workspace_id, session=session)
+
+    source = "request"
+    run_id = req.run_id
+    sow_payload: dict[str, Any] | None = req.sow.model_dump(mode="json", by_alias=True) if req.sow else None
+
+    if not sow_payload and run_id:
+        run = get_coaching_generation_run(run_id)
+        if not run:
+            return {"ok": False, "message": "generation run not found", "run_id": run_id}
+        if str(run.get("workspace_id") or "") != str(req.workspace_id or ""):
+            return {"ok": False, "message": "generation run workspace mismatch", "run_id": run_id}
+        sow_payload = dict(run.get("sow_json") or {})
+        source = "run"
+
+    if not sow_payload:
+        return {"ok": False, "message": "Provide sow or run_id"}
+
+    sow_payload, _ = sanitize_generated_sow(sow_payload)
+    sow_payload = ensure_interview_ready_package(sow_payload)
+    sow_payload = enforce_required_section_order(sow_payload)
+
+    evaluation = evaluate_sow_with_reference_paths(sow_payload, req.reference_doc_paths)
+    return {
+        "ok": True,
+        "workspace_id": req.workspace_id,
+        "run_id": run_id,
+        "source": source,
+        "evaluation": evaluation,
+    }
+
+
 @app.post("/coaching/resources/match")
 def coaching_resources_match(req: CoachingResourceMatchRequest, session=Depends(get_current_session)) -> dict:
     assert_role(session, {"admin", "editor"})
@@ -3010,7 +3146,22 @@ def coaching_sow_export(req: CoachingSowExportRequest, request: Request, session
         email=str(intake.get("applicant_email") or "").strip().lower() or None,
     )
 
-    sow_payload = req.sow.model_dump(mode="json", by_alias=True)
+    run_id = str(req.run_id or "").strip() or None
+    sow_payload: dict[str, Any] | None = req.sow.model_dump(mode="json", by_alias=True) if req.sow else None
+
+    if not sow_payload and run_id:
+        run = get_coaching_generation_run(run_id)
+        if not run:
+            return {"ok": False, "message": "generation run not found", "run_id": run_id}
+        if str(run.get("submission_id") or "") != str(req.submission_id or ""):
+            return {"ok": False, "message": "generation run submission mismatch", "run_id": run_id}
+        if str(run.get("workspace_id") or "") != str(req.workspace_id or ""):
+            return {"ok": False, "message": "generation run workspace mismatch", "run_id": run_id}
+        sow_payload = dict(run.get("sow_json") or {})
+
+    if not sow_payload:
+        return {"ok": False, "message": "Provide sow or run_id"}
+
     sow_payload, _ = sanitize_generated_sow(sow_payload)
     sow_payload = ensure_interview_ready_package(sow_payload)
     sow_payload = enforce_required_section_order(sow_payload)
@@ -3027,6 +3178,7 @@ def coaching_sow_export(req: CoachingSowExportRequest, request: Request, session
             "ok": True,
             "workspace_id": req.workspace_id,
             "submission_id": req.submission_id,
+            "run_id": run_id,
             "format": "json",
             "content": json.dumps(sow_payload, indent=2),
         }
@@ -3037,6 +3189,7 @@ def coaching_sow_export(req: CoachingSowExportRequest, request: Request, session
             "ok": True,
             "workspace_id": req.workspace_id,
             "submission_id": req.submission_id,
+            "run_id": run_id,
             "format": "docx",
             "filename": filename,
             "mime_type": DOCX_EXPORT_MIME,
@@ -3046,6 +3199,7 @@ def coaching_sow_export(req: CoachingSowExportRequest, request: Request, session
         "ok": True,
         "workspace_id": req.workspace_id,
         "submission_id": req.submission_id,
+        "run_id": run_id,
         "format": "markdown",
         "content": _render_sow_markdown(sow_payload),
     }

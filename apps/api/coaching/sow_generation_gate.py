@@ -6,7 +6,7 @@ from typing import Any
 from .sow_draft import build_sow_skeleton, generate_sow_with_llm as _base_generate_sow_with_llm
 from .sow_evaluation import evaluate_sow_output
 
-_ARCTYPE_ORDER = ["retail", "energy", "finance", "general"]
+_DEFAULT_ARCHETYPE_ORDER = ["retail", "energy", "finance", "general"]
 
 
 def _meta_rubric_threshold() -> int:
@@ -18,6 +18,33 @@ def _meta_rubric_threshold() -> int:
     return max(50, min(99, parsed))
 
 
+def _meta_rubric_archetype_order() -> list[str]:
+    raw = str(os.getenv("COACHING_META_RUBRIC_ARCHETYPE_ORDER") or "").strip().lower()
+    if not raw:
+        return list(_DEFAULT_ARCHETYPE_ORDER)
+
+    requested = [item.strip() for item in raw.split(",") if item.strip()]
+    allowed = set(_DEFAULT_ARCHETYPE_ORDER)
+    normalized: list[str] = []
+    for item in requested:
+        if item in allowed and item not in normalized:
+            normalized.append(item)
+    for item in _DEFAULT_ARCHETYPE_ORDER:
+        if item not in normalized:
+            normalized.append(item)
+    return normalized
+
+
+def _meta_rubric_max_reprocess_attempts(alternate_count: int) -> int:
+    default_attempts = max(0, int(alternate_count))
+    raw = str(os.getenv("COACHING_META_RUBRIC_MAX_REPROCESS_ATTEMPTS") or str(default_attempts)).strip()
+    try:
+        parsed = int(raw)
+    except Exception:
+        parsed = default_attempts
+    return max(0, min(default_attempts, parsed))
+
+
 def _safe_score(evaluation: dict[str, Any] | None) -> int:
     try:
         return int((evaluation or {}).get("overall_score") or 0)
@@ -26,9 +53,11 @@ def _safe_score(evaluation: dict[str, Any] | None) -> int:
 
 
 def _infer_archetype(strategy: dict[str, Any] | None, sow: dict[str, Any]) -> str:
+    archetype_order = _meta_rubric_archetype_order()
+    allowed = set(archetype_order)
     if isinstance(strategy, dict):
         archetype = str(strategy.get("archetype") or "").strip().lower()
-        if archetype in set(_ARCTYPE_ORDER):
+        if archetype in allowed:
             return archetype
 
     text = str(sow or {}).lower()
@@ -48,8 +77,9 @@ def _infer_archetype(strategy: dict[str, Any] | None, sow: dict[str, Any]) -> st
 
 
 def _alternate_archetypes(primary: str) -> list[str]:
+    archetype_order = _meta_rubric_archetype_order()
     normalized = str(primary or "").strip().lower()
-    return [name for name in _ARCTYPE_ORDER if name != normalized]
+    return [name for name in archetype_order if name != normalized]
 
 
 def generate_sow_with_llm(
@@ -80,9 +110,12 @@ def generate_sow_with_llm(
     best_score = initial_score
     selected_archetype = _infer_archetype(strategy, original_sow)
     attempts: list[dict[str, Any]] = []
+    alternate_archetypes = _alternate_archetypes(selected_archetype)
+    max_reprocess_attempts = _meta_rubric_max_reprocess_attempts(len(alternate_archetypes))
+    archetype_order = _meta_rubric_archetype_order()
 
     if initial_score < threshold:
-        for archetype in _alternate_archetypes(selected_archetype):
+        for archetype in alternate_archetypes[:max_reprocess_attempts]:
             strategy_override = dict(strategy)
             strategy_override["archetype"] = archetype
             candidate = build_sow_skeleton(
@@ -120,6 +153,8 @@ def generate_sow_with_llm(
         "reprocess_attempts": attempts,
         "selected_archetype": selected_archetype,
         "status": gate_status,
+        "max_reprocess_attempts": max_reprocess_attempts,
+        "archetype_order": archetype_order,
     }
 
     merged_meta = dict(llm_meta or {})

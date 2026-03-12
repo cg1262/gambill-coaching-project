@@ -198,6 +198,20 @@ export interface CoachingSowGenerateResult {
   quality?: Record<string, any>;
 }
 
+export type CoachingSowExportFormat = "markdown" | "json" | "docx";
+
+export interface CoachingSowExportResult {
+  ok: boolean;
+  message?: string;
+  workspace_id?: string;
+  submission_id?: string;
+  format?: CoachingSowExportFormat | string;
+  content?: string;
+  content_base64?: string;
+  filename?: string;
+  mime_type?: string;
+}
+
 export interface CoachingReviewStatusUpdateResult {
   ok: boolean;
   message?: string;
@@ -598,6 +612,13 @@ export const api = {
     parsed_jobs?: Record<string, any>[];
     regenerate_with_improvements?: boolean;
   }) => postJson<CoachingSowGenerateResult>("/coaching/sow/generate", payload),
+  coachingExportSow: (payload: {
+    workspace_id: string;
+    submission_id: string;
+    format: CoachingSowExportFormat;
+    run_id?: string;
+    sow?: Record<string, any>;
+  }) => postJson<CoachingSowExportResult>("/coaching/sow/export", payload),
   coachingSubscriptionSync: (payload: {
     workspace_id: string;
     provider?: string;

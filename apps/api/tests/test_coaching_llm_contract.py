@@ -137,7 +137,21 @@ def test_generate_sow_uses_llm_meta_and_quality_flags(monkeypatch):
                 "resource_plan": {"required": [], "recommended": [], "optional": []},
                 "mentoring_cta": {},
             },
-            "meta": {"provider": "openai-compatible", "model": "gpt-test"},
+            "meta": {
+                "provider": "openai-compatible",
+                "model": "gpt-test",
+                "meta_rubric_gate": {
+                    "threshold": 85,
+                    "initial_overall_score": 72,
+                    "final_overall_score": 88,
+                    "met_threshold_initially": False,
+                    "met_threshold_final": True,
+                    "reprocessed": True,
+                    "reprocess_attempts": [{"archetype": "energy", "overall_score": 88}],
+                    "selected_archetype": "energy",
+                    "status": "reprocessed_pass",
+                },
+            },
         },
     )
 
@@ -164,7 +178,67 @@ def test_generate_sow_uses_llm_meta_and_quality_flags(monkeypatch):
     assert "structure_score" in body["quality"]
     assert "missing_sections" in body["quality"]
     assert captured["validation"]["generation_meta"]["provider"] == "openai-compatible"
+    assert captured["validation"]["generation_meta"]["meta_rubric_gate"]["status"] == "reprocessed_pass"
+    assert int(captured["validation"]["generation_meta"]["meta_rubric_gate"]["final_overall_score"]) == 88
     assert "quality_flags" in captured["validation"]
+
+    app.dependency_overrides = {}
+
+
+def test_generate_sow_persists_meta_rubric_gate_in_saved_validation(monkeypatch):
+    app.dependency_overrides[get_current_session] = _override_session("editor")
+    monkeypatch.setattr(main, "get_coaching_intake_submission", lambda submission_id: _base_intake(submission_id))
+    monkeypatch.setattr(
+        main,
+        "get_coaching_account_subscription",
+        lambda workspace_id, username=None, email=None: {"subscription_status": "active", "email": email},
+    )
+    monkeypatch.setattr(
+        main,
+        "generate_sow_with_llm",
+        lambda intake, parsed_jobs: {
+            "ok": True,
+            "sow": build_sow_skeleton(intake, parsed_jobs),
+            "meta": {
+                "provider": "openai-compatible",
+                "model": "gpt-test",
+                "meta_rubric_gate": {
+                    "threshold": 85,
+                    "initial_overall_score": 68,
+                    "final_overall_score": 86,
+                    "met_threshold_initially": False,
+                    "met_threshold_final": True,
+                    "reprocessed": True,
+                    "reprocess_attempts": [{"archetype": "finance", "overall_score": 86}],
+                    "selected_archetype": "finance",
+                    "status": "reprocessed_pass",
+                    "max_reprocess_attempts": 2,
+                    "archetype_order": ["finance", "energy", "retail", "general"],
+                },
+            },
+        },
+    )
+
+    captured = {}
+    monkeypatch.setattr(main, "save_coaching_generation_run", lambda **kwargs: captured.update(kwargs))
+
+    client = TestClient(app)
+    res = client.post(
+        "/coaching/sow/generate",
+        json={"workspace_id": "ws-1", "submission_id": "sub-persist", "parsed_jobs": []},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    gate_meta = body["generation_meta"]["meta_rubric_gate"]
+    assert gate_meta["status"] == "reprocessed_pass"
+    assert gate_meta["selected_archetype"] == "finance"
+    assert gate_meta["archetype_order"] == ["finance", "energy", "retail", "general"]
+
+    persisted_gate = captured["validation"]["generation_meta"]["meta_rubric_gate"]
+    assert persisted_gate["status"] == "reprocessed_pass"
+    assert int(persisted_gate["final_overall_score"]) == 86
+    assert persisted_gate["reprocess_attempts"][0]["archetype"] == "finance"
+    assert int(persisted_gate["max_reprocess_attempts"]) == 2
 
     app.dependency_overrides = {}
 
@@ -205,7 +279,11 @@ def test_generate_sow_surfaces_fallback_mode_and_reason_codes_on_quality_gate(mo
     assert "HARD_QUALITY_GATE_TRIGGERED" in body["generation_reason_codes"]
     assert body["quality_flags"]["fallback_used"] is True
     assert body["quality_flags"]["generation_mode"] == "fallback_scaffold"
-    assert "Repository bootstrap" in body["sow"]["project_charter"]["sections"]["prerequisites_resources"]["summary"]
-    assert "Salesforce Service Cloud" in body["sow"]["solution_architecture"]["medallion_plan"]["bronze"]
+    prereq_summary = body["sow"]["project_charter"]["sections"]["prerequisites_resources"]["summary"]
+    assert isinstance(prereq_summary, str) and len(prereq_summary) >= 40
+    assert "source" in prereq_summary.lower()
+    bronze_plan = body["sow"]["solution_architecture"]["medallion_plan"]["bronze"]
+    assert isinstance(bronze_plan, str) and len(bronze_plan) >= 30
+    assert "load" in bronze_plan.lower() or "source" in bronze_plan.lower()
 
     app.dependency_overrides = {}

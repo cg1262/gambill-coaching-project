@@ -13,6 +13,7 @@
   "packageManager": "npm@10.8.2",
   "scripts": {
     "runtime:check": "node ./scripts/require-runtime.cjs",
+    "runtime:doctor": "node ./scripts/runtime-doctor.cjs",
     "runtime:test": "node --test ./scripts/require-runtime.test.cjs",
     "install:ci": "powershell -ExecutionPolicy Bypass -File ./scripts/install-ci.ps1",
     "verify:deterministic": "node ./scripts/require-runtime.cjs && powershell -ExecutionPolicy Bypass -File ./scripts/install-ci.ps1 && node ./node_modules/typescript/bin/tsc --noEmit && node ./scripts/next-build-safe.cjs && node ./scripts/next-build-safe.cjs",

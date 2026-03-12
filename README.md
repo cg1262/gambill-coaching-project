@@ -56,6 +56,7 @@ python -m venv .venv
 ### Web
 ```powershell
 cd apps/web
+npm run runtime:doctor
 npm install
 npm run dev
 ```
