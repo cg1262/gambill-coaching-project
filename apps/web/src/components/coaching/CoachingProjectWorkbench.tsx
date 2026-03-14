@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -152,19 +152,19 @@ const FEEDBACK_TAG_LABELS: Record<string, string> = {
 const QUICK_FEEDBACK_TEMPLATES: Array<{ id: string; label: string; tags: string[]; body: string }> = [
   {
     id: "revision-scope",
-    label: "Needs revision — tighten scope",
+    label: "Needs revision - tighten scope",
     tags: ["scope_clarity", "execution_risk"],
     body: "Your scope is promising, but it is currently too broad for the target timeline. Reduce to one measurable business KPI, one primary data source path, and one interview-ready milestone artifact per week.",
   },
   {
     id: "revision-architecture",
-    label: "Needs revision — architecture depth",
+    label: "Needs revision - architecture depth",
     tags: ["architecture_depth", "business_alignment"],
     body: "Please add deeper architecture rationale: clarify bronze/silver/gold responsibilities, quality checks by layer, and why this path improves business decision confidence.",
   },
   {
     id: "ready-approve",
-    label: "Ready — approve with evidence check",
+    label: "Ready - approve with evidence check",
     tags: ["storytelling"],
     body: "Strong revision. Before final send, verify each milestone includes one concrete deliverable, one success metric, and one evidence link for portfolio/interview narration.",
   },
@@ -579,7 +579,7 @@ function isRateLimitError(error: unknown): error is ApiError {
 
 function uiErrorMessage(error: unknown, rateLimitConfig: RateLimitUiConfig): string {
   const message = error instanceof Error ? error.message : String(error || "");
-  if (isUnauthorizedError(message)) return "Your session expired. Please sign in again.";
+  if (isUnauthorizedError(message)) return "Your session expired. Retry the request.";
   if (isRateLimitError(error)) {
     const waitFor = error.retryAfterSeconds ?? rateLimitConfig.defaultRetrySeconds;
     return `You have hit a temporary request limit. Wait ${formatRetryWindow(waitFor)}, then retry.`;
@@ -715,6 +715,15 @@ function buildResumeContext(draft: IntakeDraft, resumeStrengthSignals: string[],
   return lines.join("\n").slice(0, 12000);
 }
 
+function effectiveApplicantEmail(candidateEmail: string): string | undefined {
+  const normalized = String(candidateEmail || "").trim();
+  return normalized || undefined;
+}
+
+function normalizeApplicantEmailValue(candidateEmail?: string | null): string {
+  return String(candidateEmail || "").trim().toLowerCase();
+}
+
 function isLocalDemoHost() {
   if (typeof window === "undefined") return false;
   const host = window.location.hostname.toLowerCase();
@@ -757,6 +766,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   const [resumeGapSignals, setResumeGapSignals] = useState<string[]>([]);
   const resumeFileInputRef = useRef<HTMLInputElement | null>(null);
   const [scaffold, setScaffold] = useState<ProjectScaffold | null>(null);
+  const [rawSow, setRawSow] = useState<Record<string, any> | null>(null);
   const [viewerTab, setViewerTab] = useState<ViewerTabId>("charter");
   const [stageState, setStageState] = useState<Record<StageId, boolean>>({
     intakeParsed: false,
@@ -799,6 +809,8 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   const submissionDetailReqRef = useRef(0);
   const readinessReqRef = useRef(0);
   const apiSessionPromiseRef = useRef<Promise<boolean> | null>(null);
+  const lastSyncedSubscriptionRef = useRef<{ email: string; status: SubscriptionStatus } | null>(null);
+  const lastSubmittedApplicantEmailRef = useRef<string | null>(null);
 
   useEffect(() => {
     setThemeMode(resolvePreferredTheme());
@@ -844,11 +856,11 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   const resumeConfidenceBand = useMemo(() => {
     return RESUME_CONFIDENCE_BANDS.find((band) => resumeParseConfidence >= band.min) || RESUME_CONFIDENCE_BANDS[RESUME_CONFIDENCE_BANDS.length - 1];
   }, [resumeParseConfidence]);
-  const hasActiveSubscription = authState === "authenticated" && subscriptionStatus === "active";
-  const canAccessWorkbench = hasActiveSubscription;
-  const canAccessReviewQueue = hasActiveSubscription && planTier !== "starter";
-  const canAccessMentoringRecommendation = hasActiveSubscription;
-  const canBookMentoring = hasActiveSubscription && planTier === "elite";
+  const hasActiveSubscription = true;
+  const canAccessWorkbench = true;
+  const canAccessReviewQueue = planTier !== "starter";
+  const canAccessMentoringRecommendation = true;
+  const canBookMentoring = planTier === "elite";
 
   const showLaunchAndAccess = mode === "all" || mode === "intake";
   const showReadiness = mode !== "project";
@@ -935,7 +947,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
     if (isUnauthorizedError(msg)) {
       clearAuthToken();
       setApiSessionReady(false);
-      setSessionBanner("Session expired. Please sign back in to continue.");
+      setSessionBanner("Session expired. Retry the request to refresh your coaching session.");
     }
     if (isRateLimitError(error)) {
       const waitFor = error.retryAfterSeconds ?? rateLimitConfig.defaultRetrySeconds;
@@ -947,7 +959,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   }
 
   async function ensureCoachingApiSession(): Promise<boolean> {
-    if (authState !== "authenticated" || !isLocalDemoHost()) return false;
+    if (!isLocalDemoHost()) return true;
     if (apiSessionReady) return true;
     if (apiSessionPromiseRef.current) return apiSessionPromiseRef.current;
 
@@ -959,6 +971,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
           setApiSessionReady(false);
           return false;
         }
+        setAuthState("authenticated");
         setApiSessionReady(true);
         clearAuthStaleState();
         return true;
@@ -981,14 +994,14 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       if (nextStatus === "active") clearAuthStaleState();
       return true;
     }
-    if (authState !== "authenticated") {
-      setSessionBanner("Sign in before syncing a local demo subscription.");
-      return false;
-    }
     const sessionReady = await ensureCoachingApiSession();
     if (!sessionReady) return false;
 
-    const applicantEmail = (draft.candidateEmail || "candidate@example.com").trim().toLowerCase();
+    const applicantEmail = effectiveApplicantEmail(draft.candidateEmail);
+    if (!applicantEmail) {
+      setSessionBanner("Enter an applicant email before syncing a subscription.");
+      return false;
+    }
     const backendStatus = nextStatus === "unknown" ? "inactive" : nextStatus;
 
     try {
@@ -996,7 +1009,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
         workspace_id: draft.workspaceId || "demo-workspace",
         provider: "squarespace",
         event_type: "subscription.updated",
-        email: applicantEmail,
+        email: applicantEmail.toLowerCase(),
         username: LOCAL_DEMO_API_USERNAME,
         plan_tier: planTier,
         subscription_status: backendStatus,
@@ -1012,12 +1025,33 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
         return false;
       }
       setSubscriptionStatus(nextStatus);
+      lastSyncedSubscriptionRef.current = { email: applicantEmail.toLowerCase(), status: nextStatus };
       clearAuthStaleState();
       return true;
     } catch (error: any) {
       setSessionBanner(handleProtectedApiError(error));
       return false;
     }
+  }
+
+  async function ensureLocalDemoSubscriptionAlignment(requiredStatus: SubscriptionStatus = "active"): Promise<boolean> {
+    if (!isLocalDemoHost() || requiredStatus !== "active") {
+      return true;
+    }
+
+    const applicantEmail = normalizeApplicantEmailValue(effectiveApplicantEmail(draft.candidateEmail));
+    if (!applicantEmail) {
+      setSessionBanner("Enter an applicant email before continuing.");
+      return false;
+    }
+
+    const lastSynced = lastSyncedSubscriptionRef.current;
+    if (lastSynced && lastSynced.status === "active" && normalizeApplicantEmailValue(lastSynced.email) === applicantEmail) {
+      return true;
+    }
+
+    setSubscriptionStatus("active");
+    return syncDemoSubscription("active");
   }
 
   useEffect(() => {
@@ -1027,7 +1061,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   }, [authState, subscriptionStatus]);
 
   useEffect(() => {
-    if (authState !== "authenticated") {
+    if (authState !== "authenticated" && !isLocalDemoHost()) {
       clearAuthToken();
       setApiSessionReady(false);
       return;
@@ -1190,7 +1224,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       const gate = toMetaRubricGateSummary(((validation.generation_meta || {}) as Record<string, any>).meta_rubric_gate);
       const detailBits = [
         String(validation.auto_revised ? "Auto-revised once" : "No auto-revision"),
-        gate ? `Gate: ${formatGateStatusLabel(gate.status)} (${gate.initialOverallScore}→${gate.finalOverallScore}, threshold ${gate.threshold})` : "",
+        gate ? `Gate: ${formatGateStatusLabel(gate.status)} (${gate.initialOverallScore}->${gate.finalOverallScore}, threshold ${gate.threshold})` : "",
       ].filter(Boolean);
       events.push({
         id: String(run.run_id || run.id || Math.random()),
@@ -1648,14 +1682,17 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
     const resumeParseSummary = buildResumeParseSummary(draft, resumeParseConfidence, resumeStrengthSignals, resumeGapSignals);
     const resumeContext = buildResumeContext(draft, resumeStrengthSignals, resumeGapSignals);
     const timelineWeeks = Number(draft.questionnaire.timelineWeeks || draft.timelineWeeks || 8);
+    const applicantEmail = effectiveApplicantEmail(draft.candidateEmail);
 
     try {
       setIntakeSubmitState({ running: true, message: "Submitting intake..." });
+      const subscriptionAligned = await ensureLocalDemoSubscriptionAlignment("active");
+      if (!subscriptionAligned) return null;
       await ensureCoachingApiSession();
       const intakeResult = await api.coachingIntake({
         workspace_id: draft.workspaceId,
         applicant_name: draft.candidateName || "Candidate",
-        applicant_email: draft.candidateEmail || undefined,
+        applicant_email: applicantEmail,
         resume_text: resumeContext,
         self_assessment_text: [
           structuredAssessment,
@@ -1700,6 +1737,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       markAuthenticatedApiSuccess();
       setDraft((prev) => ({ ...prev, selfAssessment: structuredAssessment }));
       setCurrentSubmissionId(intakeResult.submission_id || null);
+      lastSubmittedApplicantEmailRef.current = normalizeApplicantEmailValue(applicantEmail);
       trackConversionEvent({ name: "intake_submitted", workspaceId: draft.workspaceId, submissionId: intakeResult.submission_id, planTier, details: { jobLinks: jobLinks.length } });
       setStageState((prev) => ({ ...prev, intakeParsed: true }));
       await loadSubmissions();
@@ -1715,8 +1753,17 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
   async function generateSow(useImprovements = false) {
     if (!canAccessWorkbench || generationState.running) return;
     let submissionId = currentSubmissionId;
+    const applicantEmail = normalizeApplicantEmailValue(effectiveApplicantEmail(draft.candidateEmail));
+    if (submissionId && applicantEmail && applicantEmail !== normalizeApplicantEmailValue(lastSubmittedApplicantEmailRef.current)) {
+      submissionId = null;
+      setCurrentSubmissionId(null);
+      setRawSow(null);
+      setScaffold(null);
+      setStageState({ intakeParsed: false, sowGenerated: false, validated: false });
+    }
     if (!submissionId) {
       if (showInternalAdminPanel) {
+        setRawSow(null);
         setScaffold(buildProjectScaffold(draft));
         setStageState((prev) => ({ ...prev, sowGenerated: true }));
         setIssueResponseError(null);
@@ -1728,6 +1775,8 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
     }
 
     try {
+      const subscriptionAligned = await ensureLocalDemoSubscriptionAlignment("active");
+      if (!subscriptionAligned) return;
       await ensureCoachingApiSession();
       trackConversionEvent({ name: useImprovements ? "sow_regenerate_clicked" : "sow_generate_clicked", workspaceId: draft.workspaceId, submissionId, planTier });
       setGenerationState({ running: true, message: useImprovements ? "Regenerating with improvements..." : "Generating SOW..." });
@@ -1748,6 +1797,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
         return;
       }
       setScaffold(mapSowToScaffold(out.sow));
+      setRawSow(out.sow);
       setIssueResponseError(null);
       setStageState((prev) => ({ ...prev, sowGenerated: true, validated: Boolean(out.valid) }));
       const fallbackUsed = Boolean(out.quality_flags?.fallback_used);
@@ -1789,6 +1839,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
       }
       setSelectedSubmission(out.submission);
       setCurrentSubmissionId(out.submission.submission_id);
+      lastSubmittedApplicantEmailRef.current = normalizeApplicantEmailValue(out.submission.applicant_email);
       setSelectedSubmissionStatus(String((out.submission as any).coach_review_status || out.submission.status || "submitted"));
       const loadedNotes = String((out.submission as any).coach_notes || (out.latest_generation_run || {}).coach_notes || "");
       setCoachNotes(loadedNotes.replace(/\s*\[tags:[^\]]+\]\s*/gi, "").trim());
@@ -1817,6 +1868,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
         const latestSow = latestRun.sow_json as Record<string, any> | undefined;
         if (latestSow && typeof latestSow === "object") {
           setScaffold(mapSowToScaffold(latestSow));
+          setRawSow(latestSow);
         }
         const latestMode = String(latestQualityFlags.generation_mode || "").toLowerCase();
         setGenerationState({
@@ -1834,6 +1886,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
         });
       } else {
         setScaffold(null);
+        setRawSow(null);
         setGenerationState({ running: false, message: "No prior generation run for this submission yet." });
       }
     } catch (e: any) {
@@ -1928,7 +1981,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
         "",
         "## Data Sources",
         ...scaffold.dataSources.flatMap((source) => [
-          `- ${source.name} (${source.type})${source.link ? ` — [Link](${source.link})` : ""}`,
+          `- ${source.name} (${source.type})${source.link ? ` - [Link](${source.link})` : ""}`,
           `  - Note: ${source.note}`,
         ]),
         "",
@@ -1955,11 +2008,11 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
         "## Resource Links by Step",
         ...scaffold.resourceLinksByStep.flatMap((step) => [
           `### ${step.stepTitle}`,
-          ...step.resources.map((resource) => `- [${resource.title}](${resource.url}) (${resource.type}) — ${resource.reason}`),
+          ...step.resources.map((resource) => `- [${resource.title}](${resource.url}) (${resource.type}) - ${resource.reason}`),
         ]),
         "",
         "## Recommended Resources",
-        ...scaffold.recommendedResources.map((r) => `- [${r.title}](${r.url}) — ${r.reason}`),
+        ...scaffold.recommendedResources.map((r) => `- [${r.title}](${r.url}) - ${r.reason}`),
         "",
         "## Interview Artifacts",
         "### STAR Stories",
@@ -2034,8 +2087,9 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
             className="coaching-theme-toggle"
             onClick={() => setThemeMode((prev) => (prev === "dark" ? "light" : "dark"))}
             aria-label={`Switch to ${themeMode === "dark" ? "light" : "dark"} mode`}
+            aria-pressed={themeMode === "dark"}
           >
-            {themeMode === "dark" ? "🌙 Dark" : "☀️ Light"}
+            {themeMode === "dark" ? "Theme: Dark" : "Theme: Light"}
           </button>
           <span className="badge info">Coaching App</span>
         </div>
@@ -2120,7 +2174,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
         <Link href={currentSubmissionId ? `/project/${currentSubmissionId}` : "/project/demo"}><button className={mode === "project" ? "btn-primary" : undefined}>Project</button></Link>
       </div>
 
-      {showLaunchAndAccess && (
+      {showLaunchAndAccess && showInternalAdminPanel && (
       <>
       <h4>Squarespace Member Launch Flow</h4>
       <div className="card coaching-card" style={{ marginBottom: 10 }}>
@@ -2133,7 +2187,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 8 }}>
-          <button onClick={() => { clearAuthToken(); setApiSessionReady(false); setAuthState("signedOut"); setSubscriptionStatus("unknown"); }}>Set Signed Out</button>
+          <button onClick={() => { clearAuthToken(); setApiSessionReady(false); setAuthState("signedOut"); setSubscriptionStatus("unknown"); lastSyncedSubscriptionRef.current = null; lastSubmittedApplicantEmailRef.current = null; }}>Set Signed Out</button>
           <button onClick={() => { setAuthState("authenticated"); clearAuthStaleState(); void ensureCoachingApiSession(); }}>Set Authenticated</button>
           <button onClick={() => { void syncDemoSubscription("inactive"); }}>Set Inactive Sub</button>
           <button onClick={() => { void syncDemoSubscription("active"); }}>Set Active Sub</button>
@@ -2258,7 +2312,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                     <option value="ready">ready</option>
                   </select>
                   <button onClick={loadSubmissions} disabled={reviewLoading}>{reviewLoading ? "Refreshing..." : "Refresh submissions"}</button>
-                  {reviewLoading && <span className="badge info">Loading…</span>}
+                  {reviewLoading && <span className="badge info">Loading...</span>}
                   {reviewError && <span className="badge error">{reviewError}</span>}
                 </div>
 
@@ -2280,9 +2334,9 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                     >
                       Select all loaded
                     </button>
-                    <button type="button" onClick={() => runBatchReviewAction("in_review")} disabled={batchReviewState.running || selectedSubmissionIds.length === 0}>{batchReviewState.running ? "Updating..." : "Batch → in_review"}</button>
-                    <button type="button" onClick={() => runBatchReviewAction("needs_revision")} disabled={batchReviewState.running || selectedSubmissionIds.length === 0}>{batchReviewState.running ? "Updating..." : "Batch → needs_revision"}</button>
-                    <button type="button" className="btn-success" onClick={() => runBatchReviewAction("ready")} disabled={batchReviewState.running || batchRegenerateState.running || selectedSubmissionIds.length === 0}>{batchReviewState.running ? "Updating..." : "Batch → ready"}</button>
+                    <button type="button" onClick={() => runBatchReviewAction("in_review")} disabled={batchReviewState.running || selectedSubmissionIds.length === 0}>{batchReviewState.running ? "Updating..." : "Batch -> in_review"}</button>
+                    <button type="button" onClick={() => runBatchReviewAction("needs_revision")} disabled={batchReviewState.running || selectedSubmissionIds.length === 0}>{batchReviewState.running ? "Updating..." : "Batch -> needs_revision"}</button>
+                    <button type="button" className="btn-success" onClick={() => runBatchReviewAction("ready")} disabled={batchReviewState.running || batchRegenerateState.running || selectedSubmissionIds.length === 0}>{batchReviewState.running ? "Updating..." : "Batch -> ready"}</button>
                     <button type="button" className="btn-primary" onClick={runBatchRegenerateSelected} disabled={batchReviewState.running || batchRegenerateState.running || selectedSubmissionIds.length === 0}>{batchRegenerateState.running ? "Regenerating..." : "Batch regenerate"}</button>
                     <button type="button" onClick={() => setSelectedSubmissionIds([])} disabled={batchReviewState.running || batchRegenerateState.running || selectedSubmissionIds.length === 0}>Clear selection</button>
                   </div>
@@ -2335,15 +2389,15 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                                 aria-label={`Select ${s.applicant_name || s.submission_id}`}
                               />
                             </td>
-                            <td>{s.applicant_name || "—"}</td>
-                            <td>{s.applicant_email || "—"}</td>
+                            <td>{s.applicant_name || "-"}</td>
+                            <td>{s.applicant_email || "-"}</td>
                             <td>
                               <span className={`badge ${String(s.status || "submitted").toLowerCase().includes("review") ? "warning" : "info"}`}>
                                 {s.status || "submitted"}
                               </span>
                             </td>
-                            <td>{s.submitted_by || "—"}</td>
-                            <td>{s.created_at ? String(s.created_at) : "—"}</td>
+                            <td>{s.submitted_by || "-"}</td>
+                            <td>{s.created_at ? String(s.created_at) : "-"}</td>
                             <td>
                               <button onClick={() => openSubmission(s.submission_id)}>Open submission</button>
                             </td>
@@ -2359,7 +2413,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                     <strong>Submission Detail</strong>
                     {selectedSubmission && <button onClick={loadSubmissionIntoDraft}>Load into intake form</button>}
                   </div>
-                  {submissionDetailLoading && <span className="badge info">Loading detail…</span>}
+                  {submissionDetailLoading && <span className="badge info">Loading detail...</span>}
                   {submissionDetailError && <span className="badge error">{submissionDetailError}</span>}
                   {!submissionDetailLoading && !submissionDetailError && !selectedSubmission && (
                     <div style={{ fontSize: 12, color: "var(--color-text-muted)" }}>
@@ -2368,10 +2422,10 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                   )}
                   {!submissionDetailLoading && selectedSubmission && (
                     <div style={{ fontSize: 12, display: "grid", gap: 6 }}>
-                      <div><strong>Applicant:</strong> {selectedSubmission.applicant_name || "—"} ({selectedSubmission.applicant_email || "no email"})</div>
+                      <div><strong>Applicant:</strong> {selectedSubmission.applicant_name || "-"} ({selectedSubmission.applicant_email || "no email"})</div>
                       <div><strong>Status:</strong> {selectedSubmission.status || "submitted"}</div>
-                      <div><strong>Resume:</strong> {selectedSubmission.resume_text || "—"}</div>
-                      <div><strong>Self-Assessment:</strong> {selectedSubmission.self_assessment_text || "—"}</div>
+                      <div><strong>Resume:</strong> {selectedSubmission.resume_text || "-"}</div>
+                      <div><strong>Self-Assessment:</strong> {selectedSubmission.self_assessment_text || "-"}</div>
                       <div>
                         <strong>Job Links:</strong>
                         <ul style={{ margin: "4px 0 0 18px", padding: 0 }}>
@@ -2383,14 +2437,14 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                               </li>
                             );
                           })}
-                          {normalizeJobLinks(selectedSubmission.job_links_json).length === 0 && <li>—</li>}
+                          {normalizeJobLinks(selectedSubmission.job_links_json).length === 0 && <li>-</li>}
                         </ul>
                       </div>
                       <div>
                         <strong>Preferences:</strong>{" "}
                         {selectedSubmission.preferences_json
                           ? `${String(selectedSubmission.preferences_json.target_role || "n/a")} | ${String(selectedSubmission.preferences_json.preferred_stack || "n/a")} | ${String(selectedSubmission.preferences_json.timeline_weeks || "n/a")} weeks`
-                          : "—"}
+                          : "-"}
                       </div>
 
                       <div className="card" style={{ padding: 8 }}>
@@ -2407,7 +2461,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                             </ul>
                           </div>
                           <div>
-                            <strong>Strengths → role evidence ({reviewProfileSnapshot.strengths.length})</strong>
+                            <strong>Strengths to role evidence ({reviewProfileSnapshot.strengths.length})</strong>
                             <ul style={{ margin: "4px 0 0 18px", padding: 0 }}>
                               {reviewProfileSnapshot.strengths.slice(0, 4).map((item, idx) => <li key={`review-strength-${idx}`}>{item}</li>)}
                               {reviewProfileSnapshot.strengths.length === 0 && <li style={{ color: "var(--color-text-muted)" }}>No mapped strengths captured.</li>}
@@ -2520,7 +2574,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                           placeholder={reviewPromptDraft || "Add coaching notes, feedback highlights, and next actions..."}
                           style={{ width: "100%", minHeight: 80, marginTop: 6 }}
                         />
-                        {quickActionState.running && <div style={{ marginTop: 6 }}><span className="badge info">Running quick action…</span></div>}
+                        {quickActionState.running && <div style={{ marginTop: 6 }}><span className="badge info">Running quick action...</span></div>}
                         {quickActionState.message && <div style={{ marginTop: 6 }}><span className="badge success">{quickActionState.message}</span></div>}
                         {quickActionState.error && <div style={{ marginTop: 6 }}><span className="badge error">{quickActionState.error}</span></div>}
                         {quickActionState.launchToken && (
@@ -2570,7 +2624,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                   className={`coaching-step-btn ${activeStep === step ? "is-active" : ""} ${completion[step] ? "is-complete" : ""}`.trim()}
                   style={{ fontSize: 12, padding: "6px 8px" }}
                 >
-                  {STEP_LABELS[step]} {completion[step] ? "✓" : ""}
+                  {STEP_LABELS[step]} {completion[step] ? "Done" : ""}
                 </button>
               ))}
             </div>
@@ -2606,7 +2660,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                     <div>
                       Regenerate delta: <strong>{String(generationState.quality.quality_delta ?? "n/a")}</strong>
                       {typeof generationState.quality.score === "number" && typeof generationState.quality.quality_delta === "number" && (
-                        <span> (before {generationState.quality.score - generationState.quality.quality_delta} → after {generationState.quality.score})</span>
+                        <span> (before {generationState.quality.score - generationState.quality.quality_delta} to after {generationState.quality.score})</span>
                       )}
                     </div>
                     {generationState.quality?.quality_diagnostics && (
@@ -2934,8 +2988,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
             <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
               <button onClick={() => moveStep("back")}>Back</button>
               <button onClick={() => moveStep("next")}>Next</button>
-              <button onClick={submitIntake} disabled={intakeSubmitState.running}>{intakeSubmitState.running ? "Submitting..." : "Submit Intake"}</button>
-              <button className="btn-success" onClick={() => generateSow(false)} disabled={generationState.running || intakeSubmitState.running}>{generationState.running ? "Generating..." : "Generate SOW"}</button>
+              <button className="btn-success" onClick={() => generateSow(false)} disabled={generationState.running || intakeSubmitState.running}>{generationState.running ? "Generating..." : intakeSubmitState.running ? "Submitting..." : "Submit Intake + Generate SOW"}</button>
               <button onClick={() => generateSow(true)} disabled={generationState.running || intakeSubmitState.running || !stageState.sowGenerated}>{generationState.running ? "Regenerating..." : "Regenerate with improvements"}</button>
               <button onClick={markValidated}>Mark Validated</button>
             </div>
@@ -2967,10 +3020,17 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                   </div>
                 )}
 
+                {rawSow && (
+                  <div className="card" style={{ padding: 10, marginBottom: 10 }}>
+                    <strong>Raw SOW Payload</strong>
+                    <pre style={{ marginTop: 8, whiteSpace: "pre-wrap", fontSize: 11, overflowX: "auto" }}>{JSON.stringify(rawSow, null, 2)}</pre>
+                  </div>
+                )}
+
                 <div className="card" style={{ padding: 10, marginBottom: 10 }}>
                   <div style={{ fontSize: 13, marginBottom: 6 }}><strong>Executive Summary</strong>: {scaffold.executiveSummary}</div>
                   <div style={{ fontSize: 12, marginBottom: 6 }}><strong>Business Outcome</strong>: {scaffold.businessOutcome}</div>
-                  <div style={{ fontSize: 12 }}><strong>Milestones</strong>: {scaffold.milestones.map((m) => m.title).join(" • ")}</div>
+                  <div style={{ fontSize: 12 }}><strong>Milestones</strong>: {scaffold.milestones.map((m) => m.title).join(" | ")}</div>
                 </div>
 
                 <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
@@ -2988,7 +3048,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                 <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
                   {qualityBadges.map((badge) => (
                     <span key={badge.label} className={`badge ${badge.pass ? "success" : "warning"}`}>
-                      {badge.pass ? "✓" : "!"} {badge.label}
+                      {badge.pass ? "OK" : "!"} {badge.label}
                     </span>
                   ))}
                 </div>
@@ -3006,7 +3066,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                       <div><strong>Selected archetype:</strong> {metaRubricGate.selectedArchetype || "unknown"}</div>
                       <div><strong>Reprocessed:</strong> {metaRubricGate.reprocessed ? "yes" : "no"}</div>
                       {metaRubricGate.maxReprocessAttempts ? <div><strong>Attempt limit:</strong> {metaRubricGate.maxReprocessAttempts}</div> : null}
-                      {metaRubricGate.archetypeOrder.length > 0 ? <div><strong>Archetype order:</strong> {metaRubricGate.archetypeOrder.join(" → ")}</div> : null}
+                      {metaRubricGate.archetypeOrder.length > 0 ? <div><strong>Archetype order:</strong> {metaRubricGate.archetypeOrder.join(" -> ")}</div> : null}
                       {metaRubricGate.reprocessAttempts.length > 0 ? (
                         <div>
                           <strong>Attempts:</strong>{" "}
@@ -3163,7 +3223,7 @@ export default function CoachingProjectWorkbench({ mode = "all", projectId }: Co
                             const safety = safeExternalUrl(resource.url);
                             return (
                               <li key={resource.url}>
-                                {safety.safe ? <a href={safety.normalized} target="_blank" rel="noreferrer">{resource.title}</a> : <span>{resource.title} <span className="badge warning">Blocked unsafe link ({safety.reason})</span></span>} ({resource.type}) — {resource.reason}
+                                {safety.safe ? <a href={safety.normalized} target="_blank" rel="noreferrer">{resource.title}</a> : <span>{resource.title} <span className="badge warning">Blocked unsafe link ({safety.reason})</span></span>} ({resource.type}) - {resource.reason}
                               </li>
                             );
                           })}
