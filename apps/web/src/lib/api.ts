@@ -313,7 +313,18 @@ export interface AdminRuntimeRateLimitConfigResult {
   };
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
+function resolveApiBase(): string {
+  if (process.env.NEXT_PUBLIC_API_BASE) return process.env.NEXT_PUBLIC_API_BASE;
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname;
+    if (host === "localhost" || host === "127.0.0.1") {
+      return `${window.location.protocol}//${host}:8000`;
+    }
+  }
+  return "http://localhost:8000";
+}
+
+const API_BASE = resolveApiBase();
 let AUTH_TOKEN = "";
 const AUTH_TOKEN_STORAGE_KEY = "coaching_api_token";
 
