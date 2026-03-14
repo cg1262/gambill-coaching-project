@@ -19,6 +19,7 @@ from .sow_validation import (
     _build_interview_ready_package,
     validate_sow_payload,
     compute_sow_quality_score,
+    normalize_generated_sow,
 )
 
 
@@ -1111,6 +1112,47 @@ def _summarize_self_assessment(preferences: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _resolve_llm_api_key() -> tuple[str, str]:
+    openai_api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    if openai_api_key:
+        return openai_api_key, "OPENAI_API_KEY"
+    llm_api_key = (os.getenv("LLM_API_KEY") or "").strip()
+    if llm_api_key:
+        return llm_api_key, "LLM_API_KEY"
+    return "", "none"
+
+
+def _infer_requested_industry(intake: dict[str, Any], parsed_jobs: list[dict[str, Any]]) -> dict[str, Any]:
+    preferences = intake.get("preferences") or {}
+    resume_summary = (preferences.get("resume_parse_summary") or {}) if isinstance(preferences, dict) else {}
+
+    raw_domains: list[str] = []
+    for domain in (resume_summary.get("domains") or []):
+        value = str(domain or "").strip()
+        if value:
+            raw_domains.append(value)
+    for job in (parsed_jobs or []):
+        signals = job.get("signals") or {}
+        for domain in (signals.get("domains") or []):
+            value = str(domain or "").strip()
+            if value:
+                raw_domains.append(value)
+
+    normalized = [domain.lower() for domain in raw_domains if domain.strip()]
+    deduped: list[str] = []
+    for domain in normalized:
+        if domain not in deduped:
+            deduped.append(domain)
+
+    primary = deduped[0] if deduped else "general"
+    source = "resume_or_job_domains" if deduped else "fallback_general"
+    return {
+        "primary": primary,
+        "all_domains": deduped or ["general"],
+        "source": source,
+    }
+
+
 def _build_project_strategy_fallback(intake: dict[str, Any], parsed_jobs: list[dict[str, Any]]) -> dict[str, Any]:
     preferences = intake.get("preferences") or {}
     resume_summary = (preferences.get("resume_parse_summary") or {}) if isinstance(preferences, dict) else {}
@@ -1134,6 +1176,7 @@ def _build_project_strategy_fallback(intake: dict[str, Any], parsed_jobs: list[d
     archetype = _infer_project_archetype(intake=intake, parsed_jobs=parsed_jobs, all_domains=all_domains, all_tools=all_tools)
     selected_sources = _select_data_sources(intake=intake, parsed_jobs=parsed_jobs)
     self_summary = _summarize_self_assessment(preferences)
+    requested_industry = _infer_requested_industry(intake=intake, parsed_jobs=parsed_jobs)
 
     project_focus_map = {
         "retail": "Design a margin, inventory, and returns intelligence project that feels like a consulting charter for store and channel leadership.",
@@ -1182,6 +1225,7 @@ def _build_project_strategy_fallback(intake: dict[str, Any], parsed_jobs: list[d
         "project_focus": project_focus_map.get(archetype, project_focus_map["general"]),
         "business_problem": business_problem_map.get(archetype, business_problem_map["general"]),
         "recommended_source_names": [str(src.get("name") or "") for src in selected_sources if str(src.get("name") or "")][:3],
+        "requested_industry": requested_industry.get("primary") or "general",
         "dashboard_questions": dashboard_questions_map.get(archetype, dashboard_questions_map["general"]),
         "delivery_scope": {
             "target_role_level": scope_profile.get("target_role_level"),
@@ -1199,6 +1243,7 @@ def _build_project_strategy_fallback(intake: dict[str, Any], parsed_jobs: list[d
             "domains": resume_summary.get("domains") or [],
             "project_keywords": resume_summary.get("project_experience_keywords") or [],
         },
+        "industry_context": requested_industry,
     }
 
 
@@ -1213,7 +1258,7 @@ def _coerce_project_strategy(strategy: dict[str, Any] | None, intake: dict[str, 
         archetype = str(fallback.get("archetype") or "general")
     merged["archetype"] = archetype
 
-    for key in ["candidate_fit_summary", "project_focus", "business_problem"]:
+    for key in ["candidate_fit_summary", "project_focus", "business_problem", "requested_industry"]:
         value = str(strategy.get(key) or "").strip()
         if value:
             merged[key] = value
@@ -1244,6 +1289,21 @@ def _coerce_project_strategy(strategy: dict[str, Any] | None, intake: dict[str, 
         if notes:
             merged_takeaways["notes"] = notes[:500]
         merged["self_assessment_takeaways"] = merged_takeaways
+
+    if isinstance(strategy.get("industry_context"), dict):
+        merged_industry = dict(merged.get("industry_context") or {})
+        for key in ["primary", "source"]:
+            value = str(strategy.get("industry_context", {}).get(key) or "").strip()
+            if value:
+                merged_industry[key] = value
+        domains = [
+            str(x).strip().lower()
+            for x in (strategy.get("industry_context", {}).get("all_domains") or [])
+            if str(x).strip()
+        ]
+        if domains:
+            merged_industry["all_domains"] = domains
+        merged["industry_context"] = merged_industry
 
     return merged
 
@@ -1282,20 +1342,22 @@ def generate_sow_with_llm(
     timeout: int = 45,
     max_retries: int = 2,
 ) -> dict[str, Any]:
-    api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
-    model = (os.getenv("COACHING_SOW_LLM_MODEL") or "gpt-4o-mini").strip()
+    api_key, api_key_source = _resolve_llm_api_key()
+    model = (os.getenv("COACHING_SOW_LLM_MODEL") or "gpt-5.4").strip()
     base_url = (os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
     strategy_fallback = _build_project_strategy_fallback(intake=intake, parsed_jobs=parsed_jobs)
+    requested_industry = _infer_requested_industry(intake=intake, parsed_jobs=parsed_jobs)
 
     if not api_key:
         return {
             "ok": False,
-            "error": "OPENAI_API_KEY missing",
+            "error": "OPENAI_API_KEY / LLM_API_KEY missing",
             "sow": build_sow_skeleton(intake=intake, parsed_jobs=parsed_jobs, project_strategy=strategy_fallback),
             "meta": {
                 "provider": "scaffold",
                 "model": "fallback",
                 "base_url": base_url,
+                "api_key_source": api_key_source,
                 "error_type": "provider",
                 "reason_code": "LLM_API_KEY_MISSING",
                 "strategy": {
@@ -1316,6 +1378,7 @@ def generate_sow_with_llm(
             "self_assessment_structured": (candidate_preferences.get("self_assessment") or {}) if isinstance(candidate_preferences, dict) else {},
         },
         "parsed_jobs": parsed_jobs[:8],
+        "industry_context": requested_industry,
         "style_anchors": STYLE_ANCHORS,
     }
 
@@ -1345,17 +1408,47 @@ def generate_sow_with_llm(
                             "project_focus",
                             "business_problem",
                             "recommended_source_names",
+                            "requested_industry",
                             "dashboard_questions",
                             "delivery_scope",
                             "self_assessment_takeaways",
+                            "industry_context",
                         ],
                         "hard_rules": [
                             "Return JSON only",
                             "Choose one archetype from retail, energy, finance, general",
                             "Use resume, self-assessment, and target job signals to decide project direction",
+                            "Use the exact keys from output_template",
+                            "Do not rename keys or wrap the response in another object",
                             "dashboard_questions must be concrete business questions",
                             "recommended_source_names should reference likely public data sources or API families",
+                            "requested_industry must reflect the best-fit business domain for source selection",
                         ],
+                    },
+                    "output_template": {
+                        "archetype": "general",
+                        "candidate_fit_summary": "Explain why this candidate is a strong fit for the project.",
+                        "project_focus": "Describe the portfolio-ready project direction.",
+                        "business_problem": "State the measurable business problem.",
+                        "recommended_source_names": ["Named source family 1", "Named source family 2"],
+                        "requested_industry": requested_industry.get("primary") or "general",
+                        "dashboard_questions": [
+                            "Concrete business question 1",
+                            "Concrete business question 2",
+                            "Concrete business question 3",
+                        ],
+                        "delivery_scope": {
+                            "target_role_level": "mid",
+                            "scope_difficulty": "standard",
+                            "suggested_timeline_weeks": 6,
+                            "serving_tool": "Power BI",
+                        },
+                        "self_assessment_takeaways": {
+                            "strongest": ["Example strength"],
+                            "weakest": ["Example growth area"],
+                            "notes": "Optional coaching note.",
+                        },
+                        "industry_context": requested_industry,
                     },
                 }
                 try:
@@ -1364,7 +1457,7 @@ def generate_sow_with_llm(
                         base_url=base_url,
                         api_key=api_key,
                         model=model,
-                        system_prompt="You are a senior data engineering coaching strategist. Analyze the candidate's resume, self-assessment, and target jobs, then produce a concise project strategy JSON that selects the best project archetype, explains candidate fit, and outlines the business problem, source direction, dashboard questions, and delivery scope before a full charter is generated.",
+                        system_prompt="You are a senior data engineering coaching strategist. Return exactly one JSON object using the exact keys in output_template. Do not add wrapper objects, markdown, commentary, or alternate key names. Analyze the candidate's resume, self-assessment, target jobs, and requested industry context to choose the best project direction before the full charter is generated.",
                         user_payload=strategy_request_payload,
                     )
                     project_strategy = _coerce_project_strategy(strategy_response, intake=intake, parsed_jobs=parsed_jobs)
@@ -1397,6 +1490,16 @@ def generate_sow_with_llm(
                 prompt_payload = {
                     **prompt_payload_base,
                     "project_strategy": project_strategy,
+                    "style_brief": {
+                        "tone": "premium consulting charter",
+                        "voice": "specific, executive-ready, implementation-realistic",
+                        "anchors": STYLE_ANCHORS,
+                    },
+                    "content_expectations": {
+                        "industry_alignment": f"Favor data sources, KPIs, and business language that match the requested industry: {requested_industry.get('primary') or 'general'}.",
+                        "data_source_justification": "Every data source must include selection_rationale explaining why it belongs in the project and the charter.",
+                        "story_quality": "Use a fictitious but realistic company, business unit, and operating context with concrete systems, cadence, and measurable value.",
+                    },
                     "required_contract": {
                         "top_level_required": list(REQUIRED_SECTION_FLOW),
                         "top_level_order_required": list(REQUIRED_SECTION_FLOW),
@@ -1411,7 +1514,13 @@ def generate_sow_with_llm(
                             "mentoring_cta -> optional personalized recommendation language",
                         ],
                         "business_outcome_required": ["problem_statement", "current_state", "future_state", "target_metrics", "domain_focus", "data_sources"],
-                        "data_source_shape": {"name": "string", "url": "https://real-link", "ingestion_doc_url": "https://real-doc-link", "ingestion_instructions": "explicit step-by-step instructions"},
+                        "data_source_shape": {
+                            "name": "string",
+                            "url": "https://real-link",
+                            "ingestion_doc_url": "https://real-doc-link",
+                            "selection_rationale": "why this source belongs in the project",
+                            "ingestion_instructions": "explicit step-by-step instructions",
+                        },
                         "milestone_shape": {
                             "name": "string", "duration_weeks": "int>=1", "deliverables": ["string"],
                             "execution_plan": "string", "expected_deliverable": "string", "business_why": "string",
@@ -1424,35 +1533,29 @@ def generate_sow_with_llm(
                             "section_order": list(CHARTER_REQUIRED_SECTION_FLOW),
                             "executive_summary_fields": ["current_state", "future_state"],
                             "prerequisites_resources_fields": ["summary", "data_assets", "tools", "skill_check", "resources"],
-                            "technical_architecture_requires": ["ingestion", "processing", "storage", "serving", "data_sources with url + ingestion_doc_url + ingestion_instructions"],
+                            "technical_architecture_requires": ["ingestion", "processing", "storage", "serving", "data_sources with url + ingestion_doc_url + selection_rationale + ingestion_instructions"],
                             "implementation_plan_requires": ["milestones with expectations + completion_criteria + estimated_effort_hours + key_concept"],
                         },
                         "hard_rules": [
-                            "Return JSON only, no markdown",
-                            "Mirror exemplar section sequence and flow exactly using top_level_order_required",
-                            "Keep content personalized to candidate resume/preferences/target roles (no generic placeholder narrative)",
-                            "Use realistic but fictitious business narrative with a named fictional company, business unit, and operating context",
-                            "Honor the supplied project_strategy as the planning brief for the final charter",
-                            "Never reuse legacy story/company names from prior examples (e.g., Northbeam, BlueOrbit) unless explicitly requested",
-                            "Ensure narrative, data source family, and KPI language align to project_strategy.archetype domain expectations",
-                            "Do not echo prompt instructions, rule labels, schema notes, or meta language (e.g., hard_rules, required_contract, return JSON only)",
-                            "Every story section must include concrete systems/process details and at least one measurable impact signal",
-                            "Use real non-placeholder URLs",
-                            "At least 3 milestones",
-                            "Each milestone must include execution_plan, expected_deliverable, and business_why",
-                            "Each milestone must include at least one resource link",
-                            "Each milestone must include at least two acceptance_checks",
-                            "Include at least one concrete public data source URL",
-                            "Include at least one ingestion documentation URL",
-                            "Each data source must include explicit ingestion_instructions",
-                            "ROI requirements must read like business questions, not just field lists",
-                            "Project charter prerequisites_resources must include concrete tools, data access steps, and a skill check",
-                            "Technical architecture must explicitly describe ingestion, processing, storage, and serving",
-                            "Implementation plan must feel like a milestone tracker with expected effort and success criteria",
-                            "Every data source must include ingestion_doc_url",
+                            "Return exactly one JSON object using the exact keys from output_template",
+                            "Do not rename keys, add wrapper objects, or emit markdown",
+                            "Keep content personalized to candidate resume/preferences/target roles",
+                            "Honor the supplied project_strategy and requested industry as the planning brief",
+                            "Use realistic fictitious business context with measurable KPI impact",
+                            "Do not echo prompt/schema meta language in the output",
+                            "Each data source must include url, ingestion_doc_url, selection_rationale, and explicit ingestion_instructions",
+                            "At least 3 milestones with execution_plan, expected_deliverable, business_why, resources, and acceptance_checks",
                             "project_charter.section_order must match project_charter_required.section_order",
                         ],
                     },
+                    "output_template": build_sow_skeleton(
+                        intake={"applicant_name": "Example Candidate", "preferences": {}},
+                        parsed_jobs=[],
+                        project_strategy={
+                            "requested_industry": requested_industry.get("primary") or "general",
+                            "industry_context": requested_industry,
+                        },
+                    ),
                 }
 
                 sow, payload = _request_llm_json(
@@ -1460,9 +1563,10 @@ def generate_sow_with_llm(
                     base_url=base_url,
                     api_key=api_key,
                     model=model,
-                    system_prompt="You are a senior data engineering consulting partner. Produce production-grade SOW JSON following the required contract exactly. Style-align to three anchors: GlobalMart Retail Intelligence Pipeline, VoltStream EV Grid Resilience, and Global Giving Network Market & Donation Velocity Monitor. The output should read like a premium consulting project charter, not a generic project scaffold. Match their executive charter tone, section depth, quantified KPI orientation, and implementation realism while keeping all details personalized and fictitious. Never output prompt or schema meta language. Invent a realistic fictitious company context and include concrete project depth: named systems, ingestion cadence, quality controls, artifact evidence, milestone tracker quality, ROI dashboard questions, and measurable business outcomes. Use the supplied project_strategy as your planning brief before writing the charter. For each milestone, provide concrete execution details, measurable deliverable quality, explicit acceptance checks, and business rationale tied to outcomes. For prerequisites, technical architecture, and dashboard requirements, be as explicit as the exemplars about tools, source access, and what the business dashboard must answer.",
+                    system_prompt="You are a senior data engineering consulting partner. Return exactly one production-grade SOW JSON object using the exact structure and key names in output_template. Do not add wrapper objects, markdown, commentary, or alternate shapes. Write in a premium consulting-charter style with realistic fictitious business context, concrete implementation detail, explicit data-source justifications, and KPI-driven outcomes aligned to the supplied project_strategy and requested industry.",
                     user_payload=prompt_payload,
                 )
+                sow = normalize_generated_sow(sow)
 
             structure = evaluate_sow_structure(sow)
             if structure.get("missing_sections") or not structure.get("order_valid"):
@@ -1513,6 +1617,7 @@ def generate_sow_with_llm(
                         system_prompt="You are a principal QA editor for premium data engineering project charters. Critique the draft SOW against the contract and improve weak sections while preserving valid structure. Return only improved SOW JSON.",
                         user_payload=review_payload,
                     )
+                    reviewed_sow = normalize_generated_sow(reviewed_sow)
                     reviewed_structure = evaluate_sow_structure(reviewed_sow)
                     if not reviewed_structure.get("missing_sections") and reviewed_structure.get("order_valid"):
                         findings_after = validate_sow_payload(reviewed_sow)
@@ -1553,6 +1658,7 @@ def generate_sow_with_llm(
                     "provider": "openai-compatible",
                     "model": model,
                     "base_url": base_url,
+                    "api_key_source": api_key_source,
                     "usage": payload.get("usage") or {},
                     "finish_reason": (((payload.get("choices") or [{}])[0].get("finish_reason")) or ""),
                     "attempts": attempts,
@@ -1604,6 +1710,7 @@ def generate_sow_with_llm(
             "provider": "scaffold",
             "model": model,
             "base_url": base_url,
+            "api_key_source": api_key_source,
             "attempts": attempts,
             "error_type": error_type,
             "reason_code": reason_code,

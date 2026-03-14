@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 import re
 
@@ -68,6 +69,199 @@ def evaluate_sow_structure(sow: dict[str, Any]) -> dict[str, Any]:
         "structure_score": max(0, min(100, structure_score)),
         "structure_valid": (len(missing_sections) == 0 and order_valid),
     }
+
+
+def _normalize_charter_sections(
+    charter: dict[str, Any],
+    business_outcome: dict[str, Any],
+    solution_architecture: dict[str, Any],
+    milestones: list[dict[str, Any]],
+    project_story: dict[str, Any],
+    resource_plan: dict[str, Any],
+) -> dict[str, Any]:
+    sections = charter.get("sections")
+    if isinstance(sections, dict):
+        out = dict(sections)
+    else:
+        out = {}
+
+    alternate_keys = {
+        "prerequisites_resources": "prerequisites_resources_fields",
+        "executive_summary": "executive_summary_fields",
+        "technical_architecture": "technical_architecture_requires",
+        "implementation_plan": "implementation_plan_requires",
+    }
+    for section_name, alternate_key in alternate_keys.items():
+        if section_name not in out and isinstance(charter.get(alternate_key), dict):
+            out[section_name] = dict(charter.get(alternate_key) or {})
+
+    if not isinstance(out.get("prerequisites_resources"), dict):
+        out["prerequisites_resources"] = {}
+    prereq = out["prerequisites_resources"]
+    if not str(prereq.get("summary") or "").strip():
+        prereq["summary"] = "Confirm source access, tooling setup, and stakeholder readiness before delivery starts."
+    if not prereq.get("resources"):
+        prereq["resources"] = list(resource_plan.get("required") or [])
+    if not str(prereq.get("skill_check") or "").strip():
+        prereq["skill_check"] = "Candidate should be comfortable with SQL, Python, and explaining KPI trade-offs to stakeholders."
+
+    if not isinstance(out.get("executive_summary"), dict):
+        out["executive_summary"] = {}
+    exec_summary = out["executive_summary"]
+    if not str(exec_summary.get("current_state") or "").strip():
+        exec_summary["current_state"] = str((business_outcome.get("current_state") or project_story.get("challenge") or "")).strip()
+    if not str(exec_summary.get("future_state") or "").strip():
+        exec_summary["future_state"] = str((business_outcome.get("future_state") or project_story.get("impact_story") or "")).strip()
+
+    if not isinstance(out.get("technical_architecture"), dict):
+        out["technical_architecture"] = {}
+    tech_arch = out["technical_architecture"]
+    for key in ["ingestion", "processing", "storage", "serving"]:
+        if not tech_arch.get(key) and solution_architecture.get(key):
+            tech_arch[key] = solution_architecture.get(key)
+    if not tech_arch.get("data_sources") and business_outcome.get("data_sources"):
+        tech_arch["data_sources"] = list(business_outcome.get("data_sources") or [])
+
+    if not isinstance(out.get("implementation_plan"), dict):
+        out["implementation_plan"] = {}
+    impl = out["implementation_plan"]
+    if not impl.get("milestones") and milestones:
+        impl["milestones"] = [
+            {
+                "name": str(ms.get("name") or "Milestone"),
+                "expected_deliverable": str(ms.get("expected_deliverable") or ", ".join(ms.get("deliverables") or []) or ""),
+                "completion_criteria": list(ms.get("acceptance_checks") or []),
+                "estimated_effort_hours": max(8, int(ms.get("duration_weeks") or 1) * 20),
+                "key_concept": str(ms.get("business_why") or ms.get("execution_plan") or ""),
+            }
+            for ms in milestones
+            if isinstance(ms, dict)
+        ]
+
+    if not isinstance(out.get("deliverables_acceptance_criteria"), dict):
+        out["deliverables_acceptance_criteria"] = {
+            "milestones": [
+                {
+                    "name": str(ms.get("name") or "Milestone"),
+                    "deliverables": list(ms.get("deliverables") or []),
+                    "acceptance_checks": list(ms.get("acceptance_checks") or []),
+                }
+                for ms in milestones
+                if isinstance(ms, dict)
+            ]
+        }
+
+    if not isinstance(out.get("risks_assumptions"), dict):
+        out["risks_assumptions"] = {
+            "risks": [
+                "Source-system access or API quotas may delay initial ingestion validation.",
+                "Claims metric definitions may need stakeholder sign-off before dashboard publication.",
+            ],
+            "assumptions": [
+                "Required source credentials and sandbox access will be available during the first sprint.",
+                "Business owners can validate KPI definitions during milestone reviews.",
+            ],
+        }
+
+    if not isinstance(out.get("stretch_goals"), dict):
+        out["stretch_goals"] = {
+            "summary": "Add stretch deliverables only after the core pipeline, KPI validation, and dashboard acceptance checks are complete.",
+        }
+
+    return out
+
+
+def normalize_generated_sow(sow: dict[str, Any]) -> dict[str, Any]:
+    out = dict(sow or {})
+    business_outcome = out.get("business_outcome")
+    if not isinstance(business_outcome, dict):
+        business_outcome = {}
+    out["business_outcome"] = business_outcome
+
+    domain_focus = business_outcome.get("domain_focus")
+    if isinstance(domain_focus, str) and domain_focus.strip():
+        business_outcome["domain_focus"] = [domain_focus.strip()]
+
+    solution_architecture = out.get("solution_architecture")
+    if not isinstance(solution_architecture, dict):
+        solution_architecture = {}
+    out["solution_architecture"] = solution_architecture
+
+    medallion = solution_architecture.get("medallion_plan")
+    if not isinstance(medallion, dict):
+        medallion = {}
+    if not str(medallion.get("bronze") or "").strip():
+        medallion["bronze"] = str(solution_architecture.get("ingestion") or "Land raw source extracts into a replay-safe Bronze layer.").strip()
+    if not str(medallion.get("silver") or "").strip():
+        medallion["silver"] = str(solution_architecture.get("processing") or "Clean, standardize, and quality-check records in Silver.").strip()
+    if not str(medallion.get("gold") or "").strip():
+        gold_parts = [str(solution_architecture.get("storage") or "").strip(), str(solution_architecture.get("serving") or "").strip()]
+        medallion["gold"] = " ".join(part for part in gold_parts if part) or "Publish KPI-ready marts and dashboard-facing aggregates in Gold."
+    solution_architecture["medallion_plan"] = medallion
+
+    mentoring_cta = out.get("mentoring_cta")
+    if isinstance(mentoring_cta, str):
+        out["mentoring_cta"] = {"reason": mentoring_cta}
+    elif not isinstance(mentoring_cta, dict):
+        out["mentoring_cta"] = {}
+
+    milestones = out.get("milestones")
+    if not isinstance(milestones, list):
+        milestones = []
+    out["milestones"] = milestones
+
+    project_story = out.get("project_story")
+    if not isinstance(project_story, dict):
+        project_story = {}
+    out["project_story"] = project_story
+
+    resource_plan = out.get("resource_plan")
+    if not isinstance(resource_plan, dict):
+        resource_plan = {}
+    canonical_resource_urls = {
+        "azure data factory": "https://learn.microsoft.com/azure/data-factory/introduction",
+        "databricks": "https://docs.databricks.com/",
+        "azure synapse": "https://learn.microsoft.com/azure/synapse-analytics/",
+        "azure synapse analytics": "https://learn.microsoft.com/azure/synapse-analytics/",
+        "power bi": "https://learn.microsoft.com/power-bi/",
+        "github": "https://github.com/",
+        "slack": "https://slack.com/",
+        "tableau": "https://www.tableau.com/",
+    }
+    for bucket in ["required", "recommended", "optional"]:
+        normalized_bucket: list[dict[str, Any]] = []
+        for item in (resource_plan.get(bucket) or []):
+            if isinstance(item, dict):
+                normalized_bucket.append(dict(item))
+                continue
+            title = str(item or "").strip()
+            if not title:
+                continue
+            url = ""
+            lowered = title.lower()
+            for key, candidate_url in canonical_resource_urls.items():
+                if key in lowered:
+                    url = candidate_url
+                    break
+            normalized_bucket.append({"title": title, "url": url})
+        resource_plan[bucket] = normalized_bucket
+    out["resource_plan"] = resource_plan
+
+    charter = out.get("project_charter")
+    if not isinstance(charter, dict):
+        charter = {}
+    charter["sections"] = _normalize_charter_sections(
+        charter=charter,
+        business_outcome=business_outcome,
+        solution_architecture=solution_architecture,
+        milestones=milestones,
+        project_story=project_story,
+        resource_plan=resource_plan,
+    )
+    charter["section_order"] = list(CHARTER_REQUIRED_SECTION_FLOW)
+    out["project_charter"] = charter
+
+    return enforce_required_section_order(out)
 
 
 def ensure_interview_ready_package(sow: dict[str, Any]) -> dict[str, Any]:
@@ -166,6 +360,11 @@ _DOMAIN_SIGNAL_MAP = {
 }
 
 
+def _enforce_domain_archetype_validation() -> bool:
+    raw = str(os.getenv("COACHING_ENFORCE_DOMAIN_ARCHETYPE_VALIDATION") or "0").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _contains_instruction_echo(text: str) -> bool:
     low = str(text or "").lower()
     return any(re.search(pattern, low) for pattern in _INSTRUCTION_ECHO_PATTERNS)
@@ -201,6 +400,7 @@ def _infer_expected_domain_family(resume_summary: dict[str, Any], domain_focus: 
 
 
 def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
+    sow = normalize_generated_sow(sow)
     sow, safety_findings = sanitize_generated_sow(sow)
     sow = ensure_interview_ready_package(sow)
     sow = enforce_required_section_order(sow)
@@ -231,6 +431,8 @@ def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
             findings.append({"code": "CHARTER_DATA_SOURCE_URL_INVALID", "message": f"project_charter.sections.technical_architecture.data_sources[{idx}].url must be a real link."})
         if not _is_valid_non_placeholder_url(str(src.get("ingestion_doc_url") or "")):
             findings.append({"code": "CHARTER_INGESTION_DOC_URL_INVALID", "message": f"project_charter.sections.technical_architecture.data_sources[{idx}].ingestion_doc_url must be a real link."})
+        if not str(src.get("selection_rationale") or "").strip():
+            findings.append({"code": "CHARTER_DATA_SOURCE_RATIONALE_MISSING", "message": f"project_charter.sections.technical_architecture.data_sources[{idx}].selection_rationale is required."})
 
     medallion = ((sow.get("solution_architecture") or {}).get("medallion_plan") or {})
     for layer in ["bronze", "silver", "gold"]:
@@ -412,7 +614,7 @@ def validate_sow_payload(sow: dict[str, Any]) -> list[dict[str, str]]:
             }
         )
 
-    if expected_domain:
+    if expected_domain and _enforce_domain_archetype_validation():
         signals = _DOMAIN_SIGNAL_MAP.get(expected_domain) or {}
         source_names = " ".join(str((ds or {}).get("name") or "") for ds in data_sources if isinstance(ds, dict)).lower()
         kpi_text = " ".join(str(x or "") for x in ((roi.get("business_questions") or []) + (roi.get("required_measures") or []) + (business.get("target_metrics") or []))).lower()

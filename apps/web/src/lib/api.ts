@@ -321,13 +321,17 @@ export class ApiError extends Error {
   status?: number;
   path: string;
   retryAfterSeconds?: number;
+  detail?: any;
+  code?: string;
 
-  constructor(message: string, path: string, opts?: { status?: number; retryAfterSeconds?: number }) {
+  constructor(message: string, path: string, opts?: { status?: number; retryAfterSeconds?: number; detail?: any; code?: string }) {
     super(message);
     this.name = "ApiError";
     this.path = path;
     this.status = opts?.status;
     this.retryAfterSeconds = opts?.retryAfterSeconds;
+    this.detail = opts?.detail;
+    this.code = opts?.code;
   }
 }
 
@@ -348,6 +352,25 @@ async function parseErrorPayload(res: Response): Promise<any | null> {
   } catch {
     return null;
   }
+}
+
+function getErrorMessage(payload: any, fallback: string): string {
+  const detail = payload?.detail;
+  if (typeof detail === "string" && detail.trim()) return detail.trim();
+  if (detail && typeof detail === "object" && typeof detail.message === "string" && detail.message.trim()) {
+    return detail.message.trim();
+  }
+  if (typeof payload?.message === "string" && payload.message.trim()) return payload.message.trim();
+  return fallback;
+}
+
+function getErrorCode(payload: any): string | undefined {
+  const detail = payload?.detail;
+  if (detail && typeof detail === "object" && typeof detail.code === "string" && detail.code.trim()) {
+    return detail.code.trim();
+  }
+  if (typeof payload?.code === "string" && payload.code.trim()) return payload.code.trim();
+  return undefined;
 }
 
 export function setAuthToken(token: string) {
@@ -417,15 +440,18 @@ async function getJson<T>(path: string): Promise<T> {
 
   if (!res.ok) {
     const payload = await parseErrorPayload(res);
-    const payloadMessage = String(payload?.detail || payload?.message || "").trim();
-    if (res.status === 401) throw new ApiError(payloadMessage || "Session expired (401)", path, { status: 401 });
+    const payloadMessage = getErrorMessage(payload, "");
+    const errorCode = getErrorCode(payload);
+    if (res.status === 401) throw new ApiError(payloadMessage || "Session expired (401)", path, { status: 401, detail: payload, code: errorCode });
     if (res.status === 429) {
       throw new ApiError(payloadMessage || "You are doing that too quickly. Please wait and retry.", path, {
         status: 429,
         retryAfterSeconds: parseRetryAfterSeconds(res.headers.get("retry-after")),
+        detail: payload,
+        code: errorCode,
       });
     }
-    throw new ApiError(payloadMessage || `${path} failed (${res.status})`, path, { status: res.status });
+    throw new ApiError(payloadMessage || `${path} failed (${res.status})`, path, { status: res.status, detail: payload, code: errorCode });
   }
   return (await res.json()) as T;
 }
@@ -448,15 +474,18 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
 
   if (!res.ok) {
     const payload = await parseErrorPayload(res);
-    const payloadMessage = String(payload?.detail || payload?.message || "").trim();
-    if (res.status === 401) throw new ApiError(payloadMessage || "Session expired (401)", path, { status: 401 });
+    const payloadMessage = getErrorMessage(payload, "");
+    const errorCode = getErrorCode(payload);
+    if (res.status === 401) throw new ApiError(payloadMessage || "Session expired (401)", path, { status: 401, detail: payload, code: errorCode });
     if (res.status === 429) {
       throw new ApiError(payloadMessage || "You are doing that too quickly. Please wait and retry.", path, {
         status: 429,
         retryAfterSeconds: parseRetryAfterSeconds(res.headers.get("retry-after")),
+        detail: payload,
+        code: errorCode,
       });
     }
-    throw new ApiError(payloadMessage || `${path} failed (${res.status})`, path, { status: res.status });
+    throw new ApiError(payloadMessage || `${path} failed (${res.status})`, path, { status: res.status, detail: payload, code: errorCode });
   }
   return (await res.json()) as T;
 }
@@ -478,15 +507,18 @@ async function postFormData<T>(path: string, body: FormData): Promise<T> {
 
   if (!res.ok) {
     const payload = await parseErrorPayload(res);
-    const payloadMessage = String(payload?.detail || payload?.message || "").trim();
-    if (res.status === 401) throw new ApiError(payloadMessage || "Session expired (401)", path, { status: 401 });
+    const payloadMessage = getErrorMessage(payload, "");
+    const errorCode = getErrorCode(payload);
+    if (res.status === 401) throw new ApiError(payloadMessage || "Session expired (401)", path, { status: 401, detail: payload, code: errorCode });
     if (res.status === 429) {
       throw new ApiError(payloadMessage || "You are doing that too quickly. Please wait and retry.", path, {
         status: 429,
         retryAfterSeconds: parseRetryAfterSeconds(res.headers.get("retry-after")),
+        detail: payload,
+        code: errorCode,
       });
     }
-    throw new ApiError(payloadMessage || `${path} failed (${res.status})`, path, { status: res.status });
+    throw new ApiError(payloadMessage || `${path} failed (${res.status})`, path, { status: res.status, detail: payload, code: errorCode });
   }
   return (await res.json()) as T;
 }

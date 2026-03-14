@@ -11,6 +11,37 @@ $venvPython = Join-Path $apiDir '.venv/Scripts/python.exe'
 
 Write-Host 'Starting Gambill Coaching app with health checks...' -ForegroundColor Cyan
 
+$launchStartedAt = Get-Date
+$stageTimings = [ordered]@{}
+
+function Invoke-TimedStage {
+  param(
+    [Parameter(Mandatory=$true)][string]$Label,
+    [Parameter(Mandatory=$true)][scriptblock]$Action
+  )
+
+  Write-Host "[$Label] Starting..." -ForegroundColor DarkCyan
+  $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+  try {
+    & $Action
+  } finally {
+    $stopwatch.Stop()
+    $elapsedSeconds = [Math]::Round($stopwatch.Elapsed.TotalSeconds, 1)
+    $stageTimings[$Label] = $elapsedSeconds
+    Write-Host "[$Label] Finished in ${elapsedSeconds}s" -ForegroundColor DarkCyan
+  }
+}
+
+function Write-LaunchTimingSummary {
+  $totalSeconds = [Math]::Round(((Get-Date) - $launchStartedAt).TotalSeconds, 1)
+  Write-Host ''
+  Write-Host 'Launch timing summary:' -ForegroundColor Cyan
+  foreach ($entry in $stageTimings.GetEnumerator()) {
+    Write-Host ("  {0}: {1}s" -f $entry.Key, $entry.Value)
+  }
+  Write-Host ("  TOTAL: {0}s" -f $totalSeconds) -ForegroundColor Cyan
+}
+
 function Get-CommandVersion($name, $versionArg = '--version') {
   try {
     $v = (& $name $versionArg 2>$null | Select-Object -First 1).ToString().Trim()
@@ -89,14 +120,16 @@ function Ensure-WebRuntime {
   Write-Host "[WEB] Runtime fixed: node $nodeV, npm $npmV" -ForegroundColor Green
 }
 
-if (-not (Test-Path $venvPython)) {
-  Write-Host '[API] Creating virtual environment...' -ForegroundColor Yellow
-  if (Get-Command py -ErrorAction SilentlyContinue) {
-    py -3 -m venv (Join-Path $apiDir '.venv')
-  } elseif (Get-Command python -ErrorAction SilentlyContinue) {
-    python -m venv (Join-Path $apiDir '.venv')
-  } else {
-    throw 'Python not found. Install Python 3 and ensure py/python is on PATH.'
+Invoke-TimedStage 'API venv check' {
+  if (-not (Test-Path $venvPython)) {
+    Write-Host '[API] Creating virtual environment...' -ForegroundColor Yellow
+    if (Get-Command py -ErrorAction SilentlyContinue) {
+      py -3 -m venv (Join-Path $apiDir '.venv')
+    } elseif (Get-Command python -ErrorAction SilentlyContinue) {
+      python -m venv (Join-Path $apiDir '.venv')
+    } else {
+      throw 'Python not found. Install Python 3 and ensure py/python is on PATH.'
+    }
   }
 }
 
@@ -113,23 +146,28 @@ $hashFile = Join-Path $apiDir '.pip-installed-hash'
 $currentHash = Get-RequirementsHash -RequirementsPath $reqFile
 $cachedHash = if (Test-Path $hashFile) { (Get-Content $hashFile -Raw).Trim() } else { '' }
 
-if ($currentHash -eq $cachedHash) {
-  Write-Host '[API] Dependencies up to date (hash match). Skipping pip install.' -ForegroundColor Green
-} else {
-  Write-Host '[API] Installing dependencies (requirements.txt changed)...' -ForegroundColor Yellow
-  & $venvPython -m pip install -r $reqFile | Out-Host
-  if ($LASTEXITCODE -eq 0) {
-    Set-Content -Path $hashFile -Value $currentHash -NoNewline
-    Write-Host '[API] Dependencies installed and hash cached.' -ForegroundColor Green
+Invoke-TimedStage 'API dependency check' {
+  if ($currentHash -eq $cachedHash) {
+    Write-Host '[API] Dependencies up to date (hash match). Skipping pip install.' -ForegroundColor Green
   } else {
-    throw '[API] pip install failed'
+    Write-Host '[API] Installing dependencies (requirements.txt changed)...' -ForegroundColor Yellow
+    & $venvPython -m pip install -r $reqFile | Out-Host
+    if ($LASTEXITCODE -eq 0) {
+      Set-Content -Path $hashFile -Value $currentHash -NoNewline
+      Write-Host '[API] Dependencies installed and hash cached.' -ForegroundColor Green
+    } else {
+      throw '[API] pip install failed'
+    }
   }
 }
 
-Ensure-WebRuntime
+Invoke-TimedStage 'WEB runtime check' {
+  Ensure-WebRuntime
+}
 
 if ($RuntimeCheckOnly) {
   Write-Host '[WEB] Runtime check completed. Exiting due to -RuntimeCheckOnly.' -ForegroundColor Green
+  Write-LaunchTimingSummary
   exit 0
 }
 
@@ -183,39 +221,61 @@ function Repair-WebNodeModulesLock {
   }
 }
 
-Write-Host '[WEB] Installing npm dependencies (deterministic npm ci)...' -ForegroundColor Yellow
-Push-Location $webDir
-if (-not (Test-Path (Join-Path $webDir 'package-lock.json'))) {
-  Write-Host '[WEB] package-lock.json missing, generating lockfile with npm install once...' -ForegroundColor Yellow
-  Invoke-CmdChecked "npm install --no-audit --no-fund" '[WEB] npm install failed'
-}
-
-$installed = $false
-for ($i=1; $i -le 3 -and -not $installed; $i++) {
+Invoke-TimedStage 'WEB dependency check' {
+  Write-Host '[WEB] Installing npm dependencies (deterministic npm ci)...' -ForegroundColor Yellow
+  Push-Location $webDir
   try {
-    Invoke-CmdChecked "npm ci --no-audit --no-fund" '[WEB] npm ci failed'
-    $installed = $true
-  } catch {
-    if ($i -lt 3) {
-      Write-Host "[WEB] npm ci attempt $i failed. Attempting lock recovery before retry..." -ForegroundColor Yellow
-      Stop-WebNodeProcesses -RepoPath $root
-      Repair-WebNodeModulesLock -WebPath $webDir
-      Start-Sleep -Seconds 3
-    } else {
-      Pop-Location
-      throw "[WEB] npm ci failed after 3 attempts. If EPERM persists, temporarily exclude this repo path from AV real-time scan and rerun PowerShell as Administrator. Details: $($_.Exception.Message)"
+    $webLockFile = Join-Path $webDir 'package-lock.json'
+    $webHashFile = Join-Path $webDir '.npm-installed-hash'
+    $webModulesDir = Join-Path $webDir 'node_modules'
+
+    if (-not (Test-Path $webLockFile)) {
+      Write-Host '[WEB] package-lock.json missing, generating lockfile with npm install once...' -ForegroundColor Yellow
+      Invoke-CmdChecked "npm install --no-audit --no-fund" '[WEB] npm install failed'
     }
+
+    $currentWebHash = Get-RequirementsHash -RequirementsPath $webLockFile
+    $cachedWebHash = if (Test-Path $webHashFile) { (Get-Content $webHashFile -Raw).Trim() } else { '' }
+    $webInstallRequired = (-not (Test-Path $webModulesDir)) -or ($currentWebHash -ne $cachedWebHash)
+
+    if (-not $webInstallRequired) {
+      Write-Host '[WEB] Dependencies up to date (lock hash match). Skipping npm ci.' -ForegroundColor Green
+    } else {
+      $installed = $false
+      for ($i=1; $i -le 3 -and -not $installed; $i++) {
+        try {
+          Invoke-CmdChecked "npm ci --no-audit --no-fund" '[WEB] npm ci failed'
+          $installed = $true
+          Set-Content -Path $webHashFile -Value $currentWebHash -NoNewline
+          Write-Host '[WEB] Dependencies installed and hash cached.' -ForegroundColor Green
+        } catch {
+          if ($i -lt 3) {
+            Write-Host "[WEB] npm ci attempt $i failed. Attempting lock recovery before retry..." -ForegroundColor Yellow
+            Stop-WebNodeProcesses -RepoPath $root
+            Repair-WebNodeModulesLock -WebPath $webDir
+            Start-Sleep -Seconds 3
+          } else {
+            throw "[WEB] npm ci failed after 3 attempts. If EPERM persists, temporarily exclude this repo path from AV real-time scan and rerun PowerShell as Administrator. Details: $($_.Exception.Message)"
+          }
+        }
+      }
+    }
+  } finally {
+    Pop-Location
   }
 }
-Pop-Location
 
 # Start API
 $apiCmd = "cd /d `"$apiDir`" && set LAKEBASE_BACKEND=duckdb && set APP_ENV=dev && .\.venv\Scripts\python.exe -m uvicorn main:app --reload --port 8000"
-Start-Process -FilePath 'cmd.exe' -ArgumentList '/k', $apiCmd -WindowStyle Normal
+Invoke-TimedStage 'API process launch' {
+  Start-Process -FilePath 'cmd.exe' -ArgumentList '/k', $apiCmd -WindowStyle Normal
+}
 
 # Start WEB
 $webCmd = "cd /d `"$webDir`" && npm run dev"
-Start-Process -FilePath 'cmd.exe' -ArgumentList '/k', $webCmd -WindowStyle Normal
+Invoke-TimedStage 'WEB process launch' {
+  Start-Process -FilePath 'cmd.exe' -ArgumentList '/k', $webCmd -WindowStyle Normal
+}
 
 function Wait-Url($url, $label, $timeoutSec = 90) {
   $start = Get-Date
@@ -234,8 +294,16 @@ function Wait-Url($url, $label, $timeoutSec = 90) {
   return $false
 }
 
-$apiReady = Wait-Url 'http://127.0.0.1:8000/admin/bootstrap-status' 'API'
-$webReady = Wait-Url 'http://127.0.0.1:3000' 'WEB'
+$apiReady = $false
+$webReady = $false
+
+Invoke-TimedStage 'API readiness wait' {
+  $script:apiReady = Wait-Url 'http://127.0.0.1:8000/admin/bootstrap-status' 'API'
+}
+
+Invoke-TimedStage 'WEB readiness wait' {
+  $script:webReady = Wait-Url 'http://127.0.0.1:3000' 'WEB'
+}
 
 Write-Host ''
 if ($apiReady -and $webReady) {
@@ -245,3 +313,5 @@ if ($apiReady -and $webReady) {
 } else {
   Write-Host 'One or more services did not become healthy. Check the opened terminal windows for errors.' -ForegroundColor Yellow
 }
+
+Write-LaunchTimingSummary

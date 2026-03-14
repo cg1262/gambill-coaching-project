@@ -43,6 +43,7 @@ from coaching import (
     sanitize_generated_sow,
     compute_sow_quality_score,
     build_quality_diagnostics,
+    normalize_generated_sow,
     ensure_interview_ready_package,
     enforce_required_section_order,
     extract_resume_signals,
@@ -2821,7 +2822,7 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, request: Request, ses
         auto_revised = True
         retried_after_validation = True
 
-    strict_sow = CoachingSowDraft.model_validate(ensure_interview_ready_package(sow)).model_dump(mode="json", by_alias=True)
+    strict_sow = CoachingSowDraft.model_validate(ensure_interview_ready_package(normalize_generated_sow(sow))).model_dump(mode="json", by_alias=True)
     strict_sow = enforce_required_section_order(strict_sow)
     strict_sow, sanitize_findings = sanitize_generated_sow(strict_sow)
     strict_sow = ensure_interview_ready_package(strict_sow)
@@ -2831,7 +2832,7 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, request: Request, ses
 
     if int(quality.get("score") or 0) < quality_floor_score:
         strict_sow = auto_revise_sow_once(strict_sow, final_findings)
-        strict_sow = CoachingSowDraft.model_validate(ensure_interview_ready_package(strict_sow)).model_dump(mode="json", by_alias=True)
+        strict_sow = CoachingSowDraft.model_validate(ensure_interview_ready_package(normalize_generated_sow(strict_sow))).model_dump(mode="json", by_alias=True)
         strict_sow = enforce_required_section_order(strict_sow)
         strict_sow, extra_sanitize_findings = sanitize_generated_sow(strict_sow)
         strict_sow = ensure_interview_ready_package(strict_sow)
@@ -2853,7 +2854,7 @@ def coaching_generate_sow(req: CoachingGenerateSowRequest, request: Request, ses
             },
             parsed_jobs=parsed_jobs,
         ), final_findings)
-        strict_sow = CoachingSowDraft.model_validate(ensure_interview_ready_package(strict_sow)).model_dump(mode="json", by_alias=True)
+        strict_sow = CoachingSowDraft.model_validate(ensure_interview_ready_package(normalize_generated_sow(strict_sow))).model_dump(mode="json", by_alias=True)
         strict_sow = enforce_required_section_order(strict_sow)
         strict_sow, hard_gate_sanitize = sanitize_generated_sow(strict_sow)
         strict_sow = ensure_interview_ready_package(strict_sow)

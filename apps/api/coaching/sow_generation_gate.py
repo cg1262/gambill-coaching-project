@@ -35,16 +35,6 @@ def _meta_rubric_archetype_order() -> list[str]:
     return normalized
 
 
-def _meta_rubric_max_reprocess_attempts(alternate_count: int) -> int:
-    default_attempts = max(0, int(alternate_count))
-    raw = str(os.getenv("COACHING_META_RUBRIC_MAX_REPROCESS_ATTEMPTS") or str(default_attempts)).strip()
-    try:
-        parsed = int(raw)
-    except Exception:
-        parsed = default_attempts
-    return max(0, min(default_attempts, parsed))
-
-
 def _safe_score(evaluation: dict[str, Any] | None) -> int:
     try:
         return int((evaluation or {}).get("overall_score") or 0)
@@ -76,12 +66,6 @@ def _infer_archetype(strategy: dict[str, Any] | None, sow: dict[str, Any]) -> st
     return best
 
 
-def _alternate_archetypes(primary: str) -> list[str]:
-    archetype_order = _meta_rubric_archetype_order()
-    normalized = str(primary or "").strip().lower()
-    return [name for name in archetype_order if name != normalized]
-
-
 def generate_sow_with_llm(
     intake: dict[str, Any],
     parsed_jobs: list[dict[str, Any]],
@@ -105,64 +89,28 @@ def generate_sow_with_llm(
     if not isinstance(strategy, dict):
         strategy = {}
 
-    best_sow = original_sow
-    best_eval = initial_eval
-    best_score = initial_score
     selected_archetype = _infer_archetype(strategy, original_sow)
-    attempts: list[dict[str, Any]] = []
-    alternate_archetypes = _alternate_archetypes(selected_archetype)
-    max_reprocess_attempts = _meta_rubric_max_reprocess_attempts(len(alternate_archetypes))
-    archetype_order = _meta_rubric_archetype_order()
-
-    if initial_score < threshold:
-        for archetype in alternate_archetypes[:max_reprocess_attempts]:
-            strategy_override = dict(strategy)
-            strategy_override["archetype"] = archetype
-            candidate = build_sow_skeleton(
-                intake=intake,
-                parsed_jobs=parsed_jobs,
-                project_strategy=strategy_override,
-            )
-            candidate_eval = evaluate_sow_output(candidate)
-            candidate_score = _safe_score(candidate_eval)
-            attempts.append({"archetype": archetype, "overall_score": candidate_score})
-            if candidate_score > best_score:
-                best_sow = candidate
-                best_eval = candidate_eval
-                best_score = candidate_score
-                selected_archetype = archetype
-            if best_score >= threshold:
-                break
-
-    gate_status = "initial_pass"
-    if initial_score < threshold:
-        if best_score >= threshold and best_sow is not original_sow:
-            gate_status = "reprocessed_pass"
-        elif best_sow is not original_sow:
-            gate_status = "reprocessed_best_effort_below_threshold"
-        else:
-            gate_status = "below_threshold_no_improvement"
-
+    gate_status = "initial_pass" if initial_score >= threshold else "evaluated_only_below_threshold"
     gate = {
         "threshold": threshold,
         "initial_overall_score": initial_score,
-        "final_overall_score": best_score,
+        "final_overall_score": initial_score,
         "met_threshold_initially": initial_score >= threshold,
-        "met_threshold_final": best_score >= threshold,
-        "reprocessed": best_sow is not original_sow,
-        "reprocess_attempts": attempts,
+        "met_threshold_final": initial_score >= threshold,
+        "reprocessed": False,
+        "reprocess_attempts": [],
         "selected_archetype": selected_archetype,
         "status": gate_status,
-        "max_reprocess_attempts": max_reprocess_attempts,
-        "archetype_order": archetype_order,
+        "max_reprocess_attempts": 0,
+        "archetype_order": _meta_rubric_archetype_order(),
     }
 
     merged_meta = dict(llm_meta or {})
     merged_meta["meta_rubric_gate"] = gate
-    merged_meta["meta_rubric_evaluation"] = best_eval
+    merged_meta["meta_rubric_evaluation"] = initial_eval
 
     return {
         **result,
-        "sow": best_sow,
+        "sow": original_sow,
         "meta": merged_meta,
     }

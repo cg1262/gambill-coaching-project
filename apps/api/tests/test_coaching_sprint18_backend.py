@@ -215,3 +215,98 @@ def test_sow_draft_review_pass_applies_improved_output(monkeypatch):
     assert review.get("attempted") is True
     assert review.get("applied") is True
     assert review.get("reason") == "improved"
+
+
+def test_sow_draft_accepts_llm_api_key_alias(monkeypatch):
+    intake = {
+        "applicant_name": "Candidate One",
+        "resume_text": "",
+        "self_assessment_text": "",
+        "preferences": {},
+    }
+    parsed_jobs: list[dict] = []
+    expected_sow = sow_draft.build_sow_skeleton(intake=intake, parsed_jobs=parsed_jobs)
+    captured: list[str] = []
+    responses = [
+        (
+            {"archetype": "general", "dashboard_questions": ["q1", "q2", "q3"]},
+            {"choices": [{"finish_reason": "stop"}], "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}},
+        ),
+        (
+            expected_sow,
+            {"choices": [{"finish_reason": "stop"}], "usage": {"prompt_tokens": 20, "completion_tokens": 15, "total_tokens": 35}},
+        ),
+    ]
+
+    def _fake_request_llm_json(**kwargs):
+        captured.append(str(kwargs.get("api_key") or ""))
+        return responses.pop(0)
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("LLM_API_KEY", "alias-key")
+    monkeypatch.setenv("COACHING_SOW_LLM_MODEL", "gpt-test")
+    monkeypatch.setenv("COACHING_SOW_ENABLE_REVIEW_PASS", "0")
+    monkeypatch.setattr(sow_draft, "_request_llm_json", _fake_request_llm_json)
+
+    result = sow_draft.generate_sow_with_llm(intake=intake, parsed_jobs=parsed_jobs, timeout=2, max_retries=0)
+
+    assert result["ok"] is True
+    assert captured == ["alias-key", "alias-key"]
+    assert (result.get("meta") or {}).get("api_key_source") == "LLM_API_KEY"
+
+
+def test_sow_draft_sends_explicit_output_templates_in_prompt_payload(monkeypatch):
+    intake = {
+        "applicant_name": "Candidate One",
+        "resume_text": "Lead data engineer with insurance analytics background.",
+        "self_assessment_text": "Strong in Databricks, Spark, and KPI storytelling.",
+        "preferences": {"resume_parse_summary": {"domains": ["insurance"]}},
+    }
+    parsed_jobs: list[dict] = [{"signals": {"domains": ["insurance"], "tools": ["Databricks", "Power BI"]}}]
+    expected_sow = sow_draft.build_sow_skeleton(intake=intake, parsed_jobs=parsed_jobs)
+    captured_payloads: list[dict] = []
+    responses = [
+        (
+            {
+                "archetype": "finance",
+                "candidate_fit_summary": "Fits well.",
+                "project_focus": "Claims analytics modernization.",
+                "business_problem": "Claims reporting latency.",
+                "recommended_source_names": ["Insurance Data API"],
+                "requested_industry": "insurance",
+                "dashboard_questions": ["Which regions are exceeding claims cycle targets?"],
+                "delivery_scope": {"target_role_level": "lead", "scope_difficulty": "advanced", "suggested_timeline_weeks": 8},
+                "self_assessment_takeaways": {"strengths": ["spark"], "gaps": [], "notes": "Strong platform fit."},
+                "industry_context": {"primary": "insurance", "all_domains": ["insurance"], "source": "resume_or_job_domains"},
+            },
+            {"choices": [{"finish_reason": "stop"}], "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}},
+        ),
+        (
+            expected_sow,
+            {"choices": [{"finish_reason": "stop"}], "usage": {"prompt_tokens": 20, "completion_tokens": 15, "total_tokens": 35}},
+        ),
+    ]
+
+    def _fake_request_llm_json(**kwargs):
+        captured_payloads.append(kwargs.get("user_payload") or {})
+        return responses.pop(0)
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("COACHING_SOW_LLM_MODEL", "gpt-test")
+    monkeypatch.setenv("COACHING_SOW_ENABLE_REVIEW_PASS", "0")
+    monkeypatch.setattr(sow_draft, "_request_llm_json", _fake_request_llm_json)
+
+    result = sow_draft.generate_sow_with_llm(intake=intake, parsed_jobs=parsed_jobs, timeout=2, max_retries=0)
+
+    assert result["ok"] is True
+    assert len(captured_payloads) == 2
+    strategy_payload = captured_payloads[0]
+    sow_payload = captured_payloads[1]
+    assert "output_template" in strategy_payload
+    assert "requested_industry" in (strategy_payload.get("output_template") or {})
+    assert "industry_context" in (strategy_payload.get("output_template") or {})
+    assert "output_template" in sow_payload
+    assert "schema_version" in (sow_payload.get("output_template") or {})
+    assert "project_charter" in (sow_payload.get("output_template") or {})
+    assert "sections" in ((sow_payload.get("output_template") or {}).get("project_charter") or {})
+    assert "medallion_plan" in ((sow_payload.get("output_template") or {}).get("solution_architecture") or {})
