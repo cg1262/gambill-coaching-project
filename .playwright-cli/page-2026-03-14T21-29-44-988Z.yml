@@ -1,0 +1,122 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]:
+        - img "Gambill Coaching" [ref=e5]
+        - generic [ref=e6]:
+          - heading "Gambill Coaching Project Builder" [level=2] [ref=e7]
+          - paragraph [ref=e8]: Generate portfolio-ready, business-outcome-driven data engineering projects from resume + job targets.
+      - generic [ref=e9]:
+        - button "Switch to dark mode" [ref=e10]: "Theme: Light"
+        - generic [ref=e11]: Coaching App
+    - status [ref=e108]:
+      - generic [ref=e110]: Generating SOW...
+    - generic [ref=e15]:
+      - link "Intake" [ref=e16] [cursor=pointer]:
+        - /url: /intake
+        - button "Intake" [ref=e17]
+      - link "Review" [ref=e18] [cursor=pointer]:
+        - /url: /review
+        - button "Review" [ref=e19]
+      - link "Project" [ref=e20] [cursor=pointer]:
+        - /url: /project/c5c633e8-3009-4753-9585-b96a1d21d18d
+        - button "Project" [ref=e21]
+    - heading "Readiness Health" [level=4] [ref=e22]
+    - generic [ref=e23]:
+      - generic [ref=e24]:
+        - button "Refresh readiness" [ref=e96]
+        - generic [ref=e97]: Ready
+      - generic [ref=e98]:
+        - generic [ref=e99]:
+          - text: "LLM key:"
+          - strong [ref=e100]: present
+        - generic [ref=e101]:
+          - text: "Provider:"
+          - strong [ref=e102]: reachable
+        - generic [ref=e103]: HTTP 200
+        - generic [ref=e104]: "Base URL: https://api.openai.com/v1"
+        - generic [ref=e105]:
+          - text: "Lakebase:"
+          - strong [ref=e106]: healthy
+        - generic [ref=e107]: "ok (duckdb: lakebase.duckdb)"
+    - generic [ref=e26]:
+      - heading "Coaching Project Intake" [level=4] [ref=e27]
+      - generic [ref=e28]:
+        - generic [ref=e29]: Complete each section to generate a coaching-ready project package.
+        - generic [ref=e30]:
+          - button "1) Resume" [ref=e31]
+          - button "2) Self-Assessment" [ref=e32]
+          - button "3) Job Links" [ref=e33]
+          - button "4) Stack + Timeline Done" [ref=e34]
+        - generic [ref=e35]:
+          - text: "Completion:"
+          - strong [ref=e36]: 1/4
+        - generic [ref=e37]:
+          - generic [ref=e38]: Intake Parsed
+          - generic [ref=e39]: SOW Generated
+          - generic [ref=e40]: Validated
+        - generic [ref=e111]: Generating SOW...
+        - text: Candidate Name
+        - textbox "Chris Gambill" [ref=e41]
+        - text: Candidate Email
+        - textbox "candidate@email.com" [ref=e42]: chris.gambill@gambilldataengineering.com
+        - text: Target Role (what role you are aiming for)
+        - textbox "Senior Data Engineer" [ref=e43]
+        - generic [ref=e44]:
+          - text: Work Platforms (new line under target role)
+          - generic [ref=e45]:
+            - generic [ref=e46]:
+              - checkbox "Databricks" [checked] [ref=e47]
+              - text: Databricks
+            - generic [ref=e48]:
+              - checkbox "Snowflake" [ref=e49]
+              - text: Snowflake
+            - generic [ref=e50]:
+              - checkbox "BigQuery" [ref=e51]
+              - text: BigQuery
+            - generic [ref=e52]:
+              - checkbox "Azure Synapse" [ref=e53]
+              - text: Azure Synapse
+            - generic [ref=e54]:
+              - checkbox "Redshift" [ref=e55]
+              - text: Redshift
+        - generic [ref=e56]:
+          - generic [ref=e57]: Resume upload + highlights
+          - generic [ref=e58]:
+            - generic [ref=e59]: Drag and drop resume here
+            - generic [ref=e60]: or
+            - button "Choose file" [ref=e61]
+            - generic [ref=e62]:
+              - text: "Selected:"
+              - strong [ref=e63]: none
+          - generic [ref=e65]:
+            - generic [ref=e66]: Upload + parse status
+            - generic [ref=e67]: 0%
+          - generic [ref=e69]:
+            - strong [ref=e70]: Intake mapping preview
+            - generic [ref=e71]: What reviewers will see from your resume profile payload.
+            - generic [ref=e72]:
+              - strong [ref=e73]: "Strength signals:"
+              - text: "0"
+            - generic [ref=e74]:
+              - strong [ref=e75]: "Gap signals:"
+              - text: "0"
+            - generic [ref=e76]:
+              - strong [ref=e77]: "Highlight bullets:"
+              - text: "0"
+          - generic [ref=e78]:
+            - strong [ref=e79]: Editable parsed highlights
+            - generic [ref=e80]: Tune these before submit so reviewers see the strongest evidence.
+            - generic [ref=e82]:
+              - textbox "Led migration to lakehouse and reduced latency by 38%" [ref=e83]
+              - button "Remove" [ref=e84]
+            - button "Add highlight" [ref=e85]
+        - generic [ref=e86]:
+          - button "Back" [ref=e87]
+          - button "Next" [ref=e88]
+          - button "Generating..." [disabled] [ref=e112]
+          - button "Regenerating..." [disabled] [ref=e113]
+          - button "Mark Validated" [ref=e91]
+      - heading "Project Output Viewer" [level=4] [ref=e92]
+      - generic [ref=e94]: Submit intake and build a scaffold to preview SOW output, resources, and student package export.
+  - alert [ref=e95]

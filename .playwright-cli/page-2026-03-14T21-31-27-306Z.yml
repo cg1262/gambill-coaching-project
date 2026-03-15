@@ -1,0 +1,226 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]:
+        - img "Gambill Coaching" [ref=e5]
+        - generic [ref=e6]:
+          - heading "Gambill Coaching Project Builder" [level=2] [ref=e7]
+          - paragraph [ref=e8]: Generate portfolio-ready, business-outcome-driven data engineering projects from resume + job targets.
+      - generic [ref=e9]:
+        - button "Switch to dark mode" [ref=e10]: "Theme: Light"
+        - generic [ref=e11]: Coaching App
+    - generic [ref=e15]:
+      - link "Intake" [ref=e16] [cursor=pointer]:
+        - /url: /intake
+        - button "Intake" [ref=e17]
+      - link "Review" [ref=e18] [cursor=pointer]:
+        - /url: /review
+        - button "Review" [ref=e19]
+      - link "Project" [ref=e20] [cursor=pointer]:
+        - /url: /project/c5c633e8-3009-4753-9585-b96a1d21d18d
+        - button "Project" [ref=e21]
+    - heading "Readiness Health" [level=4] [ref=e22]
+    - generic [ref=e23]:
+      - generic [ref=e24]:
+        - button "Refresh readiness" [ref=e96]
+        - generic [ref=e97]: Ready
+      - generic [ref=e98]:
+        - generic [ref=e99]:
+          - text: "LLM key:"
+          - strong [ref=e100]: present
+        - generic [ref=e101]:
+          - text: "Provider:"
+          - strong [ref=e102]: reachable
+        - generic [ref=e103]: HTTP 200
+        - generic [ref=e104]: "Base URL: https://api.openai.com/v1"
+        - generic [ref=e105]:
+          - text: "Lakebase:"
+          - strong [ref=e106]: healthy
+        - generic [ref=e107]: "ok (duckdb: lakebase.duckdb)"
+    - generic [ref=e26]:
+      - heading "Coaching Project Intake" [level=4] [ref=e27]
+      - generic [ref=e28]:
+        - generic [ref=e29]: Complete each section to generate a coaching-ready project package.
+        - generic [ref=e30]:
+          - button "1) Resume" [ref=e31]
+          - button "2) Self-Assessment" [ref=e32]
+          - button "3) Job Links" [ref=e33]
+          - button "4) Stack + Timeline Done" [ref=e34]
+        - generic [ref=e35]:
+          - text: "Completion:"
+          - strong [ref=e36]: 1/4
+        - generic [ref=e37]:
+          - generic [ref=e38]: Intake Parsed
+          - generic [ref=e39]: SOW Generated
+          - generic [ref=e40]: Validated
+          - generic [ref=e114]: "Source: LLM generated"
+        - generic [ref=e111]: Generation complete.
+        - generic [ref=e116]:
+          - generic [ref=e117]:
+            - text: "Quality score:"
+            - strong [ref=e118]: "100"
+          - generic [ref=e119]:
+            - text: "Quality band:"
+            - strong [ref=e120]: n/a
+          - generic [ref=e121]:
+            - text: "Structure score:"
+            - strong [ref=e122]: "100"
+          - generic [ref=e123]:
+            - text: "Section order valid:"
+            - strong [ref=e124]: "yes"
+          - generic [ref=e125]:
+            - text: "Regenerate delta:"
+            - strong [ref=e126]: n/a
+          - generic [ref=e127]:
+            - text: "Quality floor:"
+            - strong [ref=e128]: "80"
+          - generic [ref=e129]:
+            - text: "Auto-regenerated for floor:"
+            - strong [ref=e130]: "no"
+          - generic [ref=e131]:
+            - text: "Deficiency count:"
+            - strong [ref=e132]: "0"
+        - text: Candidate Name
+        - textbox "Chris Gambill" [ref=e41]
+        - text: Candidate Email
+        - textbox "candidate@email.com" [ref=e42]: chris.gambill@gambilldataengineering.com
+        - text: Target Role (what role you are aiming for)
+        - textbox "Senior Data Engineer" [ref=e43]
+        - generic [ref=e44]:
+          - text: Work Platforms (new line under target role)
+          - generic [ref=e45]:
+            - generic [ref=e46]:
+              - checkbox "Databricks" [checked] [ref=e47]
+              - text: Databricks
+            - generic [ref=e48]:
+              - checkbox "Snowflake" [ref=e49]
+              - text: Snowflake
+            - generic [ref=e50]:
+              - checkbox "BigQuery" [ref=e51]
+              - text: BigQuery
+            - generic [ref=e52]:
+              - checkbox "Azure Synapse" [ref=e53]
+              - text: Azure Synapse
+            - generic [ref=e54]:
+              - checkbox "Redshift" [ref=e55]
+              - text: Redshift
+        - generic [ref=e56]:
+          - generic [ref=e57]: Resume upload + highlights
+          - generic [ref=e58]:
+            - generic [ref=e59]: Drag and drop resume here
+            - generic [ref=e60]: or
+            - button "Choose file" [ref=e61]
+            - generic [ref=e62]:
+              - text: "Selected:"
+              - strong [ref=e63]: none
+          - generic [ref=e65]:
+            - generic [ref=e66]: Upload + parse status
+            - generic [ref=e67]: 0%
+          - generic [ref=e69]:
+            - strong [ref=e70]: Intake mapping preview
+            - generic [ref=e71]: What reviewers will see from your resume profile payload.
+            - generic [ref=e72]:
+              - strong [ref=e73]: "Strength signals:"
+              - text: "0"
+            - generic [ref=e74]:
+              - strong [ref=e75]: "Gap signals:"
+              - text: "0"
+            - generic [ref=e76]:
+              - strong [ref=e77]: "Highlight bullets:"
+              - text: "0"
+          - generic [ref=e78]:
+            - strong [ref=e79]: Editable parsed highlights
+            - generic [ref=e80]: Tune these before submit so reviewers see the strongest evidence.
+            - generic [ref=e82]:
+              - textbox "Led migration to lakehouse and reduced latency by 38%" [ref=e83]
+              - button "Remove" [ref=e84]
+            - button "Add highlight" [ref=e85]
+        - generic [ref=e86]:
+          - button "Back" [ref=e87]
+          - button "Next" [ref=e88]
+          - button "Submit Intake + Generate SOW" [ref=e133]
+          - button "Regenerate with improvements" [ref=e134]
+          - button "Mark Validated" [ref=e91]
+      - heading "Project Output Viewer" [level=4] [ref=e92]
+      - generic [ref=e93]:
+        - generic [ref=e94]:
+          - strong [ref=e135]: Candidate - GlobalMart Retail Intelligence Pipeline
+          - generic [ref=e136]:
+            - button "Export Markdown" [ref=e137]
+            - button "Export JSON" [ref=e138]
+        - generic [ref=e139]:
+          - strong [ref=e140]: Raw SOW Payload
+          - generic [ref=e141]: "{ \"schema_version\": \"0.2\", \"project_title\": \"Candidate - GlobalMart Retail Intelligence Pipeline\", \"candidate_profile\": { \"applicant_name\": \"Candidate\", \"preferences\": { \"target_role\": \"Senior Data Engineer\", \"preferred_stack\": \"Databricks + SQL + dbt + Power BI\", \"timeline_weeks\": 8, \"resume_profile\": { \"file_name\": \"\", \"confidence\": 0, \"highlights\": [], \"strengths\": [], \"gaps\": [] }, \"combined_profile\": { \"summary\": \"\" }, \"profile_overrides\": { \"role_level\": \"senior\" }, \"self_assessment\": { \"career_clarity\": \"\", \"sql_confidence\": \"Intermediate\", \"python_confidence\": \"Intermediate\", \"data_modeling_confidence\": \"Intermediate\", \"etl_pipeline_confidence\": \"Intermediate\", \"cloud_platform_confidence\": \"Intermediate\", \"analytics_storytelling_confidence\": \"Intermediate\", \"job_search_execution\": \"\", \"interview_readiness\": \"Practicing\", \"portfolio_readiness\": \"In progress\", \"notes\": \"Support needed: Weekly architecture and storytelling feedback | Weekly hours: 6\" }, \"resume_parse_summary\": { \"role_level\": \"senior\", \"tools\": [ \"Databricks\", \"SQL\", \"dbt\", \"Power BI\", \"Python\" ], \"domains\": [], \"project_experience_keywords\": [], \"strengths\": [], \"gaps\": [], \"parse_confidence\": 0, \"parse_strategy\": \"frontend_resume_summary_v1\", \"filename\": \"\" }, \"stack_preferences\": [ \"Databricks\" ], \"tool_preferences\": [ \"SQL\", \"dbt\", \"Power BI\", \"Python\" ], \"job_links_structured\": [] }, \"role_scope_assessment\": { \"current_role_level\": \"senior\", \"target_role_level\": \"senior\", \"scope_difficulty\": \"foundational\", \"parse_confidence\": 0, \"suggested_timeline_weeks\": 8, \"capability_index\": 10 } }, \"business_outcome\": { \"problem_statement\": \"GlobalMart leadership lacks a trusted cross-channel view of margin, inventory turns, and return behavior because store, e-commerce, and product extracts refresh on different cadences and break KPI consistency during Monday business reviews.\", \"current_state\": \"Merchandising and finance teams reconcile sales, inventory, and returns in spreadsheets, delaying root-cause analysis for stockouts, markdown pressure, and margin erosion.\", \"future_state\": \"A retail intelligence lakehouse publishes decision-grade gold KPIs by store, channel, and product family with explicit lineage from bronze ingestion through silver conformance and executive-ready dashboard views.\", \"target_metrics\": [ { \"metric\": \"margin_report_latency_hours\", \"target\": \"<4\" }, { \"metric\": \"inventory_turn_visibility\", \"target\": \"daily by store and channel\" }, { \"metric\": \"manual_reconciliation_reduction\", \"target\": \">=30%\" } ], \"domain_focus\": [ \"retail\", \"ecommerce\" ], \"data_sources\": [ { \"name\": \"Sample Superstore Sales Dataset\", \"url\": \"https://www.kaggle.com/datasets/vivek468/superstore-dataset-final\", \"ingestion_doc_url\": \"https://www.kaggle.com/docs/api\", \"selection_rationale\": \"Provides order-level retail facts that are well suited for bronze-to-gold modeling, KPI design, and executive dashboard storytelling.\", \"ingestion_instructions\": \"Use documented API/file endpoint, land raw extract to bronze with run metadata, then apply conformance tests in silver before publishing gold KPIs.\" }, { \"name\": \"Bureau of Labor Statistics Public Data API\", \"url\": \"https://www.bls.gov/data/\", \"ingestion_doc_url\": \"https://www.bls.gov/developers/home.htm\", \"selection_rationale\": \"Provides real API ingestion practice plus documented schemas for incremental loads and trend dashboards.\", \"ingestion_instructions\": \"Use documented API/file endpoint, land raw extract to bronze with run metadata, then apply conformance tests in silver before publishing gold KPIs.\" }, { \"name\": \"NYC TLC Trip Record Data\", \"url\": \"https://www.nyc.gov/site/tlc/about/tlc-trip-record-data.page\", \"ingestion_doc_url\": \"https://www.nyc.gov/assets/tlc/downloads/pdf/data_dictionary_trip_records_yellow.pdf\", \"selection_rationale\": \"Public trip-level facts are excellent for building medallion pipelines and KPI reporting exercises.\", \"ingestion_instructions\": \"Use documented API/file endpoint, land raw extract to bronze with run metadata, then apply conformance tests in silver before publishing gold KPIs.\" } ] }, \"solution_architecture\": { \"ingestion\": { \"source_pattern\": \"Daily retail flat-file loads plus documented public extracts for orders, products, and inventory snapshots.\", \"cadence\": \"Daily for core sales and inventory facts, weekly for macro context enrichments.\" }, \"processing\": { \"engine\": \"PySpark plus SQL/dbt transformations\", \"orchestration\": \"Scheduled workflows with freshness alerts, duplicate detection, and late-arriving dimension handling.\" }, \"storage\": { \"bronze\": \"Raw order, product, and inventory payloads with batch metadata and source load timestamps.\", \"silver\": \"Conformed retail entities for orders, stores, products, returns, and calendar dimensions.\", \"gold\": \"Executive marts for margin, inventory turns, sell-through, stockout risk, and return rate trends.\" }, \"serving\": { \"tool\": \"Power BI\", \"connection\": \"gold marts and published Power BI semantic models with governed metric definitions\" }, \"medallion_plan\": { \"bronze\": \"Ingest retail sales and inventory files with reproducible batch IDs, source filenames, and row-count checks so every run can be replayed and audited.\", \"silver\": \"Conform store, product, and transaction grains; standardize returns logic; and enforce freshness, uniqueness, and accepted-values checks before KPI aggregation.\", \"gold\": \"Publish executive-ready marts for gross margin, return rate, inventory turns, and channel performance with documented calculation logic and retailer-facing business labels.\" }, \"primary_tools\": [ \"databricks\", \"dbt\", \"power bi\", \"python\", \"sql\" ], \"target_skills\": [] }, \"project_story\": { \"executive_summary\": \"GlobalMart Retail Intelligence Pipeline gives merchandising leaders a trustworthy gross-margin KPI view by unifying POS, e-commerce, and inventory datasets into a bronze, silver, and gold retail stack that refreshes within 4 hours for Monday business reviews.\", \"challenge\": \"Leadership currently sees conflicting POS and e-commerce numbers, cannot explain why selected product categories lose 3% to 5% of margin after returns and markdowns, and loses hours each week validating stockout and markdown narratives before business reviews.\", \"approach\": \"Implement a bronze-to-gold retail pipeline, enforce conformed product and store dimensions, reconcile gross-margin KPI logic in SQL/dbt, and publish a Power BI executive dashboard backed by documented gold marts and a formal metric dictionary.\", \"impact_story\": \"The project targets a 30% reduction in spreadsheet reconciliation, daily visibility into inventory-turn KPI trends, and a measurable reduction in report latency from multi-day prep to a 4-hour dashboard SLA.\" }, \"milestones\": [ { \"name\": \"Current-state retail discovery\", \"duration_weeks\": 1, \"deliverables\": [ \"project charter\", \"source-to-KPI matrix\", \"stakeholder map\" ], \"milestone_tags\": [ \"discovery\", \"architecture\", \"roi\" ], \"resources\": [ { \"title\": \"Kimball Dimensional Modeling\", \"url\": \"https://www.kimballgroup.com/data-warehouse-business-intelligence-resources/\" } ], \"execution_plan\": \"Interview merchandising, e-commerce, and supply chain stakeholders; map order, inventory, and returns source fields to executive retail KPIs; then document refresh cadence, ownership, and report pain points in a charter packet that mirrors an internal consulting kickoff.\", \"expected_deliverable\": \"Signed charter with current-state pain points, future-state KPI plan, and a source inventory covering sales, inventory, and return workflows.\", \"business_why\": \"The project must ground technical design in a believable merchandising and margin problem, not generic reporting language.\", \"acceptance_checks\": [ \"Project charter signed and KPI matrix approved by sponsor\", \"KPI matrix published with source owner, refresh SLA, and sign-off date\" ] }, { \"name\": \"Retail bronze and silver foundation\", \"duration_weeks\": 2, \"deliverables\": [ \"bronze ingestion notebooks\", \"silver conformance tests\", \"entity model\" ], \"milestone_tags\": [ \"bronze\", \"silver\", \"pipeline\" ], \"resources\": [ { \"title\": \"Delta Lake Medallion Architecture\", \"url\": \"https://docs.databricks.com/en/lakehouse/medallion.html\" } ], \"execution_plan\": \"Land order, product, and inventory extracts into bronze with batch metadata, deduplicate transaction records, and standardize store, SKU, and date dimensions in silver using SQL/dbt quality tests before promoting any margin or stockout metrics.\", \"expected_deliverable\": \"Reproducible bronze-to-silver pipeline with documented schema checks, late-arriving record handling, and a conformed retail entity model.\", \"business_why\": \"Retail decisions break down when returns, promotions, or inventory snapshots are not modeled consistently across channels.\", \"acceptance_checks\": [ \"Silver tests pass for null keys, duplicates, and stale loads\", \"Order and inventory grain validated in architecture review notes\" ] }, { \"name\": \"Executive retail KPI mart\", \"duration_weeks\": 1, \"deliverables\": [ \"gold mart\", \"executive dashboard\", \"metric dictionary\" ], \"milestone_tags\": [ \"gold\", \"roi\", \"bi\" ], \"resources\": [ { \"title\": \"Power BI Design Guidance\", \"url\": \"https://learn.microsoft.com/en-us/power-bi/guidance/\" } ], \"execution_plan\": \"Build gold marts for sales, gross margin, inventory turns, and return rate by store and channel; publish the executive dashboard in Power BI; and reconcile KPI totals back to source extracts before recording the stakeholder walkthrough.\", \"expected_deliverable\": \"Power BI dashboard package with a metric dictionary, lineage notes, and business-ready views for margin, inventory, and returns analysis.\", \"business_why\": \"Executives need one trusted place to answer why margin is moving across stores, products, and channels.\", \"acceptance_checks\": [ \"Gross margin KPI validated against source sales totals\", \"Dashboard walkthrough recorded and published with sponsor feedback\" ] }, { \"name\": \"Portfolio packaging and hiring narrative\", \"duration_weeks\": 1, \"deliverables\": [ \"demo walkthrough\", \"architecture diagram\", \"resume bullets\" ], \"milestone_tags\": [ \"communication\", \"career\" ], \"resources\": [ { \"title\": \"GitHub Portfolio Guide\", \"url\": \"https://docs.github.com/en/get-started/showcase-your-work/about-your-profile\" } ], \"execution_plan\": \"Package the project like a client delivery: publish the architecture diagram in the GitHub repo, document retail modeling choices in the README, record a 10-minute narrated dashboard demo, and distill the work into interview-ready bullets tied to gross-margin and inventory-turn outcomes.\", \"expected_deliverable\": \"Release-tagged portfolio package with repo, runbook, architecture diagram, recorded demo link, and a concise interview story that references measured KPI outcomes.\", \"business_why\": \"A premium project should be easy to explain to recruiters, hiring managers, and technical interviewers.\", \"acceptance_checks\": [ \"Demo walkthrough recorded and published in the repository\", \"Resume bullets validated against repo artifacts and measured KPI outcomes\" ] } ], \"roi_dashboard_requirements\": { \"required_dimensions\": [ \"date\", \"store\", \"channel\", \"product_category\", \"region\" ], \"required_measures\": [ \"gross_sales\", \"gross_margin\", \"return_rate\", \"inventory_turns\", \"stockout_risk\" ], \"business_questions\": [ \"What are the top-selling products by region?\", \"How do seasonal trends affect sales performance?\", \"What is the average sales cycle duration across different product categories?\" ], \"visual_requirements\": [ \"Include an executive KPI band for gross sales, gross margin, and return rate.\", \"Show a trend comparing channel performance over time with store drill-down.\", \"Highlight the worst-performing categories or regions with clear annotation for business leaders.\" ], \"primary_kpi\": \"Gross Margin\" }, \"resource_plan\": { \"required\": [ { \"title\": \"Databricks Medallion Architecture\", \"url\": \"https://docs.databricks.com/en/lakehouse/medallion.html\" }, { \"title\": \"Power BI Design Guidance\", \"url\": \"https://learn.microsoft.com/en-us/power-bi/guidance/\" } ], \"recommended\": [ { \"title\": \"dbt Documentation\", \"url\": \"https://docs.getdbt.com/docs/introduction\" }, { \"title\": \"Kimball Group\", \"url\": \"https://www.kimballgroup.com/data-warehouse-business-intelligence-resources/\" } ], \"optional\": [ { \"title\": \"Storytelling with Data\", \"url\": \"https://www.storytellingwithdata.com/\" } ], \"affiliate_disclosure\": \"Some recommended resources may include affiliate links. Recommendations are selected for project relevance first.\", \"trust_language\": \"Resource recommendations are optional and do not change coaching feedback or project scoring.\" }, \"mentoring_cta\": { \"recommended_tier\": \"starter\", \"reason\": \"Mapped from resume/job signals: current=senior target=senior scope=foundational.\", \"trust_language\": \"Mentoring recommendations are guidance-only and should align with the candidate's goals and budget.\" }, \"project_charter\": { \"section_order\": [ \"prerequisites_resources\", \"executive_summary\", \"technical_architecture\", \"implementation_plan\", \"deliverables_acceptance_criteria\", \"risks_assumptions\", \"stretch_goals\" ], \"sections\": { \"prerequisites_resources\": { \"summary\": \"Before kickoff, confirm the retail dataset mix, source field meanings, and the candidate's readiness to model order, inventory, and return facts at the correct grain.\", \"data_assets\": [ { \"name\": \"Retail sales and inventory source set\", \"url\": \"https://www.kaggle.com/datasets/vivek468/superstore-dataset-final\", \"ingestion_doc_url\": \"https://www.kaggle.com/docs/api\", \"action\": \"Review source fields, document transaction grain, and define how orders, products, and inventory snapshots land in bronze before modeling begins.\" } ], \"tools\": [ { \"name\": \"GitHub\", \"url\": \"https://docs.github.com/en/get-started/using-github/github-flow\" }, { \"name\": \"dbt Documentation\", \"url\": \"https://docs.getdbt.com/docs/introduction\" }, { \"name\": \"Power BI\", \"url\": \"https://learn.microsoft.com/en-us/power-bi/guidance/\" } ], \"skill_check\": \"The candidate should be comfortable explaining fact/dimension grain, writing SQL joins, and defending KPI definitions such as gross margin, return rate, and inventory turns.\", \"resources\": [ { \"title\": \"Kimball Group\", \"url\": \"https://www.kimballgroup.com/data-warehouse-business-intelligence-resources/\" }, { \"title\": \"dbt Documentation\", \"url\": \"https://docs.getdbt.com/docs/introduction\" } ] }, \"executive_summary\": { \"current_state\": \"Retail leaders work from mismatched channel reports, limited inventory context, and manual spreadsheet reconciliation before each business review.\", \"future_state\": \"Leaders consume trusted store and channel KPIs from a governed gold layer with clear lineage, definitions, and daily refresh expectations.\" }, \"technical_architecture\": { \"platform\": \"Retail lakehouse using medallion architecture, orchestration, and BI semantic modeling.\", \"ingestion\": { \"source\": \"Retail sales, product, and inventory extracts plus optional macro or labor context datasets.\", \"pattern\": \"Replay-safe bronze loads with batch metadata, source row counts, and explicit refresh cadence.\" }, \"processing\": { \"engine\": \"PySpark plus SQL/dbt transformations\", \"logic\": \"Conformed order, product, store, and inventory entities with KPI quality checks and documented business logic.\" }, \"storage\": { \"bronze\": \"Raw sales, inventory, and returns extracts with source traceability.\", \"silver\": \"Conformed retail entities with quality enforcement and grain documentation.\", \"gold\": \"Retail KPI marts for margin, turns, sell-through, stockout risk, and return analysis.\" }, \"serving\": { \"tool\": \"Power BI\", \"connection\": \"gold marts and published Power BI semantic models with governed metric definitions\" }, \"data_sources\": [ { \"name\": \"Sample Superstore Sales Dataset\", \"url\": \"https://www.kaggle.com/datasets/vivek468/superstore-dataset-final\", \"ingestion_doc_url\": \"https://www.kaggle.com/docs/api\", \"selection_rationale\": \"Provides order-level retail facts that are well suited for bronze-to-gold modeling, KPI design, and executive dashboard storytelling.\", \"ingestion_instructions\": \"Use documented API/file endpoint, land raw extract to bronze with run metadata, then apply conformance tests in silver before publishing gold KPIs.\" }, { \"name\": \"Bureau of Labor Statistics Public Data API\", \"url\": \"https://www.bls.gov/data/\", \"ingestion_doc_url\": \"https://www.bls.gov/developers/home.htm\", \"selection_rationale\": \"Provides real API ingestion practice plus documented schemas for incremental loads and trend dashboards.\", \"ingestion_instructions\": \"Use documented API/file endpoint, land raw extract to bronze with run metadata, then apply conformance tests in silver before publishing gold KPIs.\" } ] }, \"implementation_plan\": { \"milestones\": [ { \"name\": \"Retail source profiling and KPI framing\", \"expectations\": \"Source inventory, grain documentation, and sponsor-approved KPI definitions are checked in.\", \"completion_criteria\": [ \"Source-to-KPI matrix completed\", \"Current-state pain points documented\", \"Project charter approved\" ], \"estimated_effort_hours\": 4, \"key_concept\": \"Retail KPI framing\" }, { \"name\": \"Order and inventory conformance\", \"expectations\": \"Core retail facts and dimensions are standardized with automated quality rules.\", \"completion_criteria\": [ \"Silver tests are green\", \"Inventory and returns logic documented\", \"Late-arriving records handled\" ], \"estimated_effort_hours\": 6, \"key_concept\": \"Conformed retail modeling\" }, { \"name\": \"Executive dashboard and portfolio handoff\", \"expectations\": \"Gold KPI marts support real business questions and are packaged into an interview-ready portfolio narrative.\", \"completion_criteria\": [ \"Dashboard walkthrough recorded\", \"Metric dictionary reconciles to source\", \"Portfolio artifacts published\" ], \"estimated_effort_hours\": 5, \"key_concept\": \"Decision-grade storytelling\" } ] }, \"deliverables_acceptance_criteria\": { \"deliverables\": [ \"Architecture diagram\", \"Retail bronze/silver/gold pipeline\", \"Executive dashboard\", \"Narrated project walkthrough\" ], \"acceptance_criteria\": [ \"Order and inventory grain are documented\", \"Gross margin KPI reconciles to source data\", \"Business outcomes are quantified in the walkthrough\" ] }, \"risks_assumptions\": { \"risks\": [ \"Retail extracts may not include stable SKU keys\", \"Return logic can distort margin if modeled inconsistently\", \"Stakeholder KPI definitions may shift mid-project\" ], \"assumptions\": [ \"Selected public data sources remain accessible\", \"Candidate can sustain a weekly delivery cadence and review feedback quickly\" ] }, \"stretch_goals\": { \"items\": [ \"Add promotional markdown analysis\", \"Publish semantic layer tests for margin KPIs\", \"Create a short case-study PDF for recruiters\" ] } } }, \"interview_ready_package\": { \"star_bullets\": [ \"Situation: Merchandising and finance teams were spending too much time reconciling cross-channel sales, inventory, and returns before leadership reviews.\", \"Task: Own delivery of Candidate - GlobalMart Retail Intelligence Pipeline milestones with clear KPI targets.\", \"Action: Built a retail bronze-to-gold pipeline with conformed product and store dimensions, then surfaced reconciled KPI marts in Power BI.\", \"Result: Created a decision-grade retail analytics story with clearer margin visibility, lower reconciliation effort, and a credible portfolio narrative.\" ], \"portfolio_checklist\": [ \"Architecture diagram exported and narrated in README\", \"Pipeline tests + data quality checks committed with run evidence\", \"Executive KPI dashboard with metric dictionary and assumptions\", \"Demo script + retrospective including trade-offs and next steps\" ], \"recruiter_mapping\": { \"technical_depth\": [ \"Current-state retail discovery\", \"Retail bronze and silver foundation\", \"Executive retail KPI mart\" ], \"business_impact\": [ \"Created a decision-grade retail analytics story with clearer margin visibility, lower reconciliation effort, and a credible portfolio narrative.\" ], \"communication\": [ \"Executive summary\", \"STAR narrative\", \"Demo walkthrough\" ], \"tooling_keywords\": [ \"databricks\", \"dbt\", \"power bi\", \"python\", \"sql\" ] } } }"
+        - generic [ref=e142]:
+          - generic [ref=e143]:
+            - strong [ref=e144]: Executive Summary
+            - text: ": GlobalMart Retail Intelligence Pipeline gives merchandising leaders a trustworthy gross-margin KPI view by unifying POS, e-commerce, and inventory datasets into a bronze, silver, and gold retail stack that refreshes within 4 hours for Monday business reviews."
+          - generic [ref=e145]:
+            - strong [ref=e146]: Business Outcome
+            - text: ": GlobalMart leadership lacks a trusted cross-channel view of margin, inventory turns, and return behavior because store, e-commerce, and product extracts refresh on different cadences and break KPI consistency during Monday business reviews."
+          - generic [ref=e147]:
+            - strong [ref=e148]: Milestones
+            - text: ": Current-state retail discovery | Retail bronze and silver foundation | Executive retail KPI mart | Portfolio packaging and hiring narrative"
+        - generic [ref=e149]:
+          - button "Project Charter" [ref=e150]
+          - button "Executive Summary" [ref=e151]
+          - button "Data Sources + Ingestion" [ref=e152]
+          - button "Architecture" [ref=e153]
+          - button "Milestone Cards" [ref=e154]
+          - button "Story Narrative" [ref=e155]
+          - button "ROI Dashboard" [ref=e156]
+          - button "Resource Links by Step" [ref=e157]
+          - button "Interview Artifacts" [ref=e158]
+        - generic [ref=e159]:
+          - generic [ref=e160]: OK Has data source links
+          - generic [ref=e161]: OK Has ROI requirements
+          - generic [ref=e162]: OK Resources mapped per milestone
+          - generic [ref=e163]: OK Executive summary present
+          - generic [ref=e164]: OK Story narrative included
+        - generic [ref=e165]:
+          - generic [ref=e166]:
+            - strong [ref=e167]: Project Generation Meta-Rubric Gate
+            - generic [ref=e168]: reprocessed best effort below threshold
+          - generic [ref=e169]:
+            - generic [ref=e170]:
+              - strong [ref=e171]: "Threshold:"
+              - text: "85"
+            - generic [ref=e172]:
+              - strong [ref=e173]: "Initial score:"
+              - text: "51"
+            - generic [ref=e174]:
+              - strong [ref=e175]: "Final score:"
+              - text: "67"
+            - generic [ref=e176]:
+              - strong [ref=e177]: "Selected archetype:"
+              - text: retail
+            - generic [ref=e178]:
+              - strong [ref=e179]: "Reprocessed:"
+              - text: "yes"
+            - generic [ref=e180]:
+              - strong [ref=e181]: "Attempt limit:"
+              - text: "3"
+            - generic [ref=e182]:
+              - strong [ref=e183]: "Archetype order:"
+              - text: retail -> energy -> finance -> general
+            - generic [ref=e184]:
+              - strong [ref=e185]: "Attempts:"
+              - text: retail:67 | energy:60 | finance:66
+        - generic [ref=e186]:
+          - generic [ref=e187]:
+            - generic [ref=e188]: Business story
+            - generic [ref=e189]: Leadership currently sees conflicting POS and e-commerce numbers, cannot explain why selected product categories lose 3% to 5% of margin after returns and markdowns, and loses hours each week validating stockout and markdown narratives before business reviews.
+            - generic [ref=e190]:
+              - strong [ref=e191]: "Why now:"
+              - text: Implement a bronze-to-gold retail pipeline, enforce conformed product and store dimensions, reconcile gross-margin KPI logic in SQL/dbt, and publish a Power BI executive dashboard backed by documented gold marts and a formal metric dictionary.
+            - generic [ref=e192]:
+              - strong [ref=e193]: "What success looks like:"
+              - text: The project targets a 30% reduction in spreadsheet reconciliation, daily visibility into inventory-turn KPI trends, and a measurable reduction in report latency from multi-day prep to a 4-hour dashboard SLA.
+          - generic [ref=e194]:
+            - generic [ref=e195]:
+              - generic [ref=e196]: Candidate profile
+              - generic [ref=e197]: Candidate targeting Senior Data Engineer.
+            - generic [ref=e198]:
+              - generic [ref=e199]: Business outcome
+              - generic [ref=e200]: GlobalMart leadership lacks a trusted cross-channel view of margin, inventory turns, and return behavior because store, e-commerce, and product extracts refresh on different cadences and break KPI consistency during Monday business reviews.
+  - alert [ref=e95]

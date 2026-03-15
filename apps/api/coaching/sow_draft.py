@@ -1343,7 +1343,7 @@ def generate_sow_with_llm(
     max_retries: int = 2,
 ) -> dict[str, Any]:
     api_key, api_key_source = _resolve_llm_api_key()
-    model = (os.getenv("COACHING_SOW_LLM_MODEL") or "gpt-5.4").strip()
+    model = ("gpt-5.4").strip() #os.getenv("COACHING_SOW_LLM_MODEL") or
     base_url = (os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
     strategy_fallback = _build_project_strategy_fallback(intake=intake, parsed_jobs=parsed_jobs)
     requested_industry = _infer_requested_industry(intake=intake, parsed_jobs=parsed_jobs)
